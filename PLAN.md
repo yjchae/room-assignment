@@ -66,7 +66,10 @@ class Attendee {
 - 필터: 이름, 셀, 존, 성별, 나이 범위(min~max), 배정여부(미배정만 보기).
 - 필터 결과 전체 선택 → 방 하나 클릭 → **[일괄 배정]**. (요구사항: "특정 셀, 나이 등을 검색해서 한번에 특정 방에 적용")
 - 체크인/체크아웃: 선택한 인원에 대해 날짜 일괄 지정. 기본값은 전체 일정.
-- 방 카드 표시: `301 [4/6] 여` — 배정/수용, 남은 자리는 초록, 정원 초과는 **빨간 배지**. (초과 배정은 막지 않고 경고만 — 현장에서 필요한 경우가 있음)
+- 방 카드 표시: 호수 + `4/6` + 잔여 막대 + 성별 배지. 한 줄에 10칸씩, 층별로 묶어 **높은 층이 위**.
+  상태는 색으로 구분한다: **공실=흰색 / 여유=청록 / 만실=주황 / 초과=빨강**.
+  (초과 배정은 막지 않고 색으로 경고만 — 현장에서 필요한 경우가 있음)
+  색만으로 판단하지 않도록 타일에는 항상 숫자와 막대를 같이 그린다.
 - 정원 계산은 **날짜 겹침 기준**: 부분 참석자가 있으므로 "그 방의 어느 하룻밤이라도 정원을 넘으면 초과". 
   ```dart
   int peakOccupancy(Room r, List<Attendee> all) => 
@@ -93,7 +96,7 @@ class Attendee {
 
 ### 3.5 현황보기
 한 화면에 4블록:
-- **전체 구조**: 층별 그리드. 방 하나가 타일, 색으로 상태 구분 (미배정=회색 / 여유=초록 / 만실=파랑 / 초과=빨강). 타일 클릭 → 해당 방 인원 목록.
+- **전체 구조**: 배정 화면과 같은 `RoomBoard` (층별 그리드, 공실=흰색 / 여유=청록 / 만실=주황 / 초과=빨강). 타일 클릭 → 해당 방 인원 목록.
 - **요약 숫자**: 총원 / 배정완료 / 미배정 / 총 수용인원 / 잔여 좌석.
 - **미배정 인원 목록** (클릭 시 배정 화면으로 이동)
 - **여유 있는 방 목록**
@@ -105,14 +108,19 @@ class Attendee {
 
 ```
 lib/
-  main.dart          앱 + 탭 셸
-  models.dart        Event/Room/Attendee + toJson/fromJson
-  store.dart         ChangeNotifier, 로드/저장, 검색·정원 계산 헬퍼
-  auto_assign.dart   자동배정 규칙 + 알고리즘
+  main.dart              앱 + 탭 셸
+  models.dart            Event/Room/Attendee + toJson/fromJson
+  store.dart             ChangeNotifier, 로드/저장, 검색·정원 계산 헬퍼
+  auto_assign.dart       자동배정 규칙 + 알고리즘
+  theme.dart             디자인 토큰(색·모서리) + 방 상태 판정 + 공용 위젯
+  widgets/room_board.dart 방 타일 / 층별 보드 / 범례
   screens/rooms.dart / attendees.dart / assign.dart / status.dart
 test/
   auto_assign_test.dart   자동배정·정원계산 검증
+  widget_test.dart        화면 렌더 + 보드 레이아웃 검증
 ```
+
+UI 규칙은 `.claude/skills/room-ui/SKILL.md` 에 따로 정리해 두었다.
 
 의존성: `path_provider` 만. (직렬화 코드젠, DI, 라우터, 상태관리 패키지 전부 불필요)
 

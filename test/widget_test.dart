@@ -6,6 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/screens/assign.dart';
+import 'package:room_assignment/screens/rooms.dart';
+import 'package:room_assignment/screens/status.dart';
+import 'package:room_assignment/theme.dart';
 
 Room room(String no, int cap, {String? gender}) =>
     Room(id: 'r$no', roomNo: no, capacity: cap, gender: gender);
@@ -65,5 +68,65 @@ void main() {
     await tester.tap(find.text('302'));
     await tester.pump();
     expect(find.textContaining('2개 방 배정'), findsOneWidget);
+  });
+
+  testWidgets('보드는 한 줄에 10칸까지만 채운다', (tester) async {
+    store.event.rooms
+      ..clear()
+      ..addAll([for (var i = 1; i <= 12; i++) room('${300 + i}', 4)]);
+
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pump(tester, RoomBoard(rooms: store.event.rooms));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final tiles = find.byType(RoomTile);
+    expect(tiles, findsNWidgets(12));
+    final firstRowY = tester.getTopLeft(tiles.at(0)).dy;
+    // 1~10번째는 같은 줄, 11번째부터 다음 줄.
+    for (var i = 1; i < 10; i++) {
+      expect(tester.getTopLeft(tiles.at(i)).dy, firstRowY, reason: '$i번째');
+    }
+    expect(tester.getTopLeft(tiles.at(10)).dy, greaterThan(firstRowY));
+  });
+
+  testWidgets('층은 높은 층이 위로 온다', (tester) async {
+    store.event.rooms
+      ..clear()
+      ..addAll([room('201', 4), room('401', 4), room('301', 4)]);
+    await pump(tester, RoomBoard(rooms: store.event.rooms));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getTopLeft(find.text('401')).dy,
+      lessThan(tester.getTopLeft(find.text('301')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('301')).dy,
+      lessThan(tester.getTopLeft(find.text('201')).dy),
+    );
+  });
+
+  testWidgets('현황/방관리 화면이 뜬다', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    for (final screen in [const StatusScreen(), const RoomsScreen()]) {
+      await tester.pumpWidget(
+        MaterialApp(theme: buildAppTheme(), home: Scaffold(body: screen)),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '$screen');
+    }
+  });
+
+  test('방 상태 판정', () {
+    expect(statusOf(used: 0, capacity: 4), RoomStatus.empty);
+    expect(statusOf(used: 1, capacity: 4), RoomStatus.partial);
+    expect(statusOf(used: 4, capacity: 4), RoomStatus.full);
+    expect(statusOf(used: 5, capacity: 4), RoomStatus.over);
   });
 }
