@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../auto_assign.dart';
 import '../main.dart';
 import '../models.dart';
+import '../store.dart';
 import 'rooms.dart' show genderLabel;
 
 /// 배정 화면에서 미리 선택해둘 참석자 (현황 화면에서 넘어올 때 사용).
@@ -24,6 +26,10 @@ class _AssignScreenState extends State<AssignScreen> {
   bool unassignedOnly = false;
   final selected = <String>{};
 
+  /// 다중 선택된 방. 단체를 여러 방에 나눠 넣을 때 쓴다.
+  final selectedRooms = <String>{};
+  final roomRange = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -36,7 +42,7 @@ class _AssignScreenState extends State<AssignScreen> {
 
   @override
   void dispose() {
-    for (final c in [name, cell, zone, ageMin, ageMax]) {
+    for (final c in [name, cell, zone, ageMin, ageMax, roomRange]) {
       c.dispose();
     }
     super.dispose();
@@ -194,21 +200,33 @@ class _AssignScreenState extends State<AssignScreen> {
       );
     return Column(
       children: [
+        // Row + Spacer 를 쓰면 창이 좁을 때 그대로 넘친다(RenderFlex overflow).
+        // 버튼 수가 늘었으므로 접히는 Wrap 으로 둔다.
         Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
-                '선택 ${chosen.length}명',
+                '선택 ${chosen.length}명 · 방 ${selectedRooms.length}개',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              const Spacer(),
+              FilledButton.icon(
+                onPressed: chosen.isEmpty || selectedRooms.isEmpty
+                    ? null
+                    : () => _assignToRooms(chosen),
+                icon: const Icon(Icons.login),
+                label: Text(
+                  '${chosen.length}명 → ${selectedRooms.length}개 방 배정',
+                ),
+              ),
               OutlinedButton.icon(
                 onPressed: chosen.isEmpty ? null : () => _setStay(chosen),
                 icon: const Icon(Icons.date_range),
                 label: const Text('체크인/아웃 지정'),
               ),
-              const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: chosen.isEmpty
                     ? null
@@ -224,15 +242,49 @@ class _AssignScreenState extends State<AssignScreen> {
         ),
         const Divider(height: 1),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              chosen.isEmpty
-                  ? '왼쪽에서 인원을 선택한 뒤 방을 클릭하세요.'
-                  : '방을 클릭하면 선택한 인원이 일괄 배정됩니다.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 200,
+                    child: TextField(
+                      controller: roomRange,
+                      decoration: const InputDecoration(
+                        labelText: '호수 범위로 방 선택',
+                        hintText: '301-304, 401',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _selectRoomRange(rooms),
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: () => _selectRoomRange(rooms),
+                    child: const Text('선택'),
+                  ),
+                  TextButton(
+                    onPressed: selectedRooms.isEmpty
+                        ? null
+                        : () => setState(selectedRooms.clear),
+                    child: const Text('방 선택 해제'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                chosen.isEmpty
+                    ? '왼쪽에서 인원을 고르고, 방을 클릭해 여러 개 선택하세요.'
+                    : '방을 클릭해 여러 개 고른 뒤 [배정]을 누르면 호수 순으로 채웁니다.'
+                          ' (길게 누르면 인원 목록)',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -247,9 +299,12 @@ class _AssignScreenState extends State<AssignScreen> {
                       for (final r in rooms)
                         RoomTile(
                           room: r,
-                          onTap: chosen.isEmpty
-                              ? null
-                              : () => _assign(chosen, r),
+                          selected: selectedRooms.contains(r.id),
+                          onTap: () => setState(
+                            () => selectedRooms.contains(r.id)
+                                ? selectedRooms.remove(r.id)
+                                : selectedRooms.add(r.id),
+                          ),
                           onLongPress: () => _showOccupants(r),
                         ),
                     ],
@@ -260,40 +315,117 @@ class _AssignScreenState extends State<AssignScreen> {
     );
   }
 
-  Future<void> _assign(List<Attendee> chosen, Room room) async {
-    // 날짜 겹침까지 반영한 실제 결과를 보려면 잠깐 배정해보고 되돌린다.
-    final before = {for (final a in chosen) a.id: a.roomId};
-    for (final a in chosen) {
-      a.roomId = room.id;
+  /// "301-304" 같은 범위로 방을 한 번에 선택한다. (store.parseRoomRange 재사용)
+  void _selectRoomRange(List<Room> rooms) {
+    final wanted = parseRoomRange(roomRange.text).toSet();
+    if (wanted.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('호수를 인식하지 못했습니다. 예: 301-304')),
+      );
+      return;
     }
-    final after = store.peakOccupancy(room);
-    for (final a in chosen) {
-      a.roomId = before[a.id];
+    final hit = rooms.where((r) => wanted.contains(r.roomNo)).toList();
+    setState(() => selectedRooms.addAll(hit.map((r) => r.id)));
+    if (hit.length < wanted.length) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${hit.length}개 선택 · 없는 호수 ${wanted.length - hit.length}개는 건너뜀',
+          ),
+        ),
+      );
     }
-    if (after > room.capacity) {
-      final ok = await showDialog<bool>(
+  }
+
+  /// 선택한 인원을 선택한 여러 방에 호수 순으로 채운다.
+  /// 어디에 몇 명이 들어가는지 먼저 보여주고 확인받는다.
+  Future<void> _assignToRooms(List<Attendee> chosen) async {
+    final rooms = store.event.rooms
+        .where((r) => selectedRooms.contains(r.id))
+        .toList();
+    if (rooms.isEmpty) return;
+
+    var plan = distribute(store.event, chosen, rooms);
+    var overflow = false;
+
+    if (plan.unplaced.isNotEmpty) {
+      final choice = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('정원 초과'),
+          title: const Text('자리가 모자랍니다'),
           content: Text(
-            '${room.roomNo}호는 정원 ${room.capacity}명인데 최대 $after명이 됩니다.\n'
-            '그래도 배정할까요?',
+            '선택한 ${rooms.length}개 방에 ${plan.assignments.length}명까지만 들어갑니다.\n'
+            '${plan.unplaced.length}명은 자리가 없습니다.',
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(context, 'cancel'),
               child: const Text('취소'),
             ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'partial'),
+              child: const Text('들어가는 만큼만'),
+            ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('배정'),
+              onPressed: () => Navigator.pop(context, 'overflow'),
+              child: const Text('초과해서 전부 배정'),
             ),
           ],
         ),
       );
-      if (ok != true) return;
+      if (choice == null || choice == 'cancel') return;
+      if (choice == 'overflow') {
+        overflow = true;
+        plan = distribute(store.event, chosen, rooms, overflow: true);
+      }
     }
-    store.assignAll(chosen, room.id);
+
+    // 방별 인원 요약을 보여주고 최종 확인.
+    final byRoom = <String, int>{};
+    for (final x in plan.assignments) {
+      byRoom[x.room.roomNo] = (byRoom[x.room.roomNo] ?? 0) + 1;
+    }
+    final lines = byRoom.entries.map((e) => '${e.key}호  ${e.value}명').toList()
+      ..sort();
+    if (!mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${plan.assignments.length}명 배정'),
+        content: SizedBox(
+          width: 320,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (overflow)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '정원을 넘겨 배정합니다.',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
+              for (final l in lines) Text(l),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('배정'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    applyAssignments(plan.assignments);
+    store.commit();
     if (mounted) setState(() {});
   }
 
@@ -357,10 +489,17 @@ class _AssignScreenState extends State<AssignScreen> {
 
 /// 방 카드. 배정/수용 배지 + 성별 표시.
 class RoomTile extends StatelessWidget {
-  const RoomTile({super.key, required this.room, this.onTap, this.onLongPress});
+  const RoomTile({
+    super.key,
+    required this.room,
+    this.onTap,
+    this.onLongPress,
+    this.selected = false,
+  });
   final Room room;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -378,7 +517,13 @@ class RoomTile extends StatelessWidget {
       width: 130,
       child: Material(
         color: color,
-        borderRadius: BorderRadius.circular(8),
+        // shape 와 borderRadius 를 같이 주면 Material 이 assert 로 죽는다. shape 만 쓴다.
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: selected
+              ? const BorderSide(color: Colors.indigo, width: 3)
+              : BorderSide.none,
+        ),
         child: InkWell(
           onTap: onTap,
           onLongPress: onLongPress,
@@ -390,6 +535,15 @@ class RoomTile extends StatelessWidget {
               children: [
                 Row(
                   children: [
+                    if (selected)
+                      const Padding(
+                        padding: EdgeInsets.only(right: 4),
+                        child: Icon(
+                          Icons.check_circle,
+                          size: 16,
+                          color: Colors.indigo,
+                        ),
+                      ),
                     Text(
                       room.roomNo,
                       style: const TextStyle(

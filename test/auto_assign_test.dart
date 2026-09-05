@@ -366,6 +366,87 @@ void main() {
     });
   });
 
+  group('단체를 여러 방에 배정 (distribute)', () {
+    test('호수 순으로 정원만큼 채운다', () {
+      final rooms = [room('301', 2), room('302', 2), room('303', 2)];
+      final people = [
+        for (var i = 0; i < 6; i++) person('셀원$i', cell: '에클레시아'),
+      ];
+      final e = ev(rooms: rooms, attendees: people);
+      final r = distribute(e, people, rooms);
+      applyAssignments(r.assignments);
+      expect(r.unplaced, isEmpty);
+      expect(people.map((a) => a.roomId).toList(), [
+        'r301',
+        'r301',
+        'r302',
+        'r302',
+        'r303',
+        'r303',
+      ]);
+    });
+
+    test('자리가 모자라면 남는 사람을 돌려준다', () {
+      final rooms = [room('301', 2)];
+      final people = [for (var i = 0; i < 5; i++) person('P$i')];
+      final e = ev(rooms: rooms, attendees: people);
+      final r = distribute(e, people, rooms);
+      expect(r.assignments.length, 2);
+      expect(r.unplaced.length, 3);
+    });
+
+    test('overflow: true 면 전원 배정하되 정원을 넘긴다', () {
+      final rooms = [room('301', 2), room('302', 2)];
+      final people = [for (var i = 0; i < 6; i++) person('P$i')];
+      final e = ev(rooms: rooms, attendees: people);
+      final r = distribute(e, people, rooms, overflow: true);
+      applyAssignments(r.assignments);
+      expect(r.unplaced, isEmpty);
+      expect(r.assignments.length, 6);
+      final s = Store()..event = e;
+      expect(s.peakOccupancy(rooms[0]), 3); // 초과가 눈에 보여야 한다
+      expect(s.peakOccupancy(rooms[1]), 3);
+    });
+
+    test('이미 그 방에 있던 사람을 두 번 세지 않는다', () {
+      final rooms = [room('301', 2)];
+      final already = person('기존', roomId: 'r301');
+      final e = ev(rooms: rooms, attendees: [already, person('신규')]);
+      // 기존 인원을 포함해 다시 배정 → 2명이므로 정확히 들어가야 한다
+      final r = distribute(e, e.attendees, rooms);
+      expect(r.unplaced, isEmpty);
+      expect(r.assignments.length, 2);
+    });
+
+    test('다른 방에 있던 기존 인원의 자리는 그대로 센다', () {
+      final rooms = [room('301', 2)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('붙박이', roomId: 'r301'),
+          person('A'),
+          person('B'),
+        ],
+      );
+      final movers = e.attendees.where((a) => a.name != '붙박이').toList();
+      final r = distribute(e, movers, rooms);
+      expect(r.assignments.length, 1); // 남은 자리 1개
+      expect(r.unplaced.length, 1);
+    });
+
+    test('날짜가 겹치지 않으면 같은 자리를 재사용한다', () {
+      final rooms = [room('301', 1)];
+      final people = [
+        person('앞', checkIn: d0, checkOut: DateTime(2026, 1, 2)),
+        person('뒤', checkIn: DateTime(2026, 1, 2), checkOut: d3),
+      ];
+      final e = ev(rooms: rooms, attendees: people);
+      final r = distribute(e, people, rooms);
+      expect(r.unplaced, isEmpty);
+      expect(r.assignments.every((x) => x.room.roomNo == '301'), isTrue);
+    });
+  });
+
   group('저장/불러오기', () {
     test('JSON 왕복', () {
       final e = ev(

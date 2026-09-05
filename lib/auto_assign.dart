@@ -201,3 +201,80 @@ int _dist(Room r, List<int> anchors) {
   if (n == null) return 1 << 20;
   return anchors.map((a) => (n - a).abs()).reduce(math.min);
 }
+
+/// 운영자가 고른 [people] 을 운영자가 고른 [rooms] 에 호수 순으로 채워 넣는다.
+/// (예: "에클레시아셀 6명" 을 301~304호에 배정)
+///
+/// - 정원은 날짜 겹침 기준으로 지킨다. 자리가 모자란 사람은 [AutoAssignResult.unplaced] 로 돌려준다.
+/// - [overflow] 가 true 면 남은 사람을 가장 덜 찬 방부터 정원을 넘겨서라도 넣는다.
+/// - 성별은 보지 않는다. 방을 직접 고른 건 운영자이므로 그 판단을 덮어쓰지 않는다.
+///
+/// 이미 대상 방에 배정돼 있던 사람은 자기 자리를 두 번 세지 않는다.
+AutoAssignResult distribute(
+  Event event,
+  List<Attendee> people,
+  List<Room> rooms, {
+  bool overflow = false,
+}) {
+  final nights = event.nights;
+  final ordered = [
+    ...rooms,
+  ]..sort((a, b) => (a.roomNumber ?? 999999).compareTo(b.roomNumber ?? 999999));
+  final moving = people.map((a) => a.id).toSet();
+
+  final counts = {
+    for (final r in ordered)
+      r.id: occupancyByNight(
+        event.attendees.where(
+          (a) => a.roomId == r.id && !moving.contains(a.id),
+        ),
+        nights,
+      ),
+  };
+
+  final result = <Assignment>[];
+  final leftover = <Attendee>[];
+
+  bool fits(Room r, List<bool> stays) {
+    final c = counts[r.id]!;
+    for (var i = 0; i < nights.length; i++) {
+      if (stays[i] && c[i] + 1 > r.capacity) return false;
+    }
+    return true;
+  }
+
+  void place(Room r, Attendee a, List<bool> stays) {
+    final c = counts[r.id]!;
+    for (var i = 0; i < nights.length; i++) {
+      if (stays[i]) c[i]++;
+    }
+    result.add(Assignment(a, r, '지정'));
+  }
+
+  for (final a in people) {
+    final stays = stayMask(a, nights);
+    final room = ordered.where((r) => fits(r, stays)).firstOrNull;
+    if (room != null) {
+      place(room, a, stays);
+    } else {
+      leftover.add(a);
+    }
+  }
+
+  if (!overflow || ordered.isEmpty) {
+    return AutoAssignResult(result, leftover);
+  }
+
+  // 초과 배정: 그 시점에 가장 덜 찬 방으로.
+  for (final a in leftover) {
+    final stays = stayMask(a, nights);
+    final room = ordered.reduce(
+      (x, y) =>
+          counts[x.id]!.fold(0, math.max) <= counts[y.id]!.fold(0, math.max)
+          ? x
+          : y,
+    );
+    place(room, a, stays);
+  }
+  return AutoAssignResult(result, const []);
+}
