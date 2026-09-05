@@ -1,12 +1,8 @@
 # Flutter/Dart
 .dart_tool/
-.packages
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
-pubspec.lock          # 앱이 아닌 패키지면 이 줄 삭제
-*.g.dart
-*.freezed.dart
 
 # IDE
 .idea/
@@ -39,3 +35,9 @@ linux/flutter/ephemeral/
 *.xlsx
 data/
 *.env
+event.json
+*.json.corrupt
+*.json.tmp
+
+# pubspec.lock 은 앱이므로 커밋한다 (재현 가능한 빌드).
+# 라이브러리 패키지로 바뀌면 여기에 pubspec.lock 을 추가할 것.
