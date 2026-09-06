@@ -7,7 +7,7 @@ import '../theme.dart';
 /// 타일 사이 간격.
 const _gap = 8.0;
 
-/// 타일이 이보다 좁아지면 호수가 안 읽힌다. 이 폭을 못 지키면 칸 수를 줄인다.
+/// 타일이 이보다 좁아지면 호수가 안 읽힌다. 이 폭이 안 나오면 보드를 가로로 굴린다.
 const _minTile = 74.0;
 
 /// 창이 아주 넓을 때 타일이 흉하게 늘어나는 걸 막는다.
@@ -15,14 +15,9 @@ const _maxTile = 150.0;
 
 const _tileHeight = 66.0;
 
-/// 요청 칸 수([want])로 나눴을 때 타일이 [_minTile] 보다 좁아지면 칸을 줄인다.
-int fitColumns(double width, int want) {
-  var cols = want;
-  while (cols > 2 && (width - _gap * (cols - 1)) / cols < _minTile) {
-    cols--;
-  }
-  return cols;
-}
+/// 층 격자의 기본 칸 수. 방 자리(slot)가 이 폭을 기준으로 매겨지므로
+/// 보드를 그리는 쪽과 자리를 옮기는 쪽이 같은 값을 봐야 한다.
+const boardColumns = 10;
 
 /// 방 한 칸. 색 = 상태, 숫자 = 인원/정원, 막대 = 채워진 정도.
 ///
@@ -181,6 +176,8 @@ class _SeatBar extends StatelessWidget {
 /// 층별로 묶어 그리는 방 보드. 방배정 화면과 현황 화면이 같은 걸 쓴다.
 ///
 /// 높은 층이 위로 온다 — 엘리베이터 층 표시와 같은 순서라 건물이 그대로 보인다.
+/// 층 안에서는 [columns] 칸짜리 격자다. 방이 놓이지 않은 칸은 빈 자리로 남아
+/// 복도·엘리베이터·계단 같은 실제 건물 모양을 그릴 수 있다.
 class RoomBoard extends StatelessWidget {
   const RoomBoard({
     super.key,
@@ -188,8 +185,10 @@ class RoomBoard extends StatelessWidget {
     this.selectedIds = const {},
     this.onTap,
     this.onLongPress,
-    this.columns = 10,
+    this.columns = boardColumns,
     this.emptyMessage = '방이 없습니다.',
+    this.editingLayout = false,
+    this.onMove,
   });
 
   final List<Room> rooms;
@@ -197,9 +196,16 @@ class RoomBoard extends StatelessWidget {
   final void Function(Room room)? onTap;
   final void Function(Room room)? onLongPress;
 
-  /// 한 줄에 몇 칸. 폭이 모자라면 자동으로 줄어든다.
+  /// 한 줄에 몇 칸. 저장된 자리 번호가 이 폭을 기준으로 매겨지므로
+  /// 창이 좁아져도 줄이지 않는다 (줄이면 배치가 통째로 어긋난다).
   final int columns;
   final String emptyMessage;
+
+  /// 자리 옮기기 모드. 켜면 타일을 끌어서 같은 층의 다른 칸으로 옮길 수 있다.
+  final bool editingLayout;
+
+  /// 드롭됐을 때. [slot] 은 그 방이 속한 층 격자에서 0부터 세는 칸 번호.
+  final void Function(Room room, int slot)? onMove;
 
   @override
   Widget build(BuildContext context) {
@@ -222,48 +228,183 @@ class RoomBoard extends StatelessWidget {
             )
           : LayoutBuilder(
               builder: (context, c) {
-                final cols = fitColumns(c.maxWidth, columns);
-                final w = ((c.maxWidth - _gap * (cols - 1)) / cols).clamp(
+                final w = ((c.maxWidth - _gap * (columns - 1)) / columns).clamp(
                   _minTile,
                   _maxTile,
                 );
-                // 타일 폭에 상한이 걸리면 Wrap 이 한 줄에 11개, 12개씩 밀어 넣는다.
-                // 줄 폭을 딱 cols 개로 잘라서 "한 줄 = cols 개"를 지킨다.
-                final rowWidth = w * cols + _gap * (cols - 1);
+                final rowWidth = w * columns + _gap * (columns - 1);
                 final floors = byFloorDesc(rooms);
-                return Column(
+                final board = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     for (final (i, e) in floors.entries.indexed) ...[
                       if (i > 0) const SizedBox(height: 16),
-                      _FloorHeader(floor: e.key, rooms: e.value),
-                      const SizedBox(height: 8),
                       SizedBox(
                         width: rowWidth,
-                        child: Wrap(
-                          spacing: _gap,
-                          runSpacing: _gap,
-                          children: [
-                            for (final r in e.value)
-                              RoomTile(
-                                room: r,
-                                width: w,
-                                selected: selectedIds.contains(r.id),
-                                onTap: onTap == null ? null : () => onTap!(r),
-                                onLongPress: onLongPress == null
-                                    ? null
-                                    : () => onLongPress!(r),
-                              ),
-                          ],
-                        ),
+                        child: _FloorHeader(floor: e.key, rooms: e.value),
                       ),
+                      const SizedBox(height: 8),
+                      _floorGrid(e.key, e.value, w),
                     ],
                   ],
                 );
+                // 격자 폭은 고정이라 창이 좁으면 넘친다. 잘라내지 말고 가로로 굴린다.
+                return rowWidth <= c.maxWidth + 0.5
+                    ? board
+                    : SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: board,
+                      );
               },
             ),
     );
   }
+
+  Widget _floorGrid(int? floor, List<Room> floorRooms, double w) {
+    final slots = layoutSlots(floorRooms, columns);
+    // 옮기는 중에는 맨 아래에 빈 줄을 하나 더 둔다. 새 줄로 내릴 자리가 없으면
+    // 아래쪽으로는 아예 옮길 수가 없다.
+    if (editingLayout) {
+      slots.addAll(List<Room?>.filled(columns, null));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var row = 0; row * columns < slots.length; row++) ...[
+          if (row > 0) const SizedBox(height: _gap),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = row * columns; i < (row + 1) * columns; i++) ...[
+                if (i > row * columns) const SizedBox(width: _gap),
+                _slot(floor, slots[i], i, w),
+              ],
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _slot(int? floor, Room? room, int index, double w) {
+    final tile = room == null
+        ? null
+        : RoomTile(
+            room: room,
+            width: w,
+            selected: selectedIds.contains(room.id),
+            onTap: onTap == null ? null : () => onTap!(room),
+            onLongPress: onLongPress == null ? null : () => onLongPress!(room),
+          );
+
+    if (!editingLayout || onMove == null) {
+      return SizedBox(
+        width: w,
+        height: _tileHeight,
+        child: tile, // 빈 칸은 그대로 빈 자리로 남는다
+      );
+    }
+
+    final target = _DropSlot(
+      width: w,
+      // 층마다 자리 번호가 따로라 다른 층 방은 받지 않는다.
+      accepts: (r) => r.floor == floor && !(room != null && room.id == r.id),
+      onAccept: (r) => onMove!(r, index),
+      child: tile,
+    );
+    if (room == null) return target;
+
+    return Draggable<Room>(
+      data: room,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _DragGhost(room: room, width: w),
+      childWhenDragging: SizedBox(
+        width: w,
+        height: _tileHeight,
+        child: const _EmptySlot(hint: false),
+      ),
+      child: target,
+    );
+  }
+}
+
+/// 옮기기 모드에서 방 하나가 놓일 수 있는 칸.
+class _DropSlot extends StatelessWidget {
+  const _DropSlot({
+    required this.width,
+    required this.accepts,
+    required this.onAccept,
+    this.child,
+  });
+
+  final double width;
+  final bool Function(Room) accepts;
+  final void Function(Room) onAccept;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<Room>(
+      onWillAcceptWithDetails: (d) => accepts(d.data),
+      onAcceptWithDetails: (d) => onAccept(d.data),
+      builder: (context, candidate, _) {
+        final hot = candidate.isNotEmpty;
+        return SizedBox(
+          width: width,
+          height: _tileHeight,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              child ?? const _EmptySlot(hint: true),
+              if (hot)
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: AppColors.brand.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(Radii.tile),
+                    border: Border.all(color: AppColors.brand, width: 2),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 빈 칸 표시. 옮기는 중에만 테두리를 보여준다(평소엔 건물 여백이라 아무것도 안 그린다).
+class _EmptySlot extends StatelessWidget {
+  const _EmptySlot({required this.hint});
+  final bool hint;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: hint ? AppColors.boardLine.withValues(alpha: 0.25) : null,
+      borderRadius: BorderRadius.circular(Radii.tile),
+      border: Border.all(color: AppColors.boardLine),
+    ),
+  );
+}
+
+/// 끌고 다니는 동안 손끝에 붙는 타일.
+class _DragGhost extends StatelessWidget {
+  const _DragGhost({required this.room, required this.width});
+  final Room room;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) => Transform.translate(
+    // 포인터 기준이라 손끝이 타일 가운데 오도록 민다.
+    offset: Offset(-width / 2, -_tileHeight / 2),
+    child: Material(
+      type: MaterialType.transparency,
+      child: Opacity(
+        opacity: 0.9,
+        child: RoomTile(room: room, width: width),
+      ),
+    ),
+  );
 }
 
 class _FloorHeader extends StatelessWidget {
