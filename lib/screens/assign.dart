@@ -311,8 +311,94 @@ class _AssignScreenState extends State<AssignScreen> {
                   ),
                 ),
         ),
+        if (selectedRooms.isNotEmpty) _roomDetails(rooms),
       ],
     );
+  }
+
+  /// 선택한 방에 누가 들어있는지 보여주는 패널.
+  /// 방을 클릭하면(=선택하면) 바로 여기에 인원이 뜬다.
+  Widget _roomDetails(List<Room> rooms) {
+    final picked = rooms.where((r) => selectedRooms.contains(r.id)).toList();
+    return Container(
+      height: 220,
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: Colors.grey.shade300)),
+        color: Colors.grey.shade50,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Text(
+              '선택한 방 인원 (${picked.length}개 방)',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 8),
+              children: [for (final r in picked) ..._roomBlock(r)],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _roomBlock(Room r) {
+    final people = store.occupantsOf(r)
+      ..sort((a, b) {
+        final g = (a.cell ?? a.zone ?? '').compareTo(b.cell ?? b.zone ?? '');
+        return g != 0 ? g : a.name.compareTo(b.name);
+      });
+    final summary = roomGroupSummary(r);
+    return [
+      Container(
+        width: double.infinity,
+        color: Colors.grey.shade200,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Text(
+          '${r.roomNo}호  ${store.peakOccupancy(r)}/${r.capacity}'
+          '${r.gender == null ? '' : '  ${genderLabel(r.gender!)}'}'
+          '${summary.isEmpty ? '' : '   $summary'}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      if (people.isEmpty)
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 6, 12, 6),
+          child: Text('비어 있음', style: TextStyle(color: Colors.grey)),
+        )
+      else
+        for (final a in people)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 2, 8, 2),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${a.name}  ${genderLabel(a.gender)} ${a.age}세'
+                    '${(a.zone ?? '').isEmpty ? '' : '   존:${a.zone}'}'
+                    '${(a.cell ?? '').isEmpty ? '' : '  셀:${a.cell}'}'
+                    '   ${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}',
+                  ),
+                ),
+                IconButton(
+                  tooltip: '배정 해제',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.remove_circle_outline, size: 18),
+                  onPressed: () {
+                    store.assignAll([a], null);
+                    setState(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+    ];
   }
 
   /// "301-304" 같은 범위로 방을 한 번에 선택한다. (store.parseRoomRange 재사용)
@@ -488,6 +574,22 @@ class _AssignScreenState extends State<AssignScreen> {
 }
 
 /// 방 카드. 배정/수용 배지 + 성별 표시.
+/// 방에 들어있는 그룹(셀 우선, 없으면 존) 별 인원 요약. 예: "에클레시아 4 · 다른셀 2"
+String roomGroupSummary(Room room) {
+  final counts = <String, int>{};
+  for (final a in store.occupantsOf(room)) {
+    final key = (a.cell ?? '').isNotEmpty
+        ? a.cell!
+        : (a.zone ?? '').isNotEmpty
+        ? a.zone!
+        : '소속없음';
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  final entries = counts.entries.toList()
+    ..sort((x, y) => y.value.compareTo(x.value));
+  return entries.map((e) => '${e.key} ${e.value}').join(' · ');
+}
+
 class RoomTile extends StatelessWidget {
   const RoomTile({
     super.key,
@@ -513,8 +615,9 @@ class RoomTile extends StatelessWidget {
         : full
         ? Colors.blue.shade200
         : Colors.green.shade200;
+    final summary = roomGroupSummary(room);
     return SizedBox(
-      width: 130,
+      width: 150,
       child: Material(
         color: color,
         // shape 와 borderRadius 를 같이 주면 Material 이 assert 로 죽는다. shape 만 쓴다.
@@ -564,6 +667,18 @@ class RoomTile extends StatelessWidget {
                   '$used / ${room.capacity}${over ? '  초과' : ''}',
                   style: TextStyle(
                     fontWeight: over ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+                // 누가/어느 그룹이 들어있는지 한 줄로. 클릭 전에도 보이게.
+                Text(
+                  summary.isEmpty ? '비어 있음' : summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: summary.isEmpty
+                        ? Colors.black38
+                        : Colors.black.withValues(alpha: 0.7),
                   ),
                 ),
               ],
