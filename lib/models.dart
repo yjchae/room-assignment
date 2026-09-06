@@ -166,6 +166,16 @@ class Attendee {
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
+/// 호수 오름차순. 숫자가 아닌 호수는 문자열로 비교한다.
+/// 화면과 배정 엔진이 같은 순서를 봐야 해서 모델 쪽에 둔다.
+int byRoomNo(Room a, Room b) {
+  final x = a.roomNumber, y = b.roomNumber;
+  if (x != null && y != null) return x.compareTo(y);
+  if (x != null) return -1;
+  if (y != null) return 1;
+  return a.roomNo.compareTo(b.roomNo);
+}
+
 /// 방의 밤별 인원수. 정원 계산은 전부 이 함수 하나를 거친다.
 ///
 /// 일정이 [nights] 와 하나도 겹치지 않는 사람(체크인/아웃이 집회 기간 밖 = 데이터 오류)은

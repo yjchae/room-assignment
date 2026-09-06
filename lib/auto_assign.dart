@@ -127,9 +127,18 @@ class Assignment {
 }
 
 class AutoAssignResult {
-  AutoAssignResult(this.assignments, this.unplaced);
+  AutoAssignResult(
+    this.assignments,
+    this.unplaced, {
+    this.priorityOutsideZone = const [],
+  });
+
   final List<Assignment> assignments;
   final List<Attendee> unplaced;
+
+  /// 우대 대상인데 지정한 층/호수 범위에 자리가 없어 다른 곳에 배정된 사람들.
+  /// 구역을 잡아놨는데 결과가 딴 층이면 운영자가 이유를 알아야 한다.
+  final List<Attendee> priorityOutsideZone;
 }
 
 /// 미배정 인원만 채운다. 기존 배정은 건드리지 않는다.
@@ -159,16 +168,15 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
   final roomKeys = <String, Set<String>>{for (final r in rooms) r.id: {}};
 
   void remember(String roomId, Attendee a) {
-    for (var lv = 1; lv <= rule.depthOf(a); lv++) {
+    final d = rule.depthOf(a);
+    if (d == 0) {
+      roomKeys[roomId]!.add(_looseKey);
+      return;
+    }
+    for (var lv = 1; lv <= d; lv++) {
       final k = rule.keyOf(a, lv);
       if (k != null) roomKeys[roomId]!.add(k);
     }
-  }
-
-  for (final a in event.attendees) {
-    if (a.roomId == null || !counts.containsKey(a.roomId)) continue;
-    roomGender[a.roomId!] ??= a.gender;
-    remember(a.roomId!, a);
   }
 
   final result = <Assignment>[];
@@ -200,6 +208,62 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
   /// 최대 동시 투숙 기준 남은 자리.
   int free(Room r) => r.capacity - counts[r.id]!.fold(0, math.max);
 
+  /// [a] 와 같은 그룹이 이미 들어있는 방들. 우선순위가 깊은 단계부터 찾아 내려간다.
+  /// (존+셀이 같은 방) 이 없으면 (존만 같은 방) 이라도 찾는다.
+  List<Room> sameGroupRooms(Attendee a) {
+    final depth = rule.depthOf(a);
+    if (depth == 0) {
+      return rooms.where((r) => roomKeys[r.id]!.contains(_looseKey)).toList();
+    }
+    for (var lv = depth; lv >= 1; lv--) {
+      final key = rule.keyOf(a, lv);
+      if (key == null) continue;
+      final hit = rooms.where((r) => roomKeys[r.id]!.contains(key)).toList();
+      if (hit.isNotEmpty) return hit;
+    }
+    return const [];
+  }
+
+  bool isEmptyRoom(Room r) => counts[r.id]!.every((c) => c == 0);
+
+  /// [a] 를 넣을 방을 고른다. 없으면 null.
+  ///
+  /// 방 고르는 순서가 이 알고리즘의 핵심이다:
+  ///   0등급 같은 그룹이 이미 있는 방 → 그 방부터 꽉 채운다
+  ///   1등급 아무도 없는 빈 방       → 새 그룹은 남의 방에 끼지 말고 빈 방을 연다
+  ///   2등급 다른 그룹이 있는 방     → 빈 방이 동나야 비로소 섞는다
+  /// 같은 등급 안에서는 (같은 그룹 방과 가까운 호수) → (덜 남은 방) → (낮은 호수).
+  Room? pickRoom(Attendee a) {
+    final same = sameGroupRooms(a);
+    final sameIds = same.map((r) => r.id).toSet();
+    final anchors = same.map((r) => r.roomNumber).whereType<int>().toList();
+
+    int tier(Room r) => sameIds.contains(r.id)
+        ? 0
+        : isEmptyRoom(r)
+        ? 1
+        : 2;
+
+    final candidates = rooms.where((r) => fits(r, a)).toList()
+      ..sort((x, y) {
+        final t = tier(x).compareTo(tier(y));
+        if (t != 0) return t;
+        // 빈 방을 새로 열 때는 낮은 호수(=낮은 층)부터. 운영자가 예측할 수 있게.
+        if (tier(x) == 1) return byRoomNo(x, y);
+        final d = _dist(x, anchors).compareTo(_dist(y, anchors));
+        if (d != 0) return d;
+        final f = free(x).compareTo(free(y));
+        return f != 0 ? f : byRoomNo(x, y);
+      });
+    return candidates.firstOrNull;
+  }
+
+  for (final a in event.attendees) {
+    if (a.roomId == null || !counts.containsKey(a.roomId)) continue;
+    roomGender[a.roomId!] ??= a.gender;
+    remember(a.roomId!, a);
+  }
+
   final todo = event.attendees.where((a) => a.roomId == null).toList();
 
   // 1단계: 우대 대상 → 지정 구역. 나이 많은 순, 낮은 층 먼저.
@@ -216,6 +280,8 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
       }
     }
   }
+  // 지정 구역에 못 들어간 우대 대상. 아래 단계에서 일반 인원처럼 배정된다.
+  final outsideZone = priority.where((a) => !placed.contains(a.id)).toList();
 
   // 2단계: 나머지를 (존, 셀) 그룹으로 묶어 큰 그룹부터.
   final rest = todo.where((a) => !placed.contains(a.id)).toList();
@@ -230,25 +296,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
 
   for (final g in orderedGroups) {
     for (final a in g.value) {
-      // 근접도 기준점: 우선순위가 깊은 단계부터 찾아 내려간다.
-      // (존+셀 이 같은 방) 이 없으면 (존만 같은 방) 옆이라도 붙인다.
-      var anchors = <int>[];
-      for (var lv = rule.depthOf(a); lv >= 1 && anchors.isEmpty; lv--) {
-        final key = rule.keyOf(a, lv);
-        if (key == null) continue;
-        anchors = rooms
-            .where((r) => roomKeys[r.id]!.contains(key))
-            .map((r) => r.roomNumber)
-            .whereType<int>()
-            .toList();
-      }
-      final candidates = rooms.where((r) => fits(r, a)).toList()
-        ..sort((x, y) {
-          final d = _dist(x, anchors).compareTo(_dist(y, anchors));
-          if (d != 0) return d;
-          return free(y).compareTo(free(x));
-        });
-      final room = candidates.firstOrNull;
+      final room = pickRoom(a);
       if (room != null) {
         place(room, a, '그룹');
         placed.add(a.id);
@@ -256,12 +304,12 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     }
   }
 
-  // 3단계: 남은 인원 → 성별 맞는 빈자리 아무 데나 (여유 많은 방부터).
+  // 3단계: 그룹 기준 값이 없는 사람들. 이들끼리도 한 방에 모으고(무소속끼리는 같은 그룹),
+  // 다른 그룹의 방에는 빈 방이 없을 때만 들어간다.
   for (final a in todo.where((a) => !placed.contains(a.id))) {
-    final candidates = rooms.where((r) => fits(r, a)).toList()
-      ..sort((x, y) => free(y).compareTo(free(x)));
-    if (candidates.isNotEmpty) {
-      place(candidates.first, a, '잔여');
+    final room = pickRoom(a);
+    if (room != null) {
+      place(room, a, '잔여');
       placed.add(a.id);
     }
   }
@@ -269,6 +317,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
   return AutoAssignResult(
     result,
     todo.where((a) => !placed.contains(a.id)).toList(),
+    priorityOutsideZone: outsideZone,
   );
 }
 
@@ -277,6 +326,9 @@ void applyAssignments(List<Assignment> assignments) {
     x.attendee.roomId = x.room.id;
   }
 }
+
+/// 그룹 기준 값이 하나도 없는 사람들이 공유하는 키. 이들끼리는 같은 그룹으로 본다.
+const _looseKey = '\u0000loose';
 
 /// 기준 호수들과의 최소 거리. 기준이 없으면 0 (거리 무시).
 int _dist(Room r, List<int> anchors) {

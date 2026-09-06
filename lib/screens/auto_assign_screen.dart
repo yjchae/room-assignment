@@ -302,6 +302,19 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
             ],
           ),
         ),
+        if (r.priorityOutsideZone.isNotEmpty)
+          Container(
+            width: double.infinity,
+            color: AppColors.warn.withValues(alpha: 0.15),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Text(
+              '우대 대상 ${r.priorityOutsideZone.length}명'
+              '(${r.priorityOutsideZone.take(3).map((a) => a.name).join(', ')}'
+              '${r.priorityOutsideZone.length > 3 ? ' 외' : ''})은 '
+              '지정한 구역에 빈자리가 없어 다른 층에 배정됩니다.',
+              style: const TextStyle(fontSize: 12, color: AppColors.text),
+            ),
+          ),
         const Divider(height: 1),
         Expanded(
           child: ListView.builder(

@@ -561,6 +561,229 @@ void main() {
     });
   });
 
+  group('방을 먼저 채운다 (흩어짐 방지)', () {
+    test('그룹이 없는 사람들도 한 방을 채우고 다음 방으로 간다', () {
+      // 예전엔 '여유 많은 방부터' 골라서 4인실 5개에 5명이 한 명씩 흩어졌다.
+      final rooms = [for (var n = 301; n <= 305; n++) room('$n', 4)];
+      final people = [for (var i = 0; i < 5; i++) person('P$i')];
+      final e = ev(rooms: rooms, attendees: people);
+
+      final res = autoAssign(e, AutoRule(priorityAge: null));
+      applyAssignments(res.assignments);
+
+      final byRoom = <String, int>{};
+      for (final a in people) {
+        byRoom[a.roomId!] = (byRoom[a.roomId!] ?? 0) + 1;
+      }
+      expect(byRoom['r301'], 4); // 첫 방을 꽉 채우고
+      expect(byRoom['r302'], 1); // 남은 1명만 다음 방
+      expect(byRoom.length, 2);
+    });
+
+    test('성별이 갈려도 각 성별끼리 방을 채운다', () {
+      // 남3 여3, 4인실 4개. 성별 분리 ON.
+      final rooms = [for (var n = 301; n <= 304; n++) room('$n', 4)];
+      final people = [
+        for (var i = 0; i < 3; i++) person('남$i'),
+        for (var i = 0; i < 3; i++) person('여$i', gender: 'F'),
+      ];
+      final e = ev(rooms: rooms, attendees: people);
+
+      final res = autoAssign(e, AutoRule(priorityAge: null));
+      applyAssignments(res.assignments);
+
+      expect(res.unplaced, isEmpty);
+      // 방 2개만 써야 한다 (남자방 1, 여자방 1)
+      expect(people.map((a) => a.roomId).toSet().length, 2);
+    });
+
+    test('큰 그룹은 방을 채우고 넘치는 만큼만 옆방으로', () {
+      final rooms = [for (var n = 301; n <= 305; n++) room('$n', 4)];
+      final people = [
+        for (var i = 0; i < 6; i++) person('셀원$i', zone: 'A존', cell: '1셀'),
+      ];
+      final e = ev(rooms: rooms, attendees: people);
+
+      final res = autoAssign(e, AutoRule(priorityAge: null));
+      applyAssignments(res.assignments);
+
+      final byRoom = <String, int>{};
+      for (final a in people) {
+        byRoom[a.roomId!] = (byRoom[a.roomId!] ?? 0) + 1;
+      }
+      expect(byRoom.length, 2);
+      expect(byRoom.values.toList()..sort(), [2, 4]);
+    });
+
+    test('이미 사람이 있는 방을 먼저 채운다', () {
+      // 301 에 1명 있고 302 는 비었다. 신규 2명은 301 을 채워야 한다.
+      final rooms = [room('301', 4), room('302', 4)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('기존', roomId: 'r301'),
+          person('신규1'),
+          person('신규2'),
+        ],
+      );
+      final res = autoAssign(e, AutoRule(priorityAge: null));
+      applyAssignments(res.assignments);
+      expect(e.attendees.where((a) => a.roomId == 'r301').length, 3);
+      expect(e.attendees.where((a) => a.roomId == 'r302'), isEmpty);
+    });
+
+    test('정원을 넘기지는 않는다', () {
+      final rooms = [room('301', 2), room('302', 2)];
+      final people = [for (var i = 0; i < 4; i++) person('P$i')];
+      final e = ev(rooms: rooms, attendees: people);
+      final res = autoAssign(e, AutoRule(priorityAge: null));
+      applyAssignments(res.assignments);
+      final s = Store()..event = e;
+      expect(s.peakOccupancy(rooms[0]), 2);
+      expect(s.peakOccupancy(rooms[1]), 2);
+      expect(res.unplaced, isEmpty);
+    });
+  });
+
+  group('다른 그룹과 섞이지 않는다', () {
+    test('셀만 기준으로 뒀을 때 다른 셀과 한 방에 안 들어간다', () {
+      // 4인실 3개. 1셀 2명, 2셀 2명 → 방을 채우겠다고 한 방에 몰면 안 된다.
+      final rooms = [for (var n = 301; n <= 303; n++) room('$n', 4)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('가1', cell: '1셀'),
+          person('가2', cell: '1셀'),
+          person('나1', cell: '2셀'),
+          person('나2', cell: '2셀'),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [GroupField.cell]),
+      );
+      applyAssignments(res.assignments);
+
+      for (final r in rooms) {
+        final cells = e.attendees
+            .where((a) => a.roomId == r.id)
+            .map((a) => a.cell)
+            .toSet();
+        expect(
+          cells.length,
+          lessThanOrEqualTo(1),
+          reason: '${r.roomNo}호에 $cells',
+        );
+      }
+    });
+
+    test('셀 없는 사람이 남의 셀 방에 끼지 않는다', () {
+      final rooms = [room('301', 4), room('302', 4)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('셀원1', cell: '1셀'),
+          person('셀원2', cell: '1셀'),
+          person('무소속'),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [GroupField.cell]),
+      );
+      applyAssignments(res.assignments);
+      final loose = e.attendees.firstWhere((a) => a.name == '무소속');
+      final cellRoom = e.attendees.firstWhere((a) => a.name == '셀원1').roomId;
+      expect(loose.roomId, isNot(cellRoom));
+    });
+
+    test('빈 방이 없으면 그때는 섞는다 (자리부터 확보)', () {
+      final e = ev(
+        rooms: [room('301', 4)],
+        attendees: [
+          person('가1', cell: '1셀'),
+          person('나1', cell: '2셀'),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [GroupField.cell]),
+      );
+      expect(res.assignments.length, 2);
+      expect(res.unplaced, isEmpty);
+    });
+
+    test('같은 셀은 여전히 한 방을 채운다', () {
+      final rooms = [for (var n = 301; n <= 304; n++) room('$n', 4)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [for (var i = 0; i < 4; i++) person('셀원$i', cell: '1셀')],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [GroupField.cell]),
+      );
+      applyAssignments(res.assignments);
+      expect(e.attendees.map((a) => a.roomId).toSet().length, 1);
+    });
+  });
+
+  group('우대 배정 구역', () {
+    test('1~2층을 지정하면 우대 대상이 낮은 층부터 들어간다', () {
+      // 1인실로 둬서 '나이 많은 순 → 낮은 층' 순서가 드러나게 한다.
+      final rooms = [
+        room('101', 1),
+        room('201', 1),
+        for (var n = 301; n <= 305; n++) room('$n', 4),
+      ];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('어르신1', age: 70),
+          person('어르신2', age: 80),
+          for (var i = 0; i < 3; i++) person('청년$i', age: 30),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: 65, floorMin: 1, floorMax: 2),
+      );
+      applyAssignments(res.assignments);
+      // 나이 많은 순으로 낮은 층
+      expect(e.attendees.firstWhere((a) => a.name == '어르신2').roomId, 'r101');
+      expect(e.attendees.firstWhere((a) => a.name == '어르신1').roomId, 'r201');
+    });
+
+    test('지정 층에 자리가 없으면 다른 층으로 가고, 그 사실이 보고된다', () {
+      // 1~2층이 아예 없는 건물
+      final rooms = [for (var n = 301; n <= 303; n++) room('$n', 4)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [person('어르신', age: 70), person('청년', age: 30)],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: 65, floorMin: 1, floorMax: 2),
+      );
+      applyAssignments(res.assignments);
+      expect(res.unplaced, isEmpty);
+      expect(res.priorityOutsideZone.map((a) => a.name), ['어르신']);
+    });
+
+    test('우대 대상이 없으면 구역 설정은 아무 영향이 없다', () {
+      final rooms = [room('101', 4), room('301', 4)];
+      final e = ev(rooms: rooms, attendees: [person('청년', age: 30)]);
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: 65, floorMin: 1, floorMax: 2),
+      );
+      applyAssignments(res.assignments);
+      expect(res.priorityOutsideZone, isEmpty);
+      // 새 방을 열 때는 낮은 호수부터
+      expect(e.attendees.single.roomId, 'r101');
+    });
+  });
+
   group('사용자 정의 참석자 항목', () {
     test('항목 추가/이름변경/삭제가 참석자 값까지 따라간다', () {
       final s = Store()..event = ev(attendees: [person('A'), person('B')]);

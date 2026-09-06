@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../models.dart';
 import '../theme.dart';
-import '../widgets/room_board.dart';
 
 class RoomsScreen extends StatelessWidget {
   const RoomsScreen({super.key});

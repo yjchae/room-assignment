@@ -350,12 +350,3 @@ Map<int?, List<Room>> byFloorDesc(List<Room> rooms) {
     ..sort((a, b) => (b ?? -9999).compareTo(a ?? -9999));
   return {for (final k in keys) k: map[k]!};
 }
-
-/// 호수 오름차순. 숫자가 아닌 호수는 문자열로 비교한다.
-int byRoomNo(Room a, Room b) {
-  final x = a.roomNumber, y = b.roomNumber;
-  if (x != null && y != null) return x.compareTo(y);
-  if (x != null) return -1;
-  if (y != null) return 1;
-  return a.roomNo.compareTo(b.roomNo);
-}
