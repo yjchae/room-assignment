@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../main.dart';
 import '../models.dart';
+import '../theme.dart';
+import '../widgets/room_board.dart';
 
 class RoomsScreen extends StatelessWidget {
   const RoomsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final rooms = [...store.event.rooms]..sort(_byRoomNo);
+    final rooms = [...store.event.rooms]..sort(byRoomNo);
     return Scaffold(
+      backgroundColor: AppColors.bg,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _roomDialog(context),
         icon: const Icon(Icons.add),
@@ -17,29 +20,45 @@ class RoomsScreen extends StatelessWidget {
       ),
       body: rooms.isEmpty
           ? const Center(
-              child: Text('방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.'),
+              child: Text(
+                '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.',
+                style: TextStyle(color: AppColors.textMuted),
+              ),
             )
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 90),
               children: [
-                Text(
-                  '총 ${rooms.length}개 방 · 수용 ${store.totalCapacity}명',
-                  style: Theme.of(context).textTheme.titleMedium,
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    StatCard('방', '${rooms.length}', unit: '개'),
+                    StatCard('총 수용', '${store.totalCapacity}', unit: '명'),
+                    StatCard(
+                      '잔여 좌석',
+                      '${rooms.map(store.freeSeats).fold(0, (s, x) => s + (x > 0 ? x : 0))}',
+                      unit: '석',
+                      color: AppColors.ok,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 20),
                 for (final entry in _byFloor(rooms).entries) ...[
                   Padding(
-                    padding: const EdgeInsets.only(top: 12, bottom: 4),
-                    child: Text(
+                    padding: const EdgeInsets.only(top: 4, bottom: 8),
+                    child: SectionTitle(
                       entry.key == null ? '기타' : '${entry.key}층',
-                      style: Theme.of(context).textTheme.titleSmall,
+                      subtitle:
+                          '${entry.value.length}실 · 수용 '
+                          '${entry.value.fold(0, (s, r) => s + r.capacity)}명',
                     ),
                   ),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: 10,
+                    runSpacing: 10,
                     children: [for (final r in entry.value) _RoomCard(room: r)],
                   ),
+                  const SizedBox(height: 16),
                 ],
               ],
             ),
@@ -53,14 +72,8 @@ Map<int?, List<Room>> _byFloor(List<Room> rooms) {
     map.putIfAbsent(r.floor, () => []).add(r);
   }
   final keys = map.keys.toList()
-    ..sort((a, b) => (a ?? 9999).compareTo(b ?? 9999));
+    ..sort((a, b) => (b ?? -9999).compareTo(a ?? -9999));
   return {for (final k in keys) k: map[k]!};
-}
-
-int _byRoomNo(Room a, Room b) {
-  final x = a.roomNumber, y = b.roomNumber;
-  if (x != null && y != null) return x.compareTo(y);
-  return a.roomNo.compareTo(b.roomNo);
 }
 
 class _RoomCard extends StatelessWidget {
@@ -70,57 +83,90 @@ class _RoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final used = store.peakOccupancy(room);
-    final over = used > room.capacity;
+    final st = statusOf(used: used, capacity: room.capacity);
     return SizedBox(
-      width: 190,
-      child: Card(
-        margin: EdgeInsets.zero,
+      width: 196,
+      child: Material(
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.card),
+          side: const BorderSide(color: AppColors.border),
+        ),
         child: InkWell(
           onTap: () => _roomDialog(context, room),
+          borderRadius: BorderRadius.circular(Radii.card),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Text(
-                      room.roomNo,
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: st.swatch,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: over
-                            ? Colors.red.shade100
-                            : Colors.green.shade100,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        '$used/${room.capacity}',
-                        style: TextStyle(
-                          color: over
-                              ? Colors.red.shade900
-                              : Colors.green.shade900,
-                        ),
+                    Text(
+                      room.roomNo,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.text,
                       ),
                     ),
                     const Spacer(),
-                    if (room.gender != null) Text(genderLabel(room.gender!)),
+                    if (room.gender != null) GenderBadge(room.gender!),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(
+                      '$used',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    Text(
+                      ' / ${room.capacity}명',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      st.label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: st == RoomStatus.empty
+                            ? AppColors.textMuted
+                            : st.swatch,
+                      ),
+                    ),
                   ],
                 ),
                 if ((room.note ?? '').isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(top: 4),
+                    padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       room.note!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                   ),
               ],
@@ -131,8 +177,6 @@ class _RoomCard extends StatelessWidget {
     );
   }
 }
-
-String genderLabel(String g) => g == 'M' ? '남' : '여';
 
 /// [room] 이 null 이면 추가(범위 지원), 있으면 수정.
 Future<void> _roomDialog(BuildContext context, [Room? room]) async {
@@ -192,7 +236,10 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
           if (room != null)
             TextButton(
               onPressed: () => Navigator.pop(context, 'delete'),
-              child: const Text('삭제', style: TextStyle(color: Colors.red)),
+              child: const Text(
+                '삭제',
+                style: TextStyle(color: AppColors.danger),
+              ),
             ),
           TextButton(
             onPressed: () => Navigator.pop(context, 'cancel'),

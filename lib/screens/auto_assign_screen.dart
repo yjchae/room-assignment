@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../auto_assign.dart';
 import '../main.dart';
-import 'rooms.dart' show genderLabel;
+import '../theme.dart';
 
 class AutoAssignScreen extends StatefulWidget {
   const AutoAssignScreen({super.key});

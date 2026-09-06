@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
-import 'rooms.dart' show genderLabel;
 
 class AttendeesScreen extends StatefulWidget {
   const AttendeesScreen({super.key});

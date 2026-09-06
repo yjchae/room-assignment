@@ -102,6 +102,23 @@ class Store extends ChangeNotifier {
   int peakOccupancy(Room room) =>
       occupancyByNight(occupantsOf(room), event.nights).fold(0, math.max);
 
+  /// 방에 들어있는 그룹(셀 우선, 없으면 존)별 인원 요약. 예: "에클레시아 4 · 믿음셀 2"
+  /// 방 하나에 어느 단체가 들어있는지 한 줄로 보여줄 때 쓴다.
+  String groupSummary(Room room) {
+    final counts = <String, int>{};
+    for (final a in occupantsOf(room)) {
+      final key = (a.cell ?? '').isNotEmpty
+          ? a.cell!
+          : (a.zone ?? '').isNotEmpty
+          ? a.zone!
+          : '소속없음';
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    final entries = counts.entries.toList()
+      ..sort((x, y) => y.value.compareTo(x.value));
+    return entries.map((e) => '${e.key} ${e.value}').join(' · ');
+  }
+
   /// 해당 밤들 중 가장 붐비는 시점 기준 남은 자리. 음수면 초과.
   int freeSeats(Room room) => room.capacity - peakOccupancy(room);
 

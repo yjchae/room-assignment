@@ -6,9 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/screens/assign.dart';
+import 'package:room_assignment/screens/rooms.dart';
+import 'package:room_assignment/screens/status.dart';
+import 'package:room_assignment/theme.dart';
 
 Room room(String no, int cap, {String? gender}) =>
     Room(id: 'r$no', roomNo: no, capacity: cap, gender: gender);
+
+/// 방 타일의 호수 글자. 왼쪽 참석자 목록에도 배정된 호수 배지가 있어
+/// find.text 만 쓰면 대상이 모호해진다.
+Finder tile(String roomNo) =>
+    find.descendant(of: find.byType(RoomTile), matching: find.text(roomNo));
 
 Future<void> pump(WidgetTester tester, Widget child) =>
     tester.pumpWidget(MaterialApp(home: Scaffold(body: child)));
@@ -74,8 +82,13 @@ void main() {
     await pump(tester, const AssignScreen());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('에클레시아 2'), findsOneWidget); // 301호 타일
-    expect(find.text('비어 있음'), findsWidgets); // 302호 타일
+    // 타일은 66px 고정이라 그룹 이름은 툴팁으로 보여준다.
+    final tips = tester
+        .widgetList<Tooltip>(find.byType(Tooltip))
+        .map((t) => t.message ?? '')
+        .toList();
+    expect(tips.any((m) => m.contains('에클레시아 2')), isTrue, reason: '$tips');
+    expect(tips.any((m) => m.contains('비어 있음')), isTrue, reason: '$tips');
   });
 
   testWidgets('방을 클릭하면 그 방 인원이 아래 패널에 뜬다', (tester) async {
@@ -95,19 +108,19 @@ void main() {
     await tester.pumpAndSettle();
 
     // 왼쪽 참석자 목록에도 이름이 있으므로 패널 유무로 판단한다.
-    expect(find.textContaining('선택한 방 인원'), findsNothing);
+    expect(find.textContaining('고른 방 인원'), findsNothing);
     expect(find.textContaining('김철수'), findsOneWidget); // 왼쪽 목록에만
 
-    await tester.tap(find.text('301'));
+    await tester.tap(tile('301'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('선택한 방 인원 (1개 방)'), findsOneWidget);
+    expect(find.text('고른 방 인원 (1개 방)'), findsOneWidget);
     expect(find.textContaining('김철수'), findsNWidgets(2)); // 왼쪽 + 패널
 
     // 다시 누르면 선택 해제 -> 패널도 사라진다
-    await tester.tap(find.text('301'));
+    await tester.tap(tile('301'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('선택한 방 인원'), findsNothing);
+    expect(find.textContaining('고른 방 인원'), findsNothing);
   });
 
   testWidgets('방을 누르면 선택되고 배정 버튼 라벨이 바뀐다', (tester) async {
@@ -124,13 +137,76 @@ void main() {
     await pump(tester, const AssignScreen());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('301'));
+    await tester.tap(tile('301'));
     await tester.pump();
     expect(tester.takeException(), isNull);
     expect(find.textContaining('1개 방 배정'), findsOneWidget);
 
-    await tester.tap(find.text('302'));
+    await tester.tap(tile('302'));
     await tester.pump();
     expect(find.textContaining('2개 방 배정'), findsOneWidget);
+  });
+
+  testWidgets('보드는 한 줄에 10칸까지만 채운다', (tester) async {
+    store.event.rooms
+      ..clear()
+      ..addAll([for (var i = 1; i <= 12; i++) room('${300 + i}', 4)]);
+
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pump(tester, RoomBoard(rooms: store.event.rooms));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final tiles = find.byType(RoomTile);
+    expect(tiles, findsNWidgets(12));
+    final firstRowY = tester.getTopLeft(tiles.at(0)).dy;
+    // 1~10번째는 같은 줄, 11번째부터 다음 줄.
+    for (var i = 1; i < 10; i++) {
+      expect(tester.getTopLeft(tiles.at(i)).dy, firstRowY, reason: '$i번째');
+    }
+    expect(tester.getTopLeft(tiles.at(10)).dy, greaterThan(firstRowY));
+  });
+
+  testWidgets('층은 높은 층이 위로 온다', (tester) async {
+    store.event.rooms
+      ..clear()
+      ..addAll([room('201', 4), room('401', 4), room('301', 4)]);
+    await pump(tester, RoomBoard(rooms: store.event.rooms));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getTopLeft(find.text('401')).dy,
+      lessThan(tester.getTopLeft(find.text('301')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('301')).dy,
+      lessThan(tester.getTopLeft(find.text('201')).dy),
+    );
+  });
+
+  testWidgets('현황/방관리 화면이 뜬다', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    for (final screen in [const StatusScreen(), const RoomsScreen()]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: Scaffold(body: screen),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '$screen');
+    }
+  });
+
+  test('방 상태 판정', () {
+    expect(statusOf(used: 0, capacity: 4), RoomStatus.empty);
+    expect(statusOf(used: 1, capacity: 4), RoomStatus.partial);
+    expect(statusOf(used: 4, capacity: 4), RoomStatus.full);
+    expect(statusOf(used: 5, capacity: 4), RoomStatus.over);
   });
 }

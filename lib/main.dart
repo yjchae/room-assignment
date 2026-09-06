@@ -8,6 +8,7 @@ import 'screens/auto_assign_screen.dart';
 import 'screens/rooms.dart';
 import 'screens/status.dart';
 import 'store.dart';
+import 'theme.dart';
 
 /// ponytail: 앱 상태는 전역 하나. 운영자 1명, 화면 5개. DI 컨테이너를 넣을 이유가 없다.
 final store = Store();
@@ -30,11 +31,8 @@ class App extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '방배정',
-      theme: ThemeData(
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
-        visualDensity: VisualDensity.compact,
-      ),
+      theme: buildAppTheme(),
+      debugShowCheckedModeBanner: false,
       home: const Gate(),
     );
   }
@@ -67,23 +65,39 @@ class Shell extends StatelessWidget {
       animation: store,
       builder: (context, _) => Scaffold(
         appBar: AppBar(
-          title: Text(store.event.name),
+          titleSpacing: 20,
+          title: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: AppColors.brand,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.hotel, size: 16, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              Text(store.event.name),
+            ],
+          ),
+          shape: const Border(bottom: BorderSide(color: AppColors.border)),
           actions: [
+            TextButton.icon(
+              icon: const Icon(Icons.event, size: 18),
+              label: Text(
+                '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}',
+                style: const TextStyle(fontSize: 13),
+              ),
+              onPressed: () => _editEvent(context),
+            ),
+            const SizedBox(width: 4),
             IconButton(
               tooltip: '비밀번호 변경',
-              icon: const Icon(Icons.lock_outline),
+              icon: const Icon(Icons.lock_outline, size: 20),
               onPressed: () => setPasswordDialog(context),
             ),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: TextButton.icon(
-                icon: const Icon(Icons.event),
-                label: Text(
-                  '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}',
-                ),
-                onPressed: () => _editEvent(context),
-              ),
-            ),
+            const SizedBox(width: 12),
           ],
         ),
         body: Column(
@@ -211,11 +225,11 @@ class _Warning extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    color: Colors.red.shade100,
+    color: const Color(0xFFFDECEC),
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
     child: Row(
       children: [
-        const Icon(Icons.warning_amber, color: Colors.red),
+        const Icon(Icons.warning_amber, color: AppColors.danger),
         const SizedBox(width: 8),
         Expanded(child: Text(message)),
       ],
@@ -255,8 +269,25 @@ class _GateState extends State<Gate> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.lock, size: 48),
-              const SizedBox(height: 16),
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: AppColors.brand,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.hotel, color: Colors.white),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                '방배정',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.text,
+                ),
+              ),
+              const SizedBox(height: 20),
               TextField(
                 controller: pw,
                 autofocus: true,

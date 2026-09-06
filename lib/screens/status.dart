@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../main.dart';
-import '../models.dart';
-import 'assign.dart' show RoomTile, showRoomOccupants, pendingSelection;
+import '../theme.dart';
+import '../widgets/room_board.dart';
+import 'assign.dart' show showRoomOccupants, pendingSelection;
 
 class StatusScreen extends StatelessWidget {
   const StatusScreen({super.key});
@@ -12,63 +13,49 @@ class StatusScreen extends StatelessWidget {
     final e = store.event;
     final assigned = e.attendees.where((a) => a.roomId != null).length;
     final unassigned = store.unassigned;
-    final free = store.event.rooms
+    final free = e.rooms
         .map(store.freeSeats)
         .fold(0, (s, x) => s + (x > 0 ? x : 0));
-    final roomsByFloor = _byFloor(e.rooms);
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       children: [
         Wrap(
           spacing: 12,
           runSpacing: 12,
           children: [
-            _Stat('총원', '${e.attendees.length}명'),
-            _Stat('배정완료', '$assigned명', color: Colors.blue),
-            _Stat(
+            StatCard('총원', '${e.attendees.length}', unit: '명'),
+            StatCard('배정완료', '$assigned', unit: '명', color: AppColors.info),
+            StatCard(
               '미배정',
-              '${unassigned.length}명',
-              color: unassigned.isEmpty ? Colors.green : Colors.orange,
+              '${unassigned.length}',
+              unit: '명',
+              color: unassigned.isEmpty ? AppColors.ok : AppColors.warn,
             ),
-            _Stat('총 수용', '${store.totalCapacity}명'),
-            _Stat('잔여 좌석', '$free석', color: Colors.green),
+            StatCard('총 수용', '${store.totalCapacity}', unit: '명'),
+            StatCard('잔여 좌석', '$free', unit: '석', color: AppColors.ok),
           ],
         ),
         const SizedBox(height: 24),
-        Text('전체 구조', style: Theme.of(context).textTheme.titleMedium),
-        const Text(
-          '회색=빈방 · 초록=여유 · 파랑=만실 · 빨강=초과 (클릭하면 인원 목록)',
-          style: TextStyle(color: Colors.grey),
-        ),
-        const SizedBox(height: 8),
-        if (e.rooms.isEmpty)
-          const Text('방이 없습니다.')
-        else
-          for (final entry in roomsByFloor.entries) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 6),
-              child: Text(
-                entry.key == null ? '기타' : '${entry.key}층',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
+        Row(
+          children: [
+            const Expanded(
+              child: SectionTitle('전체 구조', subtitle: '타일을 클릭하면 그 방 인원이 나옵니다'),
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final r in entry.value)
-                  RoomTile(room: r, onTap: () => showRoomOccupants(context, r)),
-              ],
-            ),
+            const SizedBox(width: 16),
+            const RoomLegend(),
           ],
+        ),
+        const SizedBox(height: 10),
+        RoomBoard(rooms: e.rooms, onTap: (r) => showRoomOccupants(context, r)),
         const SizedBox(height: 24),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: _Panel(
-                title: '미배정 인원 (${unassigned.length}명)',
+                title: '미배정 인원',
+                count: unassigned.length,
                 action: unassigned.isEmpty
                     ? null
                     : TextButton(
@@ -78,20 +65,36 @@ class StatusScreen extends StatelessWidget {
                             ..addAll(unassigned.map((a) => a.id));
                           tabIndex.value = 2;
                         },
-                        child: const Text('전체 선택해서 배정하기'),
+                        child: const Text('전체 선택해서 배정'),
                       ),
                 children: [
                   for (final a in unassigned.take(200))
                     ListTile(
                       dense: true,
-                      title: Text(
-                        '${a.name}  ${a.gender == 'M' ? '남' : '여'} ${a.age}세',
+                      title: Row(
+                        children: [
+                          Text(
+                            a.name,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(width: 6),
+                          GenderBadge(a.gender),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${a.age}세',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
                       ),
                       subtitle: Text(
                         [
-                          if ((a.zone ?? '').isNotEmpty) '존:${a.zone}',
-                          if ((a.cell ?? '').isNotEmpty) '셀:${a.cell}',
-                        ].join('  '),
+                          if ((a.zone ?? '').isNotEmpty) '존 ${a.zone}',
+                          if ((a.cell ?? '').isNotEmpty) '셀 ${a.cell}',
+                        ].join('  ·  '),
+                        style: const TextStyle(fontSize: 11),
                       ),
                       onTap: () {
                         pendingSelection
@@ -107,33 +110,47 @@ class StatusScreen extends StatelessWidget {
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: _Panel(
-                title: '여유 있는 방',
-                children: [
-                  for (final r
-                      in e.rooms.where((r) => store.freeSeats(r) > 0).toList()
-                        ..sort(
-                          (a, b) =>
-                              store.freeSeats(b).compareTo(store.freeSeats(a)),
-                        ))
-                    ListTile(
-                      dense: true,
-                      title: Text('${r.roomNo}호'),
-                      subtitle: Text(
-                        '${store.peakOccupancy(r)}/${r.capacity}'
-                        '${r.gender == null ? '' : '  ${r.gender == 'M' ? '남' : '여'}'}',
-                      ),
-                      trailing: Text(
-                        '+${store.freeSeats(r)}',
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold,
+              child: () {
+                final spare =
+                    e.rooms.where((r) => store.freeSeats(r) > 0).toList()..sort(
+                      (a, b) =>
+                          store.freeSeats(b).compareTo(store.freeSeats(a)),
+                    );
+                return _Panel(
+                  title: '여유 있는 방',
+                  count: spare.length,
+                  children: [
+                    for (final r in spare)
+                      ListTile(
+                        dense: true,
+                        title: Row(
+                          children: [
+                            Text(
+                              '${r.roomNo}호',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            if (r.gender != null) GenderBadge(r.gender!),
+                          ],
                         ),
+                        subtitle: Text(
+                          '${store.peakOccupancy(r)}/${r.capacity}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        trailing: Text(
+                          '+${store.freeSeats(r)}',
+                          style: const TextStyle(
+                            color: AppColors.ok,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        onTap: () => showRoomOccupants(context, r),
                       ),
-                      onTap: () => showRoomOccupants(context, r),
-                    ),
-                ],
-              ),
+                  ],
+                );
+              }(),
             ),
           ],
         ),
@@ -142,61 +159,46 @@ class StatusScreen extends StatelessWidget {
   }
 }
 
-Map<int?, List<Room>> _byFloor(List<Room> rooms) {
-  final sorted = [
-    ...rooms,
-  ]..sort((a, b) => (a.roomNumber ?? 999999).compareTo(b.roomNumber ?? 999999));
-  final map = <int?, List<Room>>{};
-  for (final r in sorted) {
-    map.putIfAbsent(r.floor, () => []).add(r);
-  }
-  final keys = map.keys.toList()
-    ..sort((a, b) => (a ?? 9999).compareTo(b ?? 9999));
-  return {for (final k in keys) k: map[k]!};
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat(this.label, this.value, {this.color});
-  final String label, value;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      child: Column(
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.headlineSmall
-                ?.copyWith(color: color),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 class _Panel extends StatelessWidget {
-  const _Panel({required this.title, required this.children, this.action});
+  const _Panel({
+    required this.title,
+    required this.children,
+    this.count,
+    this.action,
+  });
   final String title;
+  final int? count;
   final List<Widget> children;
   final Widget? action;
 
   @override
   Widget build(BuildContext context) => Card(
-    margin: EdgeInsets.zero,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 10),
           child: Row(
             children: [
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.text,
+                ),
+              ),
+              if (count != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '$count',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.brand,
+                  ),
+                ),
+              ],
               const Spacer(),
               ?action,
             ],
@@ -205,8 +207,8 @@ class _Panel extends StatelessWidget {
         const Divider(height: 1),
         if (children.isEmpty)
           const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('없음', style: TextStyle(color: Colors.grey)),
+            padding: EdgeInsets.all(20),
+            child: Text('없음', style: TextStyle(color: AppColors.textMuted)),
           )
         else
           ...children,
