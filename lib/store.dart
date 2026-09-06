@@ -220,6 +220,38 @@ class Store extends ChangeNotifier {
     return (made, skipped);
   }
 
+  /// 같은 층 격자 안에서 [room] 을 [slot] 자리로 옮긴다.
+  /// 그 자리에 다른 방이 있으면 서로 자리를 바꾼다.
+  ///
+  /// 옮기기 전에 지금 보이는 배치를 그대로 자리 번호로 굳힌다. 자동 배치된 방들은
+  /// 앞자리가 비면 줄줄이 당겨지기 때문에, 굳히지 않으면 한 방을 옮길 때마다
+  /// 옆방들이 같이 움직여 보인다.
+  void moveRoom(Room room, int slot, {required int cols}) {
+    if (slot < 0) return;
+    final floor = layoutSlots(
+      event.rooms.where((r) => r.floor == room.floor).toList(),
+      cols,
+    );
+    for (var i = 0; i < floor.length; i++) {
+      floor[i]?.slot = i;
+    }
+    final taken = slot < floor.length ? floor[slot] : null;
+    if (taken == null || taken.id != room.id) {
+      final from = room.slot;
+      room.slot = slot;
+      taken?.slot = from;
+    }
+    commit();
+  }
+
+  /// 손으로 옮긴 자리를 전부 지운다. 다시 호수 순 자동 배치로 돌아간다.
+  void resetLayout() {
+    for (final r in event.rooms) {
+      r.slot = null;
+    }
+    commit();
+  }
+
   /// 방 삭제. 배정된 인원은 미배정으로 되돌린다.
   int deleteRoom(Room room) {
     final freed = occupantsOf(room);

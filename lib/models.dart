@@ -68,12 +68,17 @@ class Room {
   String? gender; // 'M' | 'F' | null(무관)
   String? note;
 
+  /// 보드에서 이 방이 놓인 자리. 같은 층 격자의 0부터 세는 칸 번호.
+  /// null 이면 호수 순서대로 자동 배치된다. 운영자가 드래그로 옮기면 값이 박힌다.
+  int? slot;
+
   Room({
     required this.id,
     required this.roomNo,
     required this.capacity,
     this.gender,
     this.note,
+    this.slot,
   });
 
   /// "301" -> 3. 숫자가 아니면 null.
@@ -90,6 +95,7 @@ class Room {
     'capacity': capacity,
     'gender': gender,
     'note': note,
+    'slot': slot,
   };
 
   factory Room.fromJson(Map<String, dynamic> j) => Room(
@@ -98,6 +104,7 @@ class Room {
     capacity: (j['capacity'] as num).toInt(),
     gender: j['gender'] as String?,
     note: j['note'] as String?,
+    slot: (j['slot'] as num?)?.toInt(),
   );
 }
 
@@ -200,3 +207,51 @@ List<bool> stayMask(Attendee a, List<DateTime> nights) {
   final m = [for (final n in nights) a.staysOn(n)];
   return m.contains(true) ? m : List<bool>.filled(nights.length, true);
 }
+
+/// 한 층의 방들을 격자 자리에 놓는다. 반환 길이는 항상 [cols] 의 배수라
+/// 그대로 [cols] 개씩 끊으면 한 줄이 된다. null 인 칸은 빈 자리(복도·엘리베이터).
+///
+/// [Room.slot] 이 박혀 있는 방은 그 자리에, 나머지는 남은 앞자리부터 호수 순으로 채운다.
+/// 같은 자리를 두 방이 주장하면 호수가 빠른 쪽이 갖고 다른 쪽은 자동 배치로 밀린다
+/// (손으로 고친 JSON 이라도 방이 사라지지는 않게).
+List<Room?> layoutSlots(List<Room> rooms, int cols) {
+  final grid = <Room?>[];
+  void grow(int len) {
+    while (grid.length < len) {
+      grid.add(null);
+    }
+  }
+
+  final auto = <Room>[];
+  for (final r in [...rooms]..sort(byRoomNo)) {
+    final s = r.slot;
+    if (s == null || s < 0 || s >= _slotLimit) {
+      auto.add(r);
+      continue;
+    }
+    grow(s + 1);
+    if (grid[s] == null) {
+      grid[s] = r;
+    } else {
+      auto.add(r);
+    }
+  }
+
+  var cursor = 0;
+  for (final r in auto) {
+    while (cursor < grid.length && grid[cursor] != null) {
+      cursor++;
+    }
+    grow(cursor + 1);
+    grid[cursor] = r;
+  }
+
+  if (cols > 0 && grid.length % cols != 0) {
+    grow(grid.length + cols - grid.length % cols);
+  }
+  return grid;
+}
+
+/// 자리 번호 상한. 이보다 큰 값은 오타나 깨진 파일로 보고 자동 배치로 되돌린다.
+/// (자리 하나가 곧 위젯 하나라 상한이 없으면 격자가 통째로 커진다.)
+const _slotLimit = 10000;

@@ -2,6 +2,7 @@
 // flutter analyze 는 Material(shape + borderRadius 동시 지정) 같은 런타임 assert 를
 // 못 잡는다. 실제로 한 번 pump 해봐야 걸린다.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/models.dart';
@@ -25,7 +26,10 @@ Future<void> pump(WidgetTester tester, Widget child) =>
 void main() {
   // 이 앱은 데스크톱 전용이다. 기본 테스트 화면(800x600)은 실제 창보다 훨씬 좁아
   // 방 타일이 화면 밖으로 밀려 탭이 빗나간다.
-  setUpAll(() {
+  //
+  // 매 테스트마다 다시 잡는다 — 창 크기를 따로 바꾼 테스트가 tearDown 에서
+  // view.reset() 을 하면 setUpAll 로 잡아둔 값까지 같이 지워진다.
+  setUp(() {
     final view = TestWidgetsFlutterBinding.ensureInitialized()
         .platformDispatcher
         .views
@@ -270,5 +274,122 @@ void main() {
     expect(find.text('비밀번호 변경'), findsOneWidget);
     expect(find.text('현재 비밀번호'), findsOneWidget);
     expect(find.textContaining('새 비밀번호'), findsWidgets);
+  });
+
+  testWidgets('Shift+클릭하면 두 호실 사이의 방이 전부 선택된다', (tester) async {
+    store.event.rooms
+      ..clear()
+      ..addAll([for (var i = 1; i <= 5; i++) room('${300 + i}', 4)]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+
+    await tester.tap(tile('301'));
+    await tester.pump();
+    expect(find.textContaining('1개 방 배정'), findsOneWidget);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    addTearDown(() => tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft));
+    await tester.tap(tile('304'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    // 301~304 = 4개. 305 는 범위 밖이라 안 들어온다.
+    expect(find.textContaining('4개 방 배정'), findsOneWidget);
+
+    // Shift 를 뗀 뒤의 클릭은 다시 한 칸씩 토글이다.
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.tap(tile('305'));
+    await tester.pump();
+    expect(find.textContaining('5개 방 배정'), findsOneWidget);
+  });
+
+  testWidgets('Shift 를 눌러도 기준점이 없으면 그 방만 선택된다', (tester) async {
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    addTearDown(() => tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft));
+    await tester.tap(tile('302'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('1개 방 배정'), findsOneWidget);
+  });
+
+  testWidgets('자리 옮기기: 끌어다 놓으면 두 방이 자리를 바꾼다', (tester) async {
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('자리 옮기기'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final from = tester.getCenter(tile('301'));
+    final to = tester.getCenter(tile('302'));
+    await tester.drag(
+      find.ancestor(of: tile('301'), matching: find.byType(Draggable<Room>)),
+      to - from,
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    expect(store.event.rooms[0].slot, 1); // 301
+    expect(store.event.rooms[1].slot, 0); // 302
+    // 화면에서도 자리가 바뀐다.
+    expect(
+      tester.getCenter(tile('301')).dx,
+      greaterThan(tester.getCenter(tile('302')).dx),
+    );
+  });
+
+  testWidgets('자리 옮기기: 빈 칸으로 옮기면 그 자리가 비어 남는다', (tester) async {
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('자리 옮기기'));
+    await tester.pumpAndSettle();
+
+    final step =
+        tester.getCenter(tile('302')).dx - tester.getCenter(tile('301')).dx;
+    await tester.drag(
+      find.ancestor(of: tile('302'), matching: find.byType(Draggable<Room>)),
+      Offset(step * 2, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(store.event.rooms[1].slot, 3); // 302 가 세 칸 건너로
+    expect(store.event.rooms[0].slot, 0); // 301 은 제자리
+  });
+
+  testWidgets('자리 옮기기를 끄면 드래그 위젯이 사라진다', (tester) async {
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    expect(find.byType(Draggable<Room>), findsNothing);
+
+    await tester.tap(find.text('자리 옮기기'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Draggable<Room>), findsNWidgets(2));
+
+    await tester.tap(find.text('자리 옮기기'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Draggable<Room>), findsNothing);
+  });
+
+  testWidgets('옮겨 놓은 자리는 현황 화면에서도 그대로다', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    store.event.rooms[0].slot = 4; // 301 을 복도 건너편으로
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: const Scaffold(body: StatusScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    // 302(자동 배치, 0번 칸) 보다 301 이 오른쪽에 온다.
+    expect(
+      tester.getCenter(tile('301')).dx,
+      greaterThan(tester.getCenter(tile('302')).dx),
+    );
   });
 }

@@ -12,6 +12,13 @@ final d3 = DateTime(2026, 1, 4); // 3박
 int _n = 0;
 String nid() => 'id${_n++}';
 
+/// 저장이 진짜 파일로 나가도 테스트가 서로 안 밟게, 매번 임시 폴더를 하나 쓴다.
+File tmpFile() {
+  final dir = Directory.systemTemp.createTempSync('room_assign_test');
+  addTearDown(() => dir.deleteSync(recursive: true));
+  return File('${dir.path}/event.json');
+}
+
 Event ev({
   List<Room>? rooms,
   List<Attendee>? attendees,
@@ -946,6 +953,113 @@ void main() {
       await a.load();
       expect(a.isSet, isFalse);
       expect(a.check('아무거나'), isFalse);
+    });
+  });
+
+  group('방 자리 배치 (드래그 앤 드롭)', () {
+    test('자리를 안 정했으면 호수 순으로 앞에서부터 채운다', () {
+      final rooms = [room('303', 4), room('301', 4), room('302', 4)];
+      final grid = layoutSlots(rooms, 5);
+      expect(grid.length, 5); // 줄 끝까지 채워서 돌려준다
+      expect(grid.take(3).map((r) => r?.roomNo).toList(), [
+        '301',
+        '302',
+        '303',
+      ]);
+      expect(grid.skip(3).every((r) => r == null), isTrue);
+    });
+
+    test('자리가 박힌 방은 그 자리에 있고 사이는 빈 칸으로 남는다', () {
+      final rooms = [
+        room('301', 4)..slot = 0,
+        room('302', 4)..slot = 4, // 복도 건너편
+      ];
+      final grid = layoutSlots(rooms, 5);
+      expect(grid.map((r) => r?.roomNo).toList(), [
+        '301',
+        null,
+        null,
+        null,
+        '302',
+      ]);
+    });
+
+    test('빈 줄까지 자리를 잡으면 격자가 그만큼 늘어난다', () {
+      final grid = layoutSlots([room('301', 4)..slot = 7], 5);
+      expect(grid.length, 10);
+      expect(grid[7]?.roomNo, '301');
+    });
+
+    test('같은 자리를 두 방이 주장하면 밀린 방도 사라지지 않는다', () {
+      final rooms = [room('301', 4)..slot = 2, room('302', 4)..slot = 2];
+      final grid = layoutSlots(rooms, 5);
+      expect(grid.whereType<Room>().length, 2);
+      expect(grid[2]?.roomNo, '301'); // 호수가 빠른 쪽이 자리를 갖는다
+    });
+
+    test('망가진 자리 번호는 자동 배치로 되돌린다', () {
+      final grid = layoutSlots([
+        room('301', 4)..slot = -3,
+        room('302', 4)..slot = 999999,
+      ], 5);
+      expect(grid.take(2).map((r) => r?.roomNo).toList(), ['301', '302']);
+    });
+
+    test('빈 칸으로 옮기면 그 자리로 가고 옆방은 그대로 있다', () async {
+      final store = Store(fileOverride: tmpFile());
+      store.event = ev(rooms: [room('301', 4), room('302', 4)]);
+      store.moveRoom(store.event.rooms[0], 3, cols: 5);
+      await store.pendingWrites;
+      expect(store.event.rooms[0].slot, 3);
+      // 옮기기 전 배치를 굳히므로 안 건드린 방은 제자리에 남는다
+      expect(store.event.rooms[1].slot, 1);
+    });
+
+    test('다른 방 위에 놓으면 서로 자리를 바꾼다', () async {
+      final store = Store(fileOverride: tmpFile());
+      store.event = ev(rooms: [room('301', 4), room('302', 4)]);
+      store.moveRoom(store.event.rooms[0], 1, cols: 5);
+      await store.pendingWrites;
+      expect(store.event.rooms[0].slot, 1);
+      expect(store.event.rooms[1].slot, 0);
+    });
+
+    test('층이 달라도 자리 번호는 서로 간섭하지 않는다', () async {
+      final store = Store(fileOverride: tmpFile());
+      store.event = ev(rooms: [room('301', 4), room('401', 4)]);
+      store.moveRoom(store.event.rooms[1], 2, cols: 5);
+      await store.pendingWrites;
+      expect(store.event.rooms[1].slot, 2);
+      // 3층은 아예 건드리지 않는다 (자리 번호가 층마다 따로 매겨진다)
+      expect(store.event.rooms[0].slot, isNull);
+      expect(layoutSlots([store.event.rooms[0]], 5).first?.roomNo, '301');
+    });
+
+    test('배치 초기화하면 자리가 전부 지워진다', () async {
+      final store = Store(fileOverride: tmpFile());
+      store.event = ev(rooms: [room('301', 4)..slot = 6, room('302', 4)]);
+      store.resetLayout();
+      await store.pendingWrites;
+      expect(store.event.rooms.every((r) => r.slot == null), isTrue);
+    });
+
+    test('자리는 저장 파일에 남는다', () {
+      final e = ev(rooms: [room('301', 4)..slot = 5]);
+      final back = Event.fromJson(e.toJson());
+      expect(back.rooms.single.slot, 5);
+    });
+
+    test('자리가 없던 예전 파일도 그대로 열린다', () {
+      final j = {
+        'name': 't',
+        'startDate': d0.toIso8601String(),
+        'endDate': d3.toIso8601String(),
+        'rooms': [
+          {'id': 'r1', 'roomNo': '301', 'capacity': 4},
+        ],
+        'attendees': [],
+      };
+      expect(Event.fromJson(j).rooms.single.slot, isNull);
     });
   });
 }

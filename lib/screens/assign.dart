@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../auto_assign.dart';
 import '../main.dart';
@@ -10,6 +11,13 @@ import '../widgets/room_board.dart';
 // 방 타일은 위젯으로 분리했지만, 이 화면을 쓰는 쪽(현황 화면·테스트)이
 // 계속 여기서 가져다 쓰고 있어 그대로 내보낸다.
 export '../widgets/room_board.dart' show RoomTile, RoomBoard, RoomLegend;
+
+/// Shift 로 치는 키들. 왼쪽/오른쪽 Shift 는 서로 다른 키로 들어온다.
+final _shiftKeys = {
+  LogicalKeyboardKey.shift,
+  LogicalKeyboardKey.shiftLeft,
+  LogicalKeyboardKey.shiftRight,
+};
 
 /// 배정 화면에서 미리 선택해둘 참석자 (현황 화면에서 넘어올 때 사용).
 final pendingSelection = <String>{};
@@ -37,6 +45,12 @@ class _AssignScreenState extends State<AssignScreen> {
   /// 다중 선택된 방. 단체를 여러 방에 나눠 넣을 때 쓴다.
   final selectedRooms = <String>{};
   final roomRange = TextEditingController();
+
+  /// Shift+클릭 범위 선택의 시작점(마지막으로 그냥 클릭한 방).
+  String? rangeAnchorId;
+
+  /// 방 자리 옮기기 모드. 켜면 타일을 끌어서 실제 건물 배치대로 놓을 수 있다.
+  bool editingLayout = false;
 
   @override
   void initState() {
@@ -330,13 +344,14 @@ class _AssignScreenState extends State<AssignScreen> {
                 RoomBoard(
                   rooms: rooms,
                   selectedIds: selectedRooms,
-                  onTap: (r) => setState(
-                    () => selectedRooms.contains(r.id)
-                        ? selectedRooms.remove(r.id)
-                        : selectedRooms.add(r.id),
-                  ),
+                  onTap: (r) => _pickRoom(r, rooms),
                   onLongPress: (r) => showRoomOccupants(context, r),
                   emptyMessage: '방이 없습니다. [방 관리]에서 먼저 만들어 주세요.',
+                  editingLayout: editingLayout,
+                  onMove: (room, slot) {
+                    store.moveRoom(room, slot, cols: boardColumns);
+                    setState(() {});
+                  },
                 ),
                 if (picked.isNotEmpty) ...[
                   const SizedBox(height: 20),
@@ -508,7 +523,7 @@ class _AssignScreenState extends State<AssignScreen> {
     );
   }
 
-  /// 방을 고르는 보조 도구: 호수 범위 입력 + 상태별 일괄 선택 + 범례.
+  /// 방을 고르는 보조 도구: 호수 범위 입력 + 상태별 일괄 선택 + 자리 옮기기 + 범례.
   Widget _roomTools(List<Room> rooms) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -537,24 +552,98 @@ class _AssignScreenState extends State<AssignScreen> {
             const SizedBox(width: 4),
             _quickPick('공실 전체', rooms, RoomStatus.empty),
             _quickPick('여유 전체', rooms, RoomStatus.partial),
+            const SizedBox(width: 4),
+            FilterChip(
+              avatar: Icon(
+                Icons.open_with,
+                size: 16,
+                color: editingLayout ? AppColors.brand : AppColors.textMuted,
+              ),
+              label: const Text('자리 옮기기'),
+              selected: editingLayout,
+              onSelected: (v) => setState(() => editingLayout = v),
+            ),
+            if (editingLayout)
+              TextButton.icon(
+                onPressed: () => _resetLayout(rooms),
+                icon: const Icon(Icons.restart_alt, size: 16),
+                label: const Text('배치 초기화'),
+              ),
           ],
         ),
         const SizedBox(height: 10),
         // Row + Spacer 로 두면 창이 좁을 때 범례가 그대로 넘친다. Wrap 으로 접는다.
-        const Wrap(
+        Wrap(
           spacing: 16,
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            RoomLegend(),
+            const RoomLegend(),
             Text(
-              '클릭=선택 · 길게 누르면 인원 목록',
-              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+              editingLayout
+                  ? '타일을 끌어서 실제 건물 자리로 옮기세요 · 다른 방 위에 놓으면 서로 바뀝니다'
+                  : '클릭=선택 · Shift+클릭=사이 방까지 한 번에 · 길게 누르면 인원 목록',
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ],
         ),
       ],
     );
+  }
+
+  /// 방 타일 클릭. 그냥 클릭하면 하나만 토글하고, Shift 를 누른 채로 클릭하면
+  /// 직전에 클릭한 방부터 지금 방까지(호수 순) 사이의 방을 전부 선택한다.
+  void _pickRoom(Room room, List<Room> rooms) {
+    final anchor = rangeAnchorId;
+    if (_shiftHeld && anchor != null && anchor != room.id) {
+      final from = rooms.indexWhere((r) => r.id == anchor);
+      final to = rooms.indexWhere((r) => r.id == room.id);
+      if (from >= 0 && to >= 0) {
+        final lo = from < to ? from : to;
+        final hi = from < to ? to : from;
+        setState(
+          () =>
+              selectedRooms.addAll(rooms.sublist(lo, hi + 1).map((r) => r.id)),
+        );
+        return; // 기준점은 그대로 둔다. 범위를 다시 잡을 때 편하다.
+      }
+    }
+    setState(() {
+      if (selectedRooms.contains(room.id)) {
+        selectedRooms.remove(room.id);
+      } else {
+        selectedRooms.add(room.id);
+      }
+      rangeAnchorId = room.id;
+    });
+  }
+
+  /// 지금 Shift 가 눌려 있는가. 탭 콜백에는 수식키가 안 실려 오므로 키보드 상태를 직접 본다.
+  bool get _shiftHeld =>
+      HardwareKeyboard.instance.logicalKeysPressed.any(_shiftKeys.contains);
+
+  Future<void> _resetLayout(List<Room> rooms) async {
+    if (rooms.every((r) => r.slot == null)) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('배치 초기화'),
+        content: const Text('손으로 옮긴 방 자리를 모두 지우고 호수 순으로 되돌립니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('되돌리기'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    store.resetLayout();
+    if (mounted) setState(() {});
   }
 
   Widget _quickPick(String label, List<Room> rooms, RoomStatus want) {
