@@ -22,6 +22,21 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
   final noMax = TextEditingController();
   bool separateGender = true;
 
+  /// 같이 배정할 기준. 목록 순서가 곧 우선순위(위가 1순위), 체크된 것만 쓴다.
+  /// 운영자가 만든 항목(교회 등)도 여기에 자동으로 들어온다.
+  List<GroupField> groupOrder = [];
+  Set<GroupField> groupOn = {GroupField.zone, GroupField.cell};
+
+  /// 이 집회에서 고를 수 있는 기준 = 기본 항목 + 사용자 정의 항목.
+  /// 운영자가 정한 순서를 지키되, 새 항목은 뒤에 붙이고 지워진 항목은 뺀다.
+  List<GroupField> get _fields {
+    final all = GroupField.forEvent(store.event);
+    final kept = groupOrder.where(all.contains).toList();
+    return [...kept, ...all.where((f) => !kept.contains(f))];
+  }
+
+  List<GroupField> get _groupBy => _fields.where(groupOn.contains).toList();
+
   AutoAssignResult? result;
 
   @override
@@ -43,6 +58,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
     roomNoMin: zoneMode == 'roomNo' ? int.tryParse(noMin.text.trim()) : null,
     roomNoMax: zoneMode == 'roomNo' ? int.tryParse(noMax.text.trim()) : null,
     separateGender: separateGender,
+    groupBy: _groupBy,
   );
 
   @override
@@ -95,6 +111,8 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
           helperText: '예: 강사 — 비워두면 사용 안 함',
         ),
       ),
+      const SizedBox(height: 20),
+      _groupSection(),
       const SizedBox(height: 20),
       Text('우대 배정 구역', style: Theme.of(context).textTheme.titleMedium),
       RadioGroup<String>(
@@ -155,6 +173,90 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
       ),
     ],
   );
+
+  /// 같이 배정할 기준 고르기 + 순서 바꾸기.
+  /// 순서가 우선순위다 — 자리가 모자라면 아래쪽(덜 중요한) 기준부터 포기한다.
+  Widget _groupSection() {
+    final on = _groupBy;
+    final fields = _fields;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionTitle('같이 배정할 기준'),
+        const SizedBox(height: 4),
+        Text(
+          '체크한 항목의 값이 같은 사람을 한 방에 모은다.\n'
+          '위에 있을수록 우선순위가 높고, 자리가 모자라면 아래 기준부터 포기한다.',
+          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(Radii.card),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: ReorderableListView(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            // onReorderItem 은 항목을 뺀 뒤 기준으로 to 를 이미 보정해서 준다.
+            onReorderItem: (from, to) => setState(() {
+              final list = _fields;
+              list.insert(to, list.removeAt(from));
+              groupOrder = list;
+            }),
+            children: [
+              for (var i = 0; i < fields.length; i++)
+                _groupTile(i, fields[i], on),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          on.isEmpty
+              ? '기준이 없으면 그룹으로 묶지 않고 빈자리부터 채운다.'
+              : '현재 순서: ${on.map((f) => f.label).join(' → ')}',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: on.isEmpty ? AppColors.textMuted : AppColors.brand,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _groupTile(int index, GroupField f, List<GroupField> on) {
+    final rank = on.indexOf(f);
+    return ListTile(
+      key: ValueKey(f),
+      dense: true,
+      contentPadding: const EdgeInsets.only(left: 4, right: 8),
+      leading: Checkbox(
+        value: groupOn.contains(f),
+        onChanged: (v) =>
+            setState(() => v! ? groupOn.add(f) : groupOn.remove(f)),
+      ),
+      title: Text(
+        f.label,
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: rank < 0 ? AppColors.textMuted : AppColors.text,
+        ),
+      ),
+      subtitle: rank < 0
+          ? null
+          : Text(
+              '${rank + 1}순위',
+              style: const TextStyle(fontSize: 11, color: AppColors.brand),
+            ),
+      trailing: ReorderableDragStartListener(
+        index: index,
+        child: const Icon(Icons.drag_handle, color: AppColors.textMuted),
+      ),
+    );
+  }
 
   Widget _num(TextEditingController c, bool enabled) => SizedBox(
     width: 60,
@@ -217,12 +319,12 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
                     '${x.attendee.name}  '
                     '${genderLabel(x.attendee.gender)} ${x.attendee.age}세',
                   ),
+                  // 고른 기준 그대로 보여준다 (기준이 바뀌면 여기도 따라간다).
                   subtitle: Text(
                     [
-                      if ((x.attendee.zone ?? '').isNotEmpty)
-                        '존:${x.attendee.zone}',
-                      if ((x.attendee.cell ?? '').isNotEmpty)
-                        '셀:${x.attendee.cell}',
+                      for (final f in _groupBy)
+                        if ((f.of(x.attendee) ?? '').trim().isNotEmpty)
+                          '${f.label}:${f.of(x.attendee)}',
                     ].join('  '),
                   ),
                   trailing: Text(

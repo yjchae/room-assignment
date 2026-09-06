@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/screens/assign.dart';
+import 'package:room_assignment/screens/auto_assign_screen.dart';
 import 'package:room_assignment/screens/rooms.dart';
 import 'package:room_assignment/screens/status.dart';
 import 'package:room_assignment/theme.dart';
@@ -208,5 +209,66 @@ void main() {
     expect(statusOf(used: 1, capacity: 4), RoomStatus.partial);
     expect(statusOf(used: 4, capacity: 4), RoomStatus.full);
     expect(statusOf(used: 5, capacity: 4), RoomStatus.over);
+  });
+
+  testWidgets('자동배정: 기준 순서를 바꾸면 순위 표시가 따라간다', (tester) async {
+    await pump(tester, const AutoAssignScreen());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // 기본값: 존 1순위, 셀 2순위
+    expect(find.text('현재 순서: 존 → 셀'), findsOneWidget);
+    expect(find.text('1순위'), findsOneWidget);
+
+    // 셀 체크를 끄면 존만 남는다
+    final cellTile = find.ancestor(
+      of: find.text('셀'),
+      matching: find.byType(ListTile),
+    );
+    await tester.tap(
+      find.descendant(of: cellTile, matching: find.byType(Checkbox)),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('현재 순서: 존'), findsOneWidget);
+  });
+
+  testWidgets('자동배정: 사용자 정의 항목이 기준 목록에 나타난다', (tester) async {
+    store.event.customFields.add('교회');
+    await pump(tester, const AutoAssignScreen());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // 기본 3개 + 교회
+    expect(find.text('교회'), findsOneWidget);
+    expect(find.text('현재 순서: 존 → 셀'), findsOneWidget);
+
+    final churchTile = find.ancestor(
+      of: find.text('교회'),
+      matching: find.byType(ListTile),
+    );
+    await tester.tap(
+      find.descendant(of: churchTile, matching: find.byType(Checkbox)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('현재 순서: 존 → 셀 → 교회'), findsOneWidget);
+  });
+
+  testWidgets('앱바에 비밀번호 변경 버튼이 보인다', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Shell()));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('비밀번호'), findsOneWidget);
+  });
+
+  testWidgets('비밀번호 변경 다이얼로그가 뜬다', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Shell()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('비밀번호'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('비밀번호 변경'), findsOneWidget);
+    expect(find.text('현재 비밀번호'), findsOneWidget);
+    expect(find.textContaining('새 비밀번호'), findsWidgets);
   });
 }

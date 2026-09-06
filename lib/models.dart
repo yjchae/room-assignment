@@ -8,14 +8,20 @@ class Event {
   List<Room> rooms;
   List<Attendee> attendees;
 
+  /// 운영자가 직접 만든 참석자 항목 이름들 (예: '교회', '직분'). 순서 = 입력 화면 순서.
+  /// 값은 [Attendee.extra] 에 같은 이름을 키로 들어간다.
+  List<String> customFields;
+
   Event({
     required this.name,
     required this.startDate,
     required this.endDate,
     List<Room>? rooms,
     List<Attendee>? attendees,
+    List<String>? customFields,
   }) : rooms = rooms ?? [],
-       attendees = attendees ?? [];
+       attendees = attendees ?? [],
+       customFields = customFields ?? [];
 
   /// 숙박 밤 목록: startDate ~ endDate-1일. 정원 계산의 기준.
   /// 기간이 0일 이하로 저장돼 있어도(손으로 고친 JSON 등) 최소 1박은 돌려준다.
@@ -38,6 +44,7 @@ class Event {
     'endDate': endDate.toIso8601String(),
     'rooms': rooms.map((r) => r.toJson()).toList(),
     'attendees': attendees.map((a) => a.toJson()).toList(),
+    'customFields': customFields,
   };
 
   factory Event.fromJson(Map<String, dynamic> j) => Event(
@@ -50,6 +57,7 @@ class Event {
     attendees: (j['attendees'] as List? ?? [])
         .map((e) => Attendee.fromJson(e as Map<String, dynamic>))
         .toList(),
+    customFields: (j['customFields'] as List? ?? []).map((e) => '$e').toList(),
   );
 }
 
@@ -103,6 +111,9 @@ class Attendee {
   DateTime checkIn;
   DateTime checkOut;
 
+  /// 사용자 정의 항목 값. 키는 [Event.customFields] 의 이름. 빈 값은 담지 않는다.
+  Map<String, String> extra;
+
   Attendee({
     required this.id,
     required this.name,
@@ -115,7 +126,8 @@ class Attendee {
     this.roomId,
     required this.checkIn,
     required this.checkOut,
-  });
+    Map<String, String>? extra,
+  }) : extra = extra ?? {};
 
   /// 하룻밤 [night] 에 이 방에 묵는가.
   bool staysOn(DateTime night) =>
@@ -133,6 +145,7 @@ class Attendee {
     'roomId': roomId,
     'checkIn': checkIn.toIso8601String(),
     'checkOut': checkOut.toIso8601String(),
+    'extra': extra,
   };
 
   factory Attendee.fromJson(Map<String, dynamic> j) => Attendee(
@@ -147,6 +160,7 @@ class Attendee {
     roomId: j['roomId'] as String?,
     checkIn: DateTime.parse(j['checkIn'] as String),
     checkOut: DateTime.parse(j['checkOut'] as String),
+    extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
   );
 }
 

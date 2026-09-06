@@ -2,6 +2,47 @@ import 'dart:math' as math;
 
 import 'models.dart';
 
+/// 자동배정에서 "같은 값이면 같이 붙여줄" 기준이 될 수 있는 참석자 항목.
+///
+/// 참석자에 새 항목(예: 교회)이 생기면 여기에 한 줄만 추가하면 화면까지 따라온다.
+class GroupField {
+  const GroupField(this.key, this.label);
+
+  /// 운영자가 만든 항목. 이름이 곧 키이자 라벨이다.
+  GroupField.custom(String name) : key = 'x:$name', label = name;
+
+  /// 'zone' | 'cell' | 'note' | 'x:<사용자 항목 이름>'
+  final String key;
+  final String label;
+
+  static const zone = GroupField('zone', '존');
+  static const cell = GroupField('cell', '셀');
+  static const note = GroupField('note', '기타');
+  static const builtins = [zone, cell, note];
+
+  /// 이 집회에서 고를 수 있는 기준 전체 = 기본 + 사용자 정의 항목.
+  static List<GroupField> forEvent(Event e) => [
+    ...builtins,
+    ...e.customFields.map(GroupField.custom),
+  ];
+
+  String? of(Attendee a) => switch (key) {
+    'zone' => a.zone,
+    'cell' => a.cell,
+    'note' => a.note,
+    _ => a.extra[label],
+  };
+
+  @override
+  bool operator ==(Object other) => other is GroupField && other.key == key;
+
+  @override
+  int get hashCode => key.hashCode;
+
+  @override
+  String toString() => 'GroupField($key)';
+}
+
 /// 자동배정 규칙.
 class AutoRule {
   AutoRule({
@@ -12,7 +53,8 @@ class AutoRule {
     this.roomNoMin,
     this.roomNoMax,
     this.separateGender = true,
-  });
+    List<GroupField>? groupBy,
+  }) : groupBy = groupBy ?? const [GroupField.zone, GroupField.cell];
 
   /// 나이 >= 이 값이면 우대 대상. null 이면 나이 기준 사용 안 함.
   int? priorityAge;
@@ -25,6 +67,36 @@ class AutoRule {
   int? roomNoMin, roomNoMax;
 
   bool separateGender;
+
+  /// 같이 배정할 기준을 **우선순위 순서대로**. 앞에 있을수록 중요하다.
+  ///
+  /// 예: `[zone, cell]` 이면 존과 셀이 모두 같은 사람을 한 방에 모으고,
+  /// 자리가 모자라 다 못 모으면 **뒤쪽 기준(셀)부터 포기**하고 최소한 존이라도 맞춘다.
+  List<GroupField> groupBy;
+
+  /// [a] 의 그룹 키를 우선순위 [level] 개까지만 이어붙인 것.
+  /// 값이 빈 항목을 만나면 거기서 끊는다 (빈 값끼리는 같은 그룹이 아니다).
+  /// level 0 이거나 첫 항목부터 비어 있으면 null = 그룹 없음.
+  String? keyOf(Attendee a, [int? level]) {
+    final n = (level ?? groupBy.length).clamp(0, groupBy.length);
+    final parts = <String>[];
+    for (var i = 0; i < n; i++) {
+      final v = groupBy[i].of(a)?.trim() ?? '';
+      if (v.isEmpty) break;
+      parts.add('${groupBy[i].key}=$v');
+    }
+    return parts.isEmpty ? null : parts.join('\u0001');
+  }
+
+  /// [a] 가 실제로 가진 그룹 깊이 (빈 값 앞까지).
+  int depthOf(Attendee a) {
+    var d = 0;
+    for (final f in groupBy) {
+      if ((f.of(a)?.trim() ?? '').isEmpty) break;
+      d++;
+    }
+    return d;
+  }
 
   bool isPriority(Attendee a) {
     if (priorityAge != null && a.age >= priorityAge!) return true;
@@ -82,12 +154,21 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
   // 방의 유효 성별: 지정된 성별, 없으면 첫 배정자 성별로 굳는다.
   final roomGender = {for (final r in rooms) r.id: r.gender};
   // 방에 이미 들어있는 (존, 셀) 그룹 → 근접도 기준점.
-  final roomGroups = <String, Set<String>>{for (final r in rooms) r.id: {}};
+  // 방마다 그 방에 들어있는 사람들의 그룹 키를 우선순위 단계별로 모두 담는다.
+  // (1단계 키, 1~2단계 키, ...) 를 다 넣어두면 "존만 같은 방" 도 찾을 수 있다.
+  final roomKeys = <String, Set<String>>{for (final r in rooms) r.id: {}};
+
+  void remember(String roomId, Attendee a) {
+    for (var lv = 1; lv <= rule.depthOf(a); lv++) {
+      final k = rule.keyOf(a, lv);
+      if (k != null) roomKeys[roomId]!.add(k);
+    }
+  }
 
   for (final a in event.attendees) {
     if (a.roomId == null || !counts.containsKey(a.roomId)) continue;
     roomGender[a.roomId!] ??= a.gender;
-    roomGroups[a.roomId!]!.add(_groupKey(a));
+    remember(a.roomId!, a);
   }
 
   final result = <Assignment>[];
@@ -112,7 +193,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
       if (stays[i]) c[i]++;
     }
     roomGender[r.id] ??= a.gender;
-    roomGroups[r.id]!.add(_groupKey(a));
+    remember(r.id, a);
     result.add(Assignment(a, r, stage));
   }
 
@@ -140,20 +221,27 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
   final rest = todo.where((a) => !placed.contains(a.id)).toList();
   final groups = <String, List<Attendee>>{};
   for (final a in rest) {
-    if (_groupKey(a) == _noGroup) continue; // 존/셀 없음 → 3단계로
-    groups.putIfAbsent(_groupKey(a), () => []).add(a);
+    final k = rule.keyOf(a);
+    if (k == null) continue; // 기준 값이 하나도 없음 → 3단계로
+    groups.putIfAbsent(k, () => []).add(a);
   }
   final orderedGroups = groups.entries.toList()
     ..sort((a, b) => b.value.length.compareTo(a.value.length));
 
   for (final g in orderedGroups) {
     for (final a in g.value) {
-      // 같은 그룹이 이미 들어간 방들의 호수 = 근접도 기준점
-      final anchors = rooms
-          .where((r) => roomGroups[r.id]!.contains(g.key))
-          .map((r) => r.roomNumber)
-          .whereType<int>()
-          .toList();
+      // 근접도 기준점: 우선순위가 깊은 단계부터 찾아 내려간다.
+      // (존+셀 이 같은 방) 이 없으면 (존만 같은 방) 옆이라도 붙인다.
+      var anchors = <int>[];
+      for (var lv = rule.depthOf(a); lv >= 1 && anchors.isEmpty; lv--) {
+        final key = rule.keyOf(a, lv);
+        if (key == null) continue;
+        anchors = rooms
+            .where((r) => roomKeys[r.id]!.contains(key))
+            .map((r) => r.roomNumber)
+            .whereType<int>()
+            .toList();
+      }
       final candidates = rooms.where((r) => fits(r, a)).toList()
         ..sort((x, y) {
           final d = _dist(x, anchors).compareTo(_dist(y, anchors));
@@ -189,10 +277,6 @@ void applyAssignments(List<Assignment> assignments) {
     x.attendee.roomId = x.room.id;
   }
 }
-
-const _noGroup = '/';
-
-String _groupKey(Attendee a) => '${a.zone ?? ''}/${a.cell ?? ''}';
 
 /// 기준 호수들과의 최소 거리. 기준이 없으면 0 (거리 무시).
 int _dist(Room r, List<int> anchors) {

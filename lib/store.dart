@@ -137,11 +137,52 @@ class Store extends ChangeNotifier {
         a.cell,
         a.zone,
         a.phone,
+        a.note,
+        ...a.extra.values, // 사용자 정의 항목(교회 등)도 같이 검색된다
       ].any((f) => (f ?? '').toLowerCase().contains(k));
     }).toList();
   }
 
   // --- 변경 ---
+  // --- 사용자 정의 참석자 항목 ---
+
+  /// 항목 추가. 이미 있거나 기본 항목과 이름이 겹치면 false.
+  bool addCustomField(String name) {
+    final n = name.trim();
+    if (n.isEmpty) return false;
+    if (event.customFields.contains(n)) return false;
+    if (builtinFieldLabels.values.contains(n)) return false;
+    event.customFields.add(n);
+    commit();
+    return true;
+  }
+
+  /// 항목 삭제. 참석자들이 갖고 있던 값도 같이 지운다.
+  void removeCustomField(String name) {
+    event.customFields.remove(name);
+    for (final a in event.attendees) {
+      a.extra.remove(name);
+    }
+    commit();
+  }
+
+  /// 항목 이름 변경. 참석자들의 값 키도 같이 옮긴다.
+  bool renameCustomField(String from, String to) {
+    final n = to.trim();
+    if (n.isEmpty || n == from) return false;
+    if (event.customFields.contains(n)) return false;
+    if (builtinFieldLabels.values.contains(n)) return false;
+    final i = event.customFields.indexOf(from);
+    if (i < 0) return false;
+    event.customFields[i] = n;
+    for (final a in event.attendees) {
+      final v = a.extra.remove(from);
+      if (v != null) a.extra[n] = v;
+    }
+    commit();
+    return true;
+  }
+
   void addRoom(Room r) {
     event.rooms.add(r);
     commit();
@@ -236,8 +277,8 @@ List<String> parseRoomRange(String input) {
 
 // --- 붙여넣기 파싱 ---------------------------------------------------------
 
-/// 붙여넣기 컬럼으로 지정 가능한 필드.
-const attendeeFields = <String, String>{
+/// 앱이 기본으로 갖고 있는 참석자 항목. 키 -> 화면에 보이는 이름.
+const builtinFieldLabels = <String, String>{
   'name': '이름',
   'gender': '성별',
   'age': '나이',
@@ -245,6 +286,23 @@ const attendeeFields = <String, String>{
   'cell': '셀',
   'zone': '존',
   'note': '기타',
+};
+
+/// 사용자 정의 항목의 컬럼 키는 이 접두사를 붙인다. (기본 항목 키와 안 겹치게)
+const customFieldPrefix = 'x:';
+
+/// 사용자 정의 항목 이름 -> 컬럼 키.
+String customFieldKey(String name) => '$customFieldPrefix$name';
+
+/// 컬럼 키가 사용자 정의 항목이면 그 이름, 아니면 null.
+String? customFieldName(String key) => key.startsWith(customFieldPrefix)
+    ? key.substring(customFieldPrefix.length)
+    : null;
+
+/// 붙여넣기 컬럼으로 지정 가능한 항목 전체 (기본 + 이 집회의 사용자 정의).
+Map<String, String> attendeeColumnOptions(Event event) => {
+  ...builtinFieldLabels,
+  for (final f in event.customFields) customFieldKey(f): f,
   'skip': '(무시)',
 };
 
@@ -329,6 +387,15 @@ List<ParsedRow> parseAttendeeText(
       continue;
     }
 
+    // 사용자 정의 항목 값 모으기 (빈 값은 담지 않는다)
+    final extra = <String, String>{};
+    for (final col in columns) {
+      final fieldName = customFieldName(col);
+      if (fieldName == null) continue;
+      final v = at(col);
+      if (v != null) extra[fieldName] = v;
+    }
+
     rows.add(
       ParsedRow(
         i + 1,
@@ -344,6 +411,7 @@ List<ParsedRow> parseAttendeeText(
           note: at('note'),
           checkIn: checkIn,
           checkOut: checkOut,
+          extra: extra,
         ),
       ),
     );

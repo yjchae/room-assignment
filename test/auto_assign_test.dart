@@ -12,12 +12,17 @@ final d3 = DateTime(2026, 1, 4); // 3박
 int _n = 0;
 String nid() => 'id${_n++}';
 
-Event ev({List<Room>? rooms, List<Attendee>? attendees}) => Event(
+Event ev({
+  List<Room>? rooms,
+  List<Attendee>? attendees,
+  List<String>? customFields,
+}) => Event(
   name: 't',
   startDate: d0,
   endDate: d3,
   rooms: rooms,
   attendees: attendees,
+  customFields: customFields,
 );
 
 Room room(String no, int cap, {String? gender}) =>
@@ -366,6 +371,115 @@ void main() {
     });
   });
 
+  group('그룹 기준 우선순위', () {
+    test('기본값은 예전과 같다 (존, 셀)', () {
+      expect(AutoRule().groupBy, [GroupField.zone, GroupField.cell]);
+    });
+
+    test('기준을 셀 하나로 두면 존이 달라도 같이 모인다', () {
+      final rooms = [room('101', 2), room('501', 2)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('A', zone: 'A존', cell: '1셀'),
+          person('B', zone: 'B존', cell: '1셀'),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [GroupField.cell]),
+      );
+      applyAssignments(res.assignments);
+      expect(e.attendees.map((a) => a.roomId).toSet().length, 1);
+    });
+
+    test('존이 1순위면 셀이 달라도 존이 같은 방 옆에 붙는다', () {
+      // 101 에 A존 사람이 이미 있다. 셀은 다르지만 존이 같은 신규는 101 로 가야 한다.
+      final rooms = [room('101', 2), room('501', 2)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('기존', zone: 'A존', cell: '1셀', roomId: 'r101'),
+          person('신규', zone: 'A존', cell: '9셀'),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(
+          priorityAge: null,
+          groupBy: [GroupField.zone, GroupField.cell],
+        ),
+      );
+      applyAssignments(res.assignments);
+      expect(e.attendees.firstWhere((a) => a.name == '신규').roomId, 'r101');
+    });
+
+    test('순서를 뒤집으면 붙는 대상도 바뀐다', () {
+      // 셀이 1순위: 101(1셀) 과 501(9셀) 중 같은 1셀 쪽에 붙는다.
+      final rooms = [room('101', 2), room('501', 2)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('존만같음', zone: 'A존', cell: '9셀', roomId: 'r101'),
+          person('셀만같음', zone: 'B존', cell: '1셀', roomId: 'r501'),
+          person('신규', zone: 'A존', cell: '1셀'),
+        ],
+      );
+
+      GroupField? roomOf(List<GroupField> order) {
+        for (final a in e.attendees) {
+          if (a.name == '신규') a.roomId = null;
+        }
+        final res = autoAssign(e, AutoRule(priorityAge: null, groupBy: order));
+        applyAssignments(res.assignments);
+        final id = e.attendees.firstWhere((a) => a.name == '신규').roomId;
+        return id == 'r101' ? GroupField.zone : GroupField.cell;
+      }
+
+      expect(roomOf([GroupField.zone, GroupField.cell]), GroupField.zone);
+      expect(roomOf([GroupField.cell, GroupField.zone]), GroupField.cell);
+    });
+
+    test('기준이 비어 있으면 그룹 없이 빈자리부터 채운다', () {
+      final e = ev(
+        rooms: [room('101', 4)],
+        attendees: [
+          person('A', zone: 'A존', cell: '1셀'),
+          person('B', zone: 'B존', cell: '2셀'),
+        ],
+      );
+      final res = autoAssign(e, AutoRule(priorityAge: null, groupBy: []));
+      expect(res.assignments.length, 2);
+      expect(res.assignments.every((x) => x.stage == '잔여'), isTrue);
+    });
+
+    test('기준 값이 비어 있는 사람은 그룹으로 묶이지 않는다', () {
+      final e = ev(
+        rooms: [room('101', 4)],
+        attendees: [person('무소속'), person('무소속2')],
+      );
+      final res = autoAssign(e, AutoRule(priorityAge: null));
+      expect(res.assignments.every((x) => x.stage == '잔여'), isTrue);
+    });
+
+    test('기타(note)도 기준으로 쓸 수 있다', () {
+      final rooms = [room('101', 2), room('501', 2)];
+      final e = ev(
+        rooms: rooms,
+        attendees: [
+          person('A', note: '한빛교회'),
+          person('B', note: '한빛교회'),
+        ],
+      );
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [GroupField.note]),
+      );
+      applyAssignments(res.assignments);
+      expect(e.attendees.map((a) => a.roomId).toSet().length, 1);
+    });
+  });
+
   group('단체를 여러 방에 배정 (distribute)', () {
     test('호수 순으로 정원만큼 채운다', () {
       final rooms = [room('301', 2), room('302', 2), room('303', 2)];
@@ -444,6 +558,102 @@ void main() {
       final r = distribute(e, people, rooms);
       expect(r.unplaced, isEmpty);
       expect(r.assignments.every((x) => x.room.roomNo == '301'), isTrue);
+    });
+  });
+
+  group('사용자 정의 참석자 항목', () {
+    test('항목 추가/이름변경/삭제가 참석자 값까지 따라간다', () {
+      final s = Store()..event = ev(attendees: [person('A'), person('B')]);
+      expect(s.addCustomField('교회'), isTrue);
+      expect(s.addCustomField('교회'), isFalse); // 중복
+      expect(s.addCustomField('이름'), isFalse); // 기본 항목과 충돌
+      expect(s.addCustomField('  '), isFalse);
+
+      s.event.attendees[0].extra['교회'] = '한빛교회';
+      expect(s.renameCustomField('교회', '소속교회'), isTrue);
+      expect(s.event.customFields, ['소속교회']);
+      expect(s.event.attendees[0].extra['소속교회'], '한빛교회');
+      expect(s.event.attendees[0].extra.containsKey('교회'), isFalse);
+
+      s.removeCustomField('소속교회');
+      expect(s.event.customFields, isEmpty);
+      expect(s.event.attendees[0].extra, isEmpty);
+    });
+
+    test('통합검색이 사용자 항목 값도 찾는다', () {
+      final a = person('홍길동')..extra['교회'] = '한빛교회';
+      final s = Store()..event = ev(attendees: [a, person('김철수')]);
+      expect(s.search('한빛').single.name, '홍길동');
+    });
+
+    test('붙여넣기 컬럼에 사용자 항목이 들어오고 값이 파싱된다', () {
+      final e = ev(customFields: ['교회']);
+      expect(
+        attendeeColumnOptions(e).containsKey(customFieldKey('교회')),
+        isTrue,
+      );
+
+      final rows = parseAttendeeText(
+        '홍길동\t남\t34\t한빛교회',
+        columns: ['name', 'gender', 'age', customFieldKey('교회')],
+        checkIn: d0,
+        checkOut: d3,
+        newId: nid,
+      );
+      expect(rows.single.attendee!.extra['교회'], '한빛교회');
+    });
+
+    test('JSON 왕복에서 항목 정의와 값이 보존된다', () {
+      final a = person('홍길동')..extra['교회'] = '한빛교회';
+      final e = ev(attendees: [a], customFields: ['교회']);
+      final back = Event.fromJson(e.toJson());
+      expect(back.customFields, ['교회']);
+      expect(back.attendees.single.extra['교회'], '한빛교회');
+    });
+
+    test('예전 파일(항목 없음)도 그대로 열린다', () {
+      final j = ev(attendees: [person('A')]).toJson();
+      (j['attendees'] as List).first.remove('extra');
+      j.remove('customFields');
+      final back = Event.fromJson(j);
+      expect(back.customFields, isEmpty);
+      expect(back.attendees.single.extra, isEmpty);
+    });
+
+    test('사용자 항목을 자동배정 기준으로 쓸 수 있다', () {
+      final e = ev(
+        rooms: [room('101', 2), room('501', 2)],
+        attendees: [
+          person('A')..extra['교회'] = '한빛교회',
+          person('B')..extra['교회'] = '한빛교회',
+        ],
+        customFields: ['교회'],
+      );
+      final church = GroupField.forEvent(e).firstWhere((f) => f.label == '교회');
+      final res = autoAssign(e, AutoRule(priorityAge: null, groupBy: [church]));
+      applyAssignments(res.assignments);
+      expect(e.attendees.map((a) => a.roomId).toSet().length, 1);
+      expect(res.assignments.every((x) => x.stage == '그룹'), isTrue);
+    });
+
+    test('교회가 1순위면 셀보다 교회를 먼저 지킨다', () {
+      final e = ev(
+        rooms: [room('101', 2), room('501', 2)],
+        attendees: [
+          person('기존', cell: '9셀', roomId: 'r101')..extra['교회'] = '한빛교회',
+          person('기존2', cell: '1셀', roomId: 'r501')..extra['교회'] = '다른교회',
+          person('신규', cell: '1셀')..extra['교회'] = '한빛교회',
+        ],
+        customFields: ['교회'],
+      );
+      final church = GroupField.forEvent(e).firstWhere((f) => f.label == '교회');
+      final res = autoAssign(
+        e,
+        AutoRule(priorityAge: null, groupBy: [church, GroupField.cell]),
+      );
+      applyAssignments(res.assignments);
+      // 셀이 같은 501 이 아니라, 교회가 같은 101 로 가야 한다.
+      expect(e.attendees.firstWhere((a) => a.name == '신규').roomId, 'r101');
     });
   });
 

@@ -29,6 +29,9 @@ class _AssignScreenState extends State<AssignScreen> {
   final ageMax = TextEditingController();
   String? gender;
   bool unassignedOnly = false;
+
+  /// 사용자 정의 항목(교회 등) 값으로 거르는 칸. 어느 항목이든 값이 걸리면 통과.
+  final extraQuery = TextEditingController();
   final selected = <String>{};
 
   /// 다중 선택된 방. 단체를 여러 방에 나눠 넣을 때 쓴다.
@@ -47,7 +50,7 @@ class _AssignScreenState extends State<AssignScreen> {
 
   @override
   void dispose() {
-    for (final c in [name, cell, zone, ageMin, ageMax, roomRange]) {
+    for (final c in [name, cell, zone, ageMin, ageMax, roomRange, extraQuery]) {
       c.dispose();
     }
     super.dispose();
@@ -63,6 +66,12 @@ class _AssignScreenState extends State<AssignScreen> {
     if (!has(cell, a.cell)) return false;
     if (!has(zone, a.zone)) return false;
     if (gender != null && a.gender != gender) return false;
+    final xq = extraQuery.text.trim().toLowerCase();
+    if (xq.isNotEmpty &&
+        !a.extra.values.any((v) => v.toLowerCase().contains(xq)) &&
+        !(a.note ?? '').toLowerCase().contains(xq)) {
+      return false;
+    }
     if (unassignedOnly && a.roomId != null) return false;
     final lo = int.tryParse(ageMin.text.trim());
     final hi = int.tryParse(ageMax.text.trim());
@@ -119,6 +128,13 @@ class _AssignScreenState extends State<AssignScreen> {
                     Expanded(child: _field(zone, '존')),
                   ],
                 ),
+                if (store.event.customFields.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _field(
+                    extraQuery,
+                    '${store.event.customFields.join(' / ')} / 기타',
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Row(
                   children: [

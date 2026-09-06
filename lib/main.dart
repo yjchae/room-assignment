@@ -92,9 +92,10 @@ class Shell extends StatelessWidget {
               onPressed: () => _editEvent(context),
             ),
             const SizedBox(width: 4),
-            IconButton(
-              tooltip: '비밀번호 변경',
-              icon: const Icon(Icons.lock_outline, size: 20),
+            // 아이콘만 두면 못 찾는다. 날짜 버튼과 같은 모양으로 라벨을 붙인다.
+            TextButton.icon(
+              icon: const Icon(Icons.lock_outline, size: 18),
+              label: const Text('비밀번호', style: TextStyle(fontSize: 13)),
               onPressed: () => setPasswordDialog(context),
             ),
             const SizedBox(width: 12),
