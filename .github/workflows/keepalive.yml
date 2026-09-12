@@ -1,0 +1,24 @@
+# Supabase 무료 프로젝트는 1주일간 DB 사용이 없으면 멈춘다. 3일마다 1행 읽어서 깨워 둔다.
+# 프로젝트가 이미 멈춰 있으면 이 작업이 실패하고 GitHub 가 메일을 보낸다 → 대시보드에서 [Resume project].
+#
+# 필요한 저장소 Secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL       https://<프로젝트>.supabase.co
+#   SUPABASE_ANON_KEY  공개용(anon / publishable) 키. service_role 키 아님!
+name: keepalive
+
+on:
+  schedule:
+    - cron: '0 3 */3 * *' # 3일마다 UTC 03:00 = 한국 12:00
+  workflow_dispatch: # Actions 탭에서 [Run workflow] 로 바로 확인
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS --retry 3 "$SUPABASE_URL/rest/v1/gatherings?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" > /dev/null
+          echo "Supabase OK"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}

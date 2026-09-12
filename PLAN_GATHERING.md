@@ -299,9 +299,10 @@ create table registrations (
   quoted int not null,                     -- 신청 때 보여준 금액(참고)
   status text not null default 'pending' check (status in ('pending','confirmed','cancelled')),
   paid int not null default 0, paid_at date, admin_memo text,
-  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
-  unique (gathering_id, phone)             -- 1번호 1신청
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
+-- 부분 유니크 인덱스 (gathering_id, phone) where status <> 'cancelled'
+--   → 진행 중인 신청은 1번호 1건, 취소한 사람은 다시 신청 가능
 
 create table lookup_failures (phone text not null, at timestamptz not null default now());  -- PIN 오답 기록
 ```
@@ -322,12 +323,13 @@ create table lookup_failures (phone text not null, at timestamptz not null defau
 | 함수 | 하는 일 |
 |---|---|
 | `submit_registration(gathering_id, phone, pin, people, depositor, memo, quoted)` | 신청 받는 중인지·마감일·인원 1~20명 확인 후 insert. 번호 중복이면 에러 |
-| `lookup_registration(gathering_id, phone, pin)` | 최근 30분 오답 5회면 거부 → PIN 확인 → 신청 반환 (`pin_hash` 는 빼고). 틀리면 `lookup_failures` 에 기록 |
+| `lookup_registration(gathering_id, phone, pin)` | 최근 30분 오답 5회면 거부 → PIN 확인 → 신청 반환 (`pin_hash`·`admin_memo` 는 빼고). 틀리면 `lookup_failures` 에 기록하고 에러 대신 **null** (에러를 던지면 오답 기록까지 롤백돼 횟수 제한이 무력화된다) |
 | `update_registration(gathering_id, phone, pin, people, depositor, memo, quoted)` | PIN 확인 + `pending` 일 때만 수정. 상태·입금액은 못 건드린다 |
 | `cancel_registration(gathering_id, phone, pin)` | PIN 확인 + `pending` 일 때만 취소 |
 | `reset_pin(registration_id, pin)` | 운영자 전용 |
 
-- 권한 검증은 테스트로 남긴다 (§8): 로그인 안 한 상태로 신청 목록 읽기 / 확정으로 바꾸기 / 입금액 바꾸기 / 마감 후 신청 / PIN 6회째 → 전부 거부되는지.
+- 실제 SQL 전체는 `supabase/schema.sql`. 권한 검증은 `supabase/test.sql` — 로컬 Postgres 에 Supabase 흉내(auth·storage·역할)를 깔고,
+  로그인 안 한 상태로 신청 목록 읽기 / 확정으로 바꾸기 / 입금액 바꾸기 / 마감 후 신청 / PIN 6회째 등이 전부 거부되는지 본다.
 
 Dart 모델 (`lib/gathering.dart`, 파일 하나):
 
