@@ -23,6 +23,9 @@ class AppColors {
 
   static const danger = Color(0xFFE5484D);
   static const warn = Color(0xFFF5A524);
+
+  /// 밝은 바탕 위 경고 글자. [warn] 그대로는 흰 바탕에서 안 읽힌다.
+  static const warnInk = Color(0xFF8A5A00);
   static const ok = Color(0xFF16A34A);
   static const info = Color(0xFF21A8CD);
 }
@@ -306,6 +309,69 @@ class StatCard extends StatelessWidget {
     ),
   );
 }
+
+/// 빈 상태·안내 화면. 아이콘 + 문장 + (선택) 다음 행동 버튼.
+class EmptyNotice extends StatelessWidget {
+  const EmptyNotice({
+    super.key,
+    required this.icon,
+    required this.text,
+    this.action,
+  });
+  final IconData icon;
+  final String text;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 36, color: AppColors.textMuted),
+          const SizedBox(height: 12),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.textMuted, height: 1.5),
+          ),
+          if (action != null) ...[const SizedBox(height: 16), action!],
+        ],
+      ),
+    ),
+  );
+}
+
+/// 되돌릴 수 없는 동작 확인. 누르면 true.
+Future<bool> confirmDialog(
+  BuildContext context, {
+  required String title,
+  required String body,
+  required String action,
+  bool danger = false,
+}) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(width: 360, child: Text(body)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('닫기'),
+          ),
+          FilledButton(
+            style: danger
+                ? FilledButton.styleFrom(backgroundColor: AppColors.danger)
+                : null,
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    ) ==
+    true;
 
 /// 성별 표시 뱃지. 방 타일·목록에서 같은 모양을 쓴다.
 class GenderBadge extends StatelessWidget {

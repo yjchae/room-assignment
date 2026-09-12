@@ -1,26 +1,42 @@
 import 'package:flutter/material.dart';
 
 import 'auth.dart';
+import 'gathering.dart';
 import 'models.dart';
+import 'remote.dart';
 import 'screens/assign.dart';
 import 'screens/attendees.dart';
 import 'screens/auto_assign_screen.dart';
+import 'screens/gathering_settings.dart';
+import 'screens/gatherings.dart';
+import 'screens/registrations.dart';
 import 'screens/rooms.dart';
 import 'screens/status.dart';
 import 'store.dart';
 import 'theme.dart';
 
-/// ponytail: 앱 상태는 전역 하나. 운영자 1명, 화면 5개. DI 컨테이너를 넣을 이유가 없다.
+/// ponytail: 앱 상태는 전역 하나. 운영자 1명, 화면 몇 개. DI 컨테이너를 넣을 이유가 없다.
 final store = Store();
 final auth = Auth();
+
+/// 지금 열어 둔 집회의 서버 설정. 서버에 못 붙은 채 연 집회면 null (방배정 탭만 쓸 수 있다).
+final current = ValueNotifier<Gathering?>(null);
 
 /// 탭 전환. 현황 화면에서 배정 화면으로 점프할 때도 이걸 쓴다.
 final tabIndex = ValueNotifier<int>(0);
 
+/// 탭 번호. 다른 화면에서 탭을 넘길 때 숫자 대신 이걸 쓴다.
+const settingsTab = 0, registrationsTab = 1, assignTab = 4;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await store.load();
   await auth.load();
+  // 서버 준비. 실패해도 앱은 열린다 — 방배정은 이 PC 의 파일로 계속 된다.
+  try {
+    await Remote.init();
+  } catch (e) {
+    debugPrint('서버 준비 실패: $e');
+  }
   runApp(const App());
 }
 
@@ -30,7 +46,7 @@ class App extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '방배정',
+      title: '집회관리',
       theme: buildAppTheme(),
       debugShowCheckedModeBanner: false,
       home: const Gate(),
@@ -38,20 +54,25 @@ class App extends StatelessWidget {
   }
 }
 
+/// 집회 하나의 탭 화면. 집회 목록에서 들어온다.
 class Shell extends StatelessWidget {
   const Shell({super.key});
 
   /// const 인스턴스를 재사용하면 Flutter 가 "같은 위젯"이라 보고 rebuild 를 건너뛴다.
   /// store 가 바뀌어도 화면이 안 바뀌므로 매번 새로 만든다.
   static Widget _page(int i) => switch (i) {
-    0 => RoomsScreen(),
-    1 => AttendeesScreen(),
-    2 => AssignScreen(),
-    3 => AutoAssignScreen(),
+    settingsTab => GatheringSettingsScreen(),
+    registrationsTab => RegistrationsScreen(),
+    2 => RoomsScreen(),
+    3 => AttendeesScreen(),
+    assignTab => AssignScreen(),
+    5 => AutoAssignScreen(),
     _ => StatusScreen(),
   };
 
   static const _dest = [
+    (Icons.tune_outlined, Icons.tune, '집회 설정'),
+    (Icons.receipt_long_outlined, Icons.receipt_long, '신청·입금'),
     (Icons.meeting_room_outlined, Icons.meeting_room, '방 관리'),
     (Icons.people_outline, Icons.people, '참석자'),
     (Icons.assignment_ind_outlined, Icons.assignment_ind, '방배정'),
@@ -62,10 +83,10 @@ class Shell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: store,
+      animation: Listenable.merge([store, current, signInCount]),
       builder: (context, _) => Scaffold(
         appBar: AppBar(
-          titleSpacing: 20,
+          titleSpacing: Navigator.canPop(context) ? 0 : 20,
           title: Row(
             children: [
               Container(
@@ -78,7 +99,9 @@ class Shell extends StatelessWidget {
                 child: const Icon(Icons.hotel, size: 16, color: Colors.white),
               ),
               const SizedBox(width: 10),
-              Text(store.event.name),
+              Flexible(
+                child: Text(store.event.name, overflow: TextOverflow.ellipsis),
+              ),
             ],
           ),
           shape: const Border(bottom: BorderSide(color: AppColors.border)),
@@ -89,8 +112,11 @@ class Shell extends StatelessWidget {
                 '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}',
                 style: const TextStyle(fontSize: 13),
               ),
-              onPressed: () => _editEvent(context),
+              // 날짜·이름은 집회 설정(서버)에서 바꾼다. 여기서 바꾸면 신청 웹과 어긋난다.
+              onPressed: () => tabIndex.value = settingsTab,
             ),
+            const SizedBox(width: 4),
+            const AdminButton(),
             const SizedBox(width: 4),
             // 아이콘만 두면 못 찾는다. 날짜 버튼과 같은 모양으로 라벨을 붙인다.
             TextButton.icon(
@@ -141,68 +167,6 @@ class Shell extends StatelessWidget {
       ],
     );
   }
-
-  Future<void> _editEvent(BuildContext context) async {
-    final nameCtl = TextEditingController(text: store.event.name);
-    var start = store.event.startDate;
-    var end = store.event.endDate;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: const Text('집회 정보'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameCtl,
-                  decoration: const InputDecoration(labelText: '집회명'),
-                ),
-                const SizedBox(height: 12),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('시작일'),
-                  trailing: Text(fmtDate(start)),
-                  onTap: () async {
-                    final d = await pickDate(context, start);
-                    if (d != null) setLocal(() => start = d);
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('종료일'),
-                  trailing: Text(fmtDate(end)),
-                  onTap: () async {
-                    final d = await pickDate(context, end);
-                    if (d != null) setLocal(() => end = d);
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('저장'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok != true) return;
-    store.event.name = nameCtl.text.trim().isEmpty ? '집회' : nameCtl.text.trim();
-    store.event.startDate = start;
-    store.event.endDate = end.isAfter(start)
-        ? end
-        : start.add(const Duration(days: 1));
-    store.commit();
-  }
 }
 
 String fmtDate(DateTime d) =>
@@ -239,6 +203,7 @@ class _Warning extends StatelessWidget {
 }
 
 /// 잠금 화면. 첫 실행이면 비밀번호를 정하고, 이후에는 확인만 한다.
+/// 이 PC 의 잠금이라 서버 없이도 된다 (운영자 로그인은 서버 탭에 들어갈 때 따로).
 class Gate extends StatefulWidget {
   const Gate({super.key});
 
@@ -259,7 +224,7 @@ class _GateState extends State<Gate> {
 
   @override
   Widget build(BuildContext context) {
-    if (unlocked) return const Shell();
+    if (unlocked) return const GatheringsScreen();
     if (!auth.isSet) {
       return _SetPassword(onDone: () => setState(() => unlocked = true));
     }
@@ -281,7 +246,7 @@ class _GateState extends State<Gate> {
               ),
               const SizedBox(height: 14),
               const Text(
-                '방배정',
+                '집회관리',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w800,

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../remote.dart';
 import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
+import 'gatherings.dart';
 
 class AttendeesScreen extends StatefulWidget {
   const AttendeesScreen({super.key});
@@ -67,6 +69,19 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                   ],
                 ),
                 const SizedBox(width: 12),
+                Tooltip(
+                  message: current.value == null
+                      ? '서버에 연결된 집회에서만 쓸 수 있습니다'
+                      : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.download_outlined, size: 18),
+                    label: const Text('신청에서 가져오기'),
+                    onPressed: current.value == null
+                        ? null
+                        : () => importRegistrations(context),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Text('${list.length} / ${store.event.attendees.length}명'),
               ],
             ),
@@ -125,6 +140,42 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     ),
     _ => a.name.compareTo(b.name),
   };
+}
+
+/// 입금 확인된 신청 → 참석자. 방이 배정된 사람이 빠지게 되면 먼저 보여주고 묻는다.
+Future<void> importRegistrations(BuildContext context) async {
+  final g = current.value;
+  if (g == null) return;
+  final messenger = ScaffoldMessenger.of(context);
+  if (!await ensureAdmin(context)) return;
+  try {
+    final regs = await remote.registrations(g.id);
+    final gone = store.syncWouldRemove(g, regs);
+    if (gone.isNotEmpty && context.mounted) {
+      final ok = await confirmDialog(
+        context,
+        title: '방이 배정된 ${gone.length}명이 빠집니다',
+        body:
+            '신청이 취소됐거나 입금대기로 되돌려진 사람들입니다. 빼면 방 배정도 풀립니다.\n\n'
+            '${gone.take(20).map((a) => '· ${a.name} (${store.roomById(a.roomId)?.roomNo ?? '-'}호)').join('\n')}'
+            '${gone.length > 20 ? '\n… 외 ${gone.length - 20}명' : ''}',
+        action: '빼고 가져오기',
+        danger: true,
+      );
+      if (!ok) return;
+    }
+    final r = store.syncRegistrations(g, regs);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          '신청에서 가져옴: 추가 ${r.added} · 변경 ${r.updated} · 제거 ${r.removed}'
+          '${r.dayOnly > 0 ? '  (당일 참석 ${r.dayOnly}명은 방이 필요 없어 뺐습니다)' : ''}',
+        ),
+      ),
+    );
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text(errorText(e))));
+  }
 }
 
 /// 개별 추가/수정/삭제.
