@@ -1,24 +1,53 @@
-# Flutter/Dart
+# ⚠️ 이 저장소는 공개다. 아래에 없는 파일이라도 비밀번호·키·실제 참석자 정보가 들었으면 커밋하지 말 것.
+#    (.gitignore 는 파일을 막을 뿐, 코드 안에 붙여넣은 키는 못 막는다)
+
+# --- 비밀 키 / 환경변수 ---------------------------------------------------
+# Supabase service_role 키, DB 비밀번호 등. 앱에 넣는 anon 키는 공개용이라 커밋해도 된다.
+.env
+.env.*
+!.env.example
+*.env
+secrets.json
+*.secret.json
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+
+# Supabase CLI 로컬 상태 (supabase/schema.sql 은 커밋한다)
+supabase/.temp/
+supabase/.branches/
+supabase/.env
+
+# --- 개인정보: 참석자 명단 / 앱 데이터 파일 --------------------------------
+# 앱은 데이터를 OS 앱 데이터 폴더에 저장하지만, 복사본이 저장소로 흘러들어오는 걸 막는다.
+*.csv
+*.tsv
+*.xls
+*.xlsx
+data/
+backups/
+*.dump
+event.json
+events/
+auth.json
+*.json.corrupt
+*.json.tmp
+
+# --- Flutter / Dart --------------------------------------------------------
 .dart_tool/
 build/
+coverage/
 .flutter-plugins
 .flutter-plugins-dependencies
+.pub-cache/
+*.log
 
-# IDE
-.idea/
-.vscode/
-*.iml
-*.ipr
-*.iws
-
-# OS
-.DS_Store
-
-# 플랫폼 빌드 산출물
+# --- 플랫폼 빌드 산출물 ----------------------------------------------------
 android/.gradle/
 android/local.properties
 android/key.properties
-android/app/*.jks
 ios/Pods/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
@@ -30,14 +59,19 @@ macos/Flutter/ephemeral/
 windows/flutter/ephemeral/
 linux/flutter/ephemeral/
 
-# 개인정보 — 참석자 명단/데이터 파일은 절대 커밋 금지
-*.csv
-*.xlsx
-data/
-*.env
-event.json
-*.json.corrupt
-*.json.tmp
+# --- IDE / 개인 설정 -------------------------------------------------------
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.claude/settings.local.json
+CLAUDE.local.md
+
+# --- OS --------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # pubspec.lock 은 앱이므로 커밋한다 (재현 가능한 빌드).
 # 라이브러리 패키지로 바뀌면 여기에 pubspec.lock 을 추가할 것.
