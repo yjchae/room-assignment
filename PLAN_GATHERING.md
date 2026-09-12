@@ -347,14 +347,16 @@ class FeeRule {
 class Gathering { String id, name; List<String> themes; String? place, address, notice, posterUrl, backgroundUrl;
                   DateTime start, end; FeeRule fee; Bank? bank; List<String> formFields; bool open; DateTime? deadline; }
 
-class Person { String id, name, gender, relation; int birthYear; bool full; DateTime? checkIn, checkOut;
+class Person { String id, name, gender, relation; int birthYear; DateTime? checkIn, checkOut; // null = 집회 시작/종료일
                String? phone, cell, zone; Map<String, String> extra; }
 
 class Registration { String id, gatheringId, phone; List<Person> people; String? depositor, memo;
                      int quoted, paid; String status; DateTime createdAt; DateTime? paidAt; }
 
-/// 신청 합계와 내역. 신청 웹·조회·관리자 화면 전부 이것 하나를 부른다.
-Quote quote(Gathering g, List<Person> people, DateTime appliedAt);
+/// 신청 합계와 내역. 신청 웹·조회·관리자 화면 전부 이것 하나를 부른다. (구현됨: lib/gathering.dart)
+/// 전체 참석 여부는 필드로 두지 않고 "일정 = 집회 기간 전체" 로 판정한다 (상태가 어긋날 일이 없게).
+Quote quote(FeeRule fee, {required DateTime start, required DateTime end,
+                          required List<Person> people, required DateTime appliedAt});
 ```
 
 ---
