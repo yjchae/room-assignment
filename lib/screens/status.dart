@@ -63,7 +63,7 @@ class StatusScreen extends StatelessWidget {
                           pendingSelection
                             ..clear()
                             ..addAll(unassigned.map((a) => a.id));
-                          tabIndex.value = 2;
+                          tabIndex.value = assignTab;
                         },
                         child: const Text('전체 선택해서 배정'),
                       ),
@@ -100,7 +100,7 @@ class StatusScreen extends StatelessWidget {
                         pendingSelection
                           ..clear()
                           ..add(a.id);
-                        tabIndex.value = 2;
+                        tabIndex.value = assignTab;
                       },
                     ),
                   if (unassigned.length > 200)

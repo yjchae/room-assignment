@@ -337,7 +337,9 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
                     [
                       for (final f in _groupBy)
                         if ((f.of(x.attendee) ?? '').trim().isNotEmpty)
-                          '${f.label}:${f.of(x.attendee)}',
+                          f == GroupField.family
+                              ? f.label
+                              : '${f.label}:${f.of(x.attendee)}',
                     ].join('  '),
                   ),
                   trailing: Text(

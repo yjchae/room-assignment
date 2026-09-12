@@ -5,15 +5,19 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'gathering.dart';
 import 'models.dart';
 
-/// 앱 전체 상태. JSON 파일 1개를 통째로 읽고 쓴다.
+/// 앱 전체 상태. 집회 하나의 방배정 파일(JSON 1개)을 통째로 읽고 쓴다.
 /// ponytail: 저장은 매 변경마다 전체 파일 재작성. 참석자 수천 명까지는 무의미하게 빠름.
 class Store extends ChangeNotifier {
   Store({this.fileOverride});
 
   /// 테스트에서 임시 파일을 주입하기 위한 훅.
   final File? fileOverride;
+
+  /// 열어 둔 집회 id. 파일은 `events/<id>.json`. null 이면 예전 버전의 `event.json`.
+  String? gatheringId;
 
   Event event = Event(
     name: '새 집회',
@@ -27,7 +31,65 @@ class Store extends ChangeNotifier {
   Future<File> _resolveFile() async {
     if (fileOverride != null) return fileOverride!;
     final dir = await getApplicationSupportDirectory();
-    return File('${dir.path}/event.json');
+    return gatheringId == null
+        ? File('${dir.path}/event.json')
+        : File('${dir.path}/events/$gatheringId.json');
+  }
+
+  /// 집회 하나의 방배정 파일을 연다. 파일이 없으면 [fallback] 으로 시작한다.
+  Future<void> open(String gatheringId, Event fallback) async {
+    await _writes;
+    this.gatheringId = gatheringId;
+    _file = null;
+    event = fallback;
+    loadError = null;
+    saveError = null;
+    loaded = false;
+    await load();
+  }
+
+  /// 이 PC 에 방배정 파일이 있는 집회들 (집회 id → 파일 속 Event).
+  /// 서버에 못 붙을 때 집회 목록 대신 쓴다.
+  static Future<Map<String, Event>> localEvents() async {
+    final dir = Directory(
+      '${(await getApplicationSupportDirectory()).path}/events',
+    );
+    if (!await dir.exists()) return {};
+    final out = <String, Event>{};
+    await for (final f in dir.list()) {
+      final name = f.uri.pathSegments.last;
+      if (f is! File || !name.endsWith('.json')) continue;
+      try {
+        out[name.substring(0, name.length - 5)] = Event.fromJson(
+          jsonDecode(await f.readAsString()) as Map<String, dynamic>,
+        );
+      } catch (_) {
+        // 깨진 파일은 목록에서만 뺀다. 열면 load() 가 .corrupt 로 치운다.
+      }
+    }
+    return out;
+  }
+
+  /// 집회 목록이 생기기 전 버전의 방배정 파일 내용. 없거나 비었으면 null.
+  static Future<Event?> legacyEvent() async {
+    final f = File(
+      '${(await getApplicationSupportDirectory()).path}/event.json',
+    );
+    try {
+      if (!await f.exists()) return null;
+      return Event.fromJson(
+        jsonDecode(await f.readAsString()) as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 예전 `event.json` 을 [gatheringId] 집회의 파일로 옮긴다.
+  static Future<void> adoptLegacy(String gatheringId) async {
+    final dir = (await getApplicationSupportDirectory()).path;
+    await Directory('$dir/events').create(recursive: true);
+    await File('$dir/event.json').rename('$dir/events/$gatheringId.json');
   }
 
   /// 파일이 깨져 있으면 옆으로 치우고 빈 집회로 시작한다.
@@ -57,6 +119,7 @@ class Store extends ChangeNotifier {
   /// 임시 파일에 쓰고 rename. 도중에 죽어도 반쪽짜리 JSON 이 남지 않는다.
   Future<void> save() async {
     _file ??= await _resolveFile();
+    await _file!.parent.create(recursive: true);
     final tmp = File('${_file!.path}.tmp');
     await tmp.writeAsString(
       const JsonEncoder.withIndent('  ').convert(event.toJson()),
@@ -81,6 +144,139 @@ class Store extends ChangeNotifier {
 
   /// 테스트/종료 시 저장이 끝날 때까지 기다린다.
   Future<void> get pendingWrites => _writes;
+
+  // --- 집회 설정 · 신청 → 방배정 ---
+
+  /// 집회 설정(서버)을 이 PC 의 방배정 파일에 반영한다. 방배정 쪽 코드는 [Event] 만 본다.
+  void applyGathering(Gathering g) {
+    final s = dateOnly(g.start), e = dateOnly(g.end);
+    event.name = g.name;
+    event.startDate = s;
+    event.endDate = e.isAfter(s) ? e : s.add(const Duration(days: 1));
+    _addFields(g.formFields);
+    commit();
+  }
+
+  /// 확정된 신청의 사람들 (사람 id → 참석자). 당일(0박) 참석자는 방이 필요 없어 뺀다.
+  Map<String, Attendee> _wanted(Gathering g, List<Registration> regs) => {
+    for (final r in regs)
+      if (r.status == RegStatus.confirmed)
+        for (final line in g.quoteFor(r.people, r.createdAt).lines)
+          if (line.nights > 0) line.person.id: _attendeeOf(g, r, line.person),
+  };
+
+  Attendee _attendeeOf(Gathering g, Registration r, Person p) {
+    final s = dateOnly(g.start), e = dateOnly(g.end);
+    DateTime clamp(DateTime d) {
+      final x = dateOnly(d);
+      return x.isBefore(s) ? s : (x.isAfter(e) ? e : x);
+    }
+
+    return Attendee(
+      id: p.id,
+      name: p.name,
+      gender: p.gender,
+      age: g.start.year - p.birthYear,
+      phone: fmtPhone(p.phone ?? r.phone),
+      cell: p.cell,
+      zone: p.zone,
+      checkIn: clamp(p.checkIn ?? s),
+      checkOut: clamp(p.checkOut ?? e),
+      extra: {...p.extra},
+      registrationId: r.id,
+    );
+  }
+
+  /// [syncRegistrations] 를 하면 지워질 사람 중 방이 배정된 사람. 지우기 전에 운영자에게 보여준다.
+  List<Attendee> syncWouldRemove(Gathering g, List<Registration> regs) {
+    final want = _wanted(g, regs);
+    return event.attendees
+        .where(
+          (a) =>
+              a.registrationId != null &&
+              !want.containsKey(a.id) &&
+              a.roomId != null,
+        )
+        .toList();
+  }
+
+  /// 확정된 신청을 참석자로 맞춘다. 몇 번 불러도 결과가 같다 (사람 id 로 맞춘다).
+  ///
+  /// - 신청에서 온 항목(이름·성별·나이·전화·셀·존·사용자 항목·일정)만 덮어쓰고
+  ///   배정된 방(roomId)·기타(note)는 그대로 둔다.
+  /// - 신청에서 왔는데 이제 확정 목록에 없는 사람(취소·되돌림·동반자 삭제)은 지운다.
+  /// - 붙여넣기·직접 추가한 사람(registrationId == null)은 건드리지 않는다.
+  ({int added, int updated, int removed, int dayOnly}) syncRegistrations(
+    Gathering g,
+    List<Registration> regs,
+  ) {
+    final want = _wanted(g, regs);
+    final confirmedPeople = regs
+        .where((r) => r.status == RegStatus.confirmed)
+        .fold(0, (s, r) => s + r.people.length);
+    final have = {for (final a in event.attendees) a.id: a};
+    var added = 0, updated = 0;
+    for (final w in want.values) {
+      final a = have[w.id];
+      if (a == null) {
+        event.attendees.add(w);
+        added++;
+      } else if (!_sameSource(a, w)) {
+        a
+          ..name = w.name
+          ..gender = w.gender
+          ..age = w.age
+          ..phone = w.phone
+          ..cell = w.cell
+          ..zone = w.zone
+          ..checkIn = w.checkIn
+          ..checkOut = w.checkOut
+          ..extra = w.extra
+          ..registrationId = w.registrationId;
+        updated++;
+      }
+    }
+    final before = event.attendees.length;
+    event.attendees.removeWhere(
+      (a) => a.registrationId != null && !want.containsKey(a.id),
+    );
+    final removed = before - event.attendees.length;
+    final newFields = _addFields(want.values.expand((a) => a.extra.keys));
+    if (added + updated + removed + newFields > 0) commit();
+    return (
+      added: added,
+      updated: updated,
+      removed: removed,
+      dayOnly: confirmedPeople - want.length,
+    );
+  }
+
+  bool _sameSource(Attendee a, Attendee b) =>
+      a.name == b.name &&
+      a.gender == b.gender &&
+      a.age == b.age &&
+      a.phone == b.phone &&
+      a.cell == b.cell &&
+      a.zone == b.zone &&
+      a.checkIn == b.checkIn &&
+      a.checkOut == b.checkOut &&
+      a.registrationId == b.registrationId &&
+      mapEquals(a.extra, b.extra);
+
+  /// 모르는 사용자 정의 항목 이름을 추가한다. 추가한 개수.
+  int _addFields(Iterable<String> names) {
+    var n = 0;
+    for (final f in names) {
+      if (f.trim().isEmpty ||
+          event.customFields.contains(f) ||
+          builtinFieldLabels.values.contains(f)) {
+        continue;
+      }
+      event.customFields.add(f);
+      n++;
+    }
+    return n;
+  }
 
   // --- id ---
   int _seq = 0;

@@ -370,18 +370,22 @@ lib/
   main.dart                     (수정) 잠금 → 집회 목록 → 탭 7개
   main_public.dart              (신규) 신청 웹 진입점: 집회 페이지 / 신청서 / 조회
   gathering.dart                (신규) Gathering·FeeRule·Person·Registration + quote()
+  config.dart                   (신규) 서버 주소·공개용 키·신청 링크
   remote.dart                   (신규) Supabase 호출 모음 (목록·저장·RPC·이미지 줄이기+업로드)
+  widgets/quote_table.dart      (신규) 금액 내역표·신청 상태 뱃지 (두 앱 공용)
   screens/gatherings.dart       (신규) 집회 목록
   screens/gathering_settings.dart (신규) 집회 설정
   screens/registrations.dart    (신규) 신청·입금 관리
   models.dart                   (수정) Attendee.registrationId
-  store.dart                    (수정) 집회별 파일 경로 + syncFromRegistrations()
+  store.dart                    (수정) 집회별 파일 경로 + applyGathering() + syncRegistrations()
   auto_assign.dart              (수정) GroupField '가족'
 supabase/schema.sql             (신규) 테이블 + RLS + 함수 + 스토리지 버킷 권한
 .github/workflows/keepalive.yml (신규) 3일마다 DB 1행 조회
 .github/workflows/deploy-web.yml (신규) main push → 신청 웹 빌드 → GitHub Pages
 test/fee_test.dart              (신규) 회비 계산 — §3.3 예시 + 경계(부분>전체 상한, 할인 겹침, 영유아 0원)
-test/image_test.dart            (신규) 큰 이미지 → 가로폭·용량 목표 안으로 줄어드는지
+supabase/test.sql               (신규) 로컬 Postgres 에서 권한·함수 거부 시나리오 검증
+test/gathering_test.dart        (신규) 모델 JSON · 이미지 줄이기 · 신청 → 참석자 가져오기 · '가족' 기준
+test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 화면 — 가짜 서버로
 ```
 
 - `main_public.dart` 는 `dart:io` 를 쓰는 `store.dart`/`auth.dart` 를 import 하지 않는다 (웹 빌드가 깨짐).
@@ -416,3 +420,24 @@ test/image_test.dart            (신규) 큰 이미지 → 가로폭·용량 목
 - HEIC(아이폰 원본) 이미지 읽기 — 운영자가 불편해하면
 - 자동 백업 — Pro 요금제($25/월) 또는 GitHub Actions 로 주 1회 `pg_dump`
 - 집회 종료 후 개인정보 일괄 삭제 버튼 (지금은 집회 삭제 = 신청 전체 삭제로 대체)
+- 운영자가 관리자 앱에서 신청자 명단(사람) 고치기 — 지금은 신청자가 입금 전 [조회 → 수정]으로 고치거나,
+  운영자가 [입금대기로 되돌리기] 후 신청자에게 수정을 부탁한다. 요청 오면 신청서 입력칸을 관리자 앱에서 재사용.
+
+---
+
+## 10. 구현 현황 (2026-09-13)
+
+1~8단계 구현 완료. 기획과 달라진 점:
+
+- **당일(0박) 참석자는 [신청에서 가져오기]에서 빠진다.** 방이 필요 없고, 방배정 쪽 정원 계산은
+  "하룻밤도 안 겹치는 사람 = 모든 밤 차지"로 세기 때문에 넣으면 정원이 틀어진다. 가져오기 결과에 "당일 N명 제외"로 표시.
+- 운영자의 신청자 명단 수정은 §9 로 미뤘다.
+- 신청 조회는 휴대폰+PIN (서버 함수에서 30분 5회 잠금) — §0 결정대로.
+- 이미지 줄이기: EXIF 회전 반영, 투명 PNG 는 흰 바탕, 깨진 파일은 "읽지 못했습니다" 안내.
+
+운영자가 할 일 (코드 밖):
+
+1. 저장소 공개 전환 → Settings → Pages → Source: **GitHub Actions**
+2. `feature/gathering` 을 `main` 에 합치기 → deploy-web(신청 웹 배포)·keepalive 가 main 에서 돌기 시작
+3. **Windows PC 에서 관리자 앱 한 바퀴** (로그인 → 이미지 업로드 → 입금 확인 → 가져오기 → 방배정) — macOS 에서는
+   Windows 빌드를 할 수 없어 아직 못 해봤다.

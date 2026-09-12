@@ -18,7 +18,10 @@ class GroupField {
   static const zone = GroupField('zone', '존');
   static const cell = GroupField('cell', '셀');
   static const note = GroupField('note', '기타');
-  static const builtins = [zone, cell, note];
+
+  /// 같은 신청(가족·동반자)끼리. 값은 신청 id 라 화면에는 이름만 보여준다.
+  static const family = GroupField('family', '가족');
+  static const builtins = [zone, cell, note, family];
 
   /// 이 집회에서 고를 수 있는 기준 전체 = 기본 + 사용자 정의 항목.
   static List<GroupField> forEvent(Event e) => [
@@ -30,6 +33,7 @@ class GroupField {
     'zone' => a.zone,
     'cell' => a.cell,
     'note' => a.note,
+    'family' => a.registrationId,
     _ => a.extra[label],
   };
 

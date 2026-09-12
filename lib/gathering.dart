@@ -1,4 +1,4 @@
-/// 집회 신청 회비 계산. 신청 웹과 관리자 앱이 같은 코드를 쓴다 —
+/// 집회·신청 모델과 회비 계산. 신청 웹과 관리자 앱이 같은 코드를 쓴다 —
 /// 웹 빌드에도 들어가므로 dart:io / flutter 를 import 하지 않는다.
 library;
 
@@ -80,21 +80,281 @@ class FeeRule {
         .where((p) => !d.isBefore(_day(p.from)) && !d.isAfter(_day(p.to)))
         .fold(0, (m, p) => math.max(m, p.pct));
   }
+
+  Map<String, dynamic> toJson() => {
+    'full': _groupsOut(full),
+    'perNight': _groupsOut(perNight),
+    'dayOnly': _groupsOut(dayOnly),
+    'minAge': _groupsOut(minAge),
+    'perRegistration': perRegistration,
+    'fullDiscountPct': fullDiscountPct,
+    'periods': [
+      for (final p in periods)
+        {'from': ymd(p.from), 'to': ymd(p.to), 'pct': p.pct},
+    ],
+  };
+
+  factory FeeRule.fromJson(Object? json) {
+    final j = json is Map ? json : const {};
+    return FeeRule(
+      full: _groupsIn(j['full']),
+      perNight: _groupsIn(j['perNight']),
+      dayOnly: _groupsIn(j['dayOnly']),
+      minAge: {...defaultMinAge, ..._groupsIn(j['minAge'])},
+      perRegistration: _int(j['perRegistration']),
+      fullDiscountPct: _int(j['fullDiscountPct']),
+      periods: [
+        for (final p in (j['periods'] is List ? j['periods'] as List : []))
+          if (p is Map && _date(p['from']) != null && _date(p['to']) != null)
+            (from: _date(p['from'])!, to: _date(p['to'])!, pct: _int(p['pct'])),
+      ],
+    );
+  }
 }
 
 /// 신청서의 참석자 한 명. 일정이 null 이면 집회 시작일/종료일.
 class Person {
   Person({
+    String? id,
     required this.name,
+    required this.gender,
     required this.birthYear,
+    this.relation = '본인',
     this.checkIn,
     this.checkOut,
+    this.phone,
+    this.cell,
+    this.zone,
+    Map<String, String>? extra,
+  }) : id = id ?? newPersonId(),
+       extra = extra ?? {};
+
+  /// 신청 웹에서 만들어져 관리자 앱의 참석자 id 로 그대로 이어진다.
+  String id;
+  String name;
+  String gender; // 'M' | 'F'
+  int birthYear;
+  String relation;
+  DateTime? checkIn, checkOut;
+  String? phone, cell, zone;
+
+  /// 사용자 정의 항목(교회·직분 등) 값.
+  Map<String, String> extra;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'gender': gender,
+    'birthYear': birthYear,
+    'relation': relation,
+    'checkIn': checkIn == null ? null : ymd(checkIn!),
+    'checkOut': checkOut == null ? null : ymd(checkOut!),
+    'phone': phone,
+    'cell': cell,
+    'zone': zone,
+    'extra': extra,
+  };
+
+  factory Person.fromJson(Map j) => Person(
+    id: j['id'] == null ? null : '${j['id']}',
+    name: '${j['name'] ?? ''}',
+    gender: j['gender'] == 'F' ? 'F' : 'M',
+    birthYear: _int(j['birthYear']),
+    relation: '${j['relation'] ?? '본인'}',
+    checkIn: _date(j['checkIn']),
+    checkOut: _date(j['checkOut']),
+    phone: _str(j['phone']),
+    cell: _str(j['cell']),
+    zone: _str(j['zone']),
+    extra: {
+      if (j['extra'] is Map)
+        for (final e in (j['extra'] as Map).entries) '${e.key}': '${e.value}',
+    },
+  );
+}
+
+class Bank {
+  Bank({this.bank = '', this.account = '', this.holder = ''});
+  String bank, account, holder;
+
+  bool get isEmpty => account.trim().isEmpty;
+
+  Map<String, dynamic> toJson() => {
+    'bank': bank,
+    'account': account,
+    'holder': holder,
+  };
+
+  factory Bank.fromJson(Object? j) => j is Map
+      ? Bank(
+          bank: '${j['bank'] ?? ''}',
+          account: '${j['account'] ?? ''}',
+          holder: '${j['holder'] ?? ''}',
+        )
+      : Bank();
+}
+
+/// 집회 설정 (서버 `gatherings` 한 행).
+class Gathering {
+  Gathering({
+    this.id = '',
+    required this.name,
+    required this.start,
+    required this.end,
+    List<String>? themes,
+    this.place,
+    this.address,
+    this.notice,
+    this.posterUrl,
+    this.backgroundUrl,
+    FeeRule? fee,
+    Bank? bank,
+    List<String>? formFields,
+    this.open = false,
+    this.deadline,
+  }) : themes = themes ?? [],
+       fee = fee ?? FeeRule(),
+       bank = bank ?? Bank(),
+       formFields = formFields ?? [];
+
+  /// '' = 아직 서버에 저장 안 됨.
+  String id;
+  String name;
+  DateTime start, end;
+  List<String> themes;
+  String? place, address, notice, posterUrl, backgroundUrl;
+  FeeRule fee;
+  Bank bank;
+
+  /// 신청서에 나오는 사용자 정의 항목. 관리자 앱의 참석자 항목과 같은 이름.
+  List<String> formFields;
+  bool open;
+
+  /// 이 날까지 신청 받는다.
+  DateTime? deadline;
+
+  int get nights => _nights(_day(start), _day(end));
+
+  /// 신청 받는 중인가. 서버(`_assert_open`)와 같은 규칙 — 마감일 당일까지.
+  bool acceptingOn(DateTime now) =>
+      open && (deadline == null || !_day(now).isAfter(_day(deadline!)));
+
+  /// 집회 기간의 날짜들 (시작일 ~ 종료일).
+  List<DateTime> get days =>
+      [for (var i = 0; i <= nights; i++) _day(start).add(Duration(days: i))]
+          .map((d) => DateTime(d.year, d.month, d.day))
+          .toList();
+
+  Quote quoteFor(List<Person> people, DateTime appliedAt) =>
+      quote(fee, start: start, end: end, people: people, appliedAt: appliedAt);
+
+  Gathering copy() => Gathering.fromRow({...toRow(), 'id': id});
+
+  /// 서버에 쓰는 칸들. id 는 넣지 않는다 (insert 때 서버가 만든다).
+  Map<String, dynamic> toRow() => {
+    'name': name,
+    'themes': themes,
+    'place': place,
+    'address': address,
+    'notice': notice,
+    'start_date': ymd(start),
+    'end_date': ymd(end),
+    'poster_url': posterUrl,
+    'background_url': backgroundUrl,
+    'fee': fee.toJson(),
+    'bank': bank.toJson(),
+    'form_fields': formFields,
+    'open': open,
+    'deadline': deadline == null ? null : ymd(deadline!),
+  };
+
+  factory Gathering.fromRow(Map r) => Gathering(
+    id: '${r['id'] ?? ''}',
+    name: '${r['name'] ?? ''}',
+    start: _date(r['start_date']) ?? DateTime.now(),
+    end: _date(r['end_date']) ?? DateTime.now(),
+    themes: [for (final t in (r['themes'] as List? ?? [])) '$t'],
+    place: _str(r['place']),
+    address: _str(r['address']),
+    notice: _str(r['notice']),
+    posterUrl: _str(r['poster_url']),
+    backgroundUrl: _str(r['background_url']),
+    fee: FeeRule.fromJson(r['fee']),
+    bank: Bank.fromJson(r['bank']),
+    formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
+    open: r['open'] == true,
+    deadline: _date(r['deadline']),
+  );
+}
+
+enum RegStatus {
+  pending('입금대기'),
+  confirmed('입금확인'),
+  cancelled('취소');
+
+  const RegStatus(this.label);
+  final String label;
+
+  static RegStatus parse(Object? s) => values.asNameMap()['$s'] ?? pending;
+}
+
+/// 신청 1건 (서버 `registrations` 한 행 또는 조회 함수 결과).
+class Registration {
+  Registration({
+    required this.id,
+    required this.gatheringId,
+    required this.phone,
+    required this.people,
+    this.depositor,
+    this.memo,
+    this.quoted = 0,
+    this.status = RegStatus.pending,
+    this.paid = 0,
+    this.paidAt,
+    this.adminMemo,
+    required this.createdAt,
   });
 
-  String name;
-  int birthYear;
-  DateTime? checkIn, checkOut;
+  String id, gatheringId, phone;
+  List<Person> people;
+  String? depositor, memo, adminMemo;
+
+  /// 신청 웹이 보여준 금액 (참고용).
+  int quoted;
+  RegStatus status;
+  int paid;
+  DateTime? paidAt;
+
+  /// 신청 시각 (한국 시간). 기간 할인 기준.
+  DateTime createdAt;
+
+  String get applicant => people.isEmpty ? '' : people.first.name;
+  String get depositorName =>
+      (depositor ?? '').trim().isNotEmpty ? depositor!.trim() : applicant;
+
+  factory Registration.fromRow(Map r) => Registration(
+    id: '${r['id']}',
+    gatheringId: '${r['gathering_id']}',
+    phone: '${r['phone'] ?? ''}',
+    people: [
+      for (final p in (r['people'] as List? ?? []))
+        if (p is Map) Person.fromJson(p),
+    ],
+    depositor: _str(r['depositor']),
+    memo: _str(r['memo']),
+    quoted: _int(r['quoted']),
+    status: RegStatus.parse(r['status']),
+    paid: _int(r['paid']),
+    paidAt: _date(r['paid_at']),
+    adminMemo: _str(r['admin_memo']),
+    createdAt: (DateTime.tryParse('${r['created_at']}') ?? DateTime.now())
+        .toLocal(),
+  );
 }
+
+// ---------------------------------------------------------------------------
+// 회비 계산
+// ---------------------------------------------------------------------------
 
 class QuoteLine {
   const QuoteLine(this.person, this.group, this.nights, this.full, this.amount);
@@ -105,6 +365,13 @@ class QuoteLine {
   final int nights;
   final bool full;
   final int amount;
+
+  /// "전체" / "1박" / "당일"
+  String get stay => full
+      ? '전체'
+      : nights == 0
+      ? '당일'
+      : '$nights박';
 }
 
 class Quote {
@@ -119,6 +386,18 @@ class Quote {
   int get periodDiscount => subtotal - subtotal * (100 - periodPct) ~/ 100;
 
   int get total => subtotal - periodDiscount + perRegistration;
+
+  /// "성인 2 · 중고등 1 · 유치 1"
+  String get summary {
+    final c = <AgeGroup, int>{};
+    for (final l in lines) {
+      c[l.group] = (c[l.group] ?? 0) + 1;
+    }
+    return [
+      for (final g in AgeGroup.values)
+        if (c[g] != null) '${g.label} ${c[g]}',
+    ].join(' · ');
+  }
 }
 
 /// 신청 합계와 내역. 신청 웹·조회·관리자 화면 전부 이것 하나를 부른다.
@@ -169,7 +448,72 @@ Quote quote(
   );
 }
 
+// ---------------------------------------------------------------------------
+// 표시 도우미 (두 앱 공용)
+// ---------------------------------------------------------------------------
+
+String ymd(DateTime d) => '${d.year}-${_pad2(d.month)}-${_pad2(d.day)}';
+
+const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
+/// "10-09(금)"
+String mdw(DateTime d) =>
+    '${_pad2(d.month)}-${_pad2(d.day)}(${_weekdays[d.weekday - 1]})';
+
+/// "2박3일" / "당일"
+String stayLabel(int nights) => nights == 0 ? '당일' : '$nights박${nights + 1}일';
+
+/// 415000 → "415,000원"
+String won(int n) =>
+    '${n < 0 ? '-' : ''}${n.abs().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',')}원';
+
+String digitsOnly(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
+
+/// "01012345678" → "010-1234-5678". 모양이 다르면 그대로.
+String fmtPhone(String p) {
+  final d = digitsOnly(p);
+  if (d.length == 11) {
+    return '${d.substring(0, 3)}-${d.substring(3, 7)}-${d.substring(7)}';
+  }
+  if (d.length == 10) {
+    return '${d.substring(0, 3)}-${d.substring(3, 6)}-${d.substring(6)}';
+  }
+  return p;
+}
+
+/// 서버와 같은 규칙: 010 등 01X 로 시작하는 10~11자리.
+bool validPhone(String p) => RegExp(r'^01[0-9]{8,9}$').hasMatch(digitsOnly(p));
+
+final _rand = math.Random.secure();
+
+String newPersonId() =>
+    List.generate(16, (_) => _rand.nextInt(36).toRadixString(36)).join();
+
+String _pad2(int n) => n.toString().padLeft(2, '0');
+
 /// 날짜만 남긴 UTC. 일수 계산이 서머타임 등에 흔들리지 않게 UTC 로 뺀다.
 DateTime _day(DateTime d) => DateTime.utc(d.year, d.month, d.day);
 
 int _nights(DateTime from, DateTime to) => to.difference(from).inDays;
+
+Map<String, int> _groupsOut(Map<AgeGroup, int> m) => {
+  for (final e in m.entries) e.key.name: e.value,
+};
+
+Map<AgeGroup, int> _groupsIn(Object? m) {
+  final names = AgeGroup.values.asNameMap();
+  return {
+    if (m is Map)
+      for (final e in m.entries) ?names['${e.key}']: _int(e.value),
+  };
+}
+
+int _int(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
+
+String? _str(Object? v) => v == null || '$v'.isEmpty ? null : '$v';
+
+/// "2026-10-09" → 그 날 0시(현지). 없거나 깨졌으면 null.
+DateTime? _date(Object? v) {
+  final d = v == null ? null : DateTime.tryParse('$v');
+  return d == null ? null : DateTime(d.year, d.month, d.day);
+}

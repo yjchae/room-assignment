@@ -121,6 +121,10 @@ class Attendee {
   /// 사용자 정의 항목 값. 키는 [Event.customFields] 의 이름. 빈 값은 담지 않는다.
   Map<String, String> extra;
 
+  /// 신청에서 가져온 사람이면 그 신청 id. 같은 값 = 같은 가족(자동배정 '가족' 기준).
+  /// null = 붙여넣기·직접 추가한 사람.
+  String? registrationId;
+
   Attendee({
     required this.id,
     required this.name,
@@ -134,6 +138,7 @@ class Attendee {
     required this.checkIn,
     required this.checkOut,
     Map<String, String>? extra,
+    this.registrationId,
   }) : extra = extra ?? {};
 
   /// 하룻밤 [night] 에 이 방에 묵는가.
@@ -153,6 +158,7 @@ class Attendee {
     'checkIn': checkIn.toIso8601String(),
     'checkOut': checkOut.toIso8601String(),
     'extra': extra,
+    'registrationId': registrationId,
   };
 
   factory Attendee.fromJson(Map<String, dynamic> j) => Attendee(
@@ -168,6 +174,7 @@ class Attendee {
     checkIn: DateTime.parse(j['checkIn'] as String),
     checkOut: DateTime.parse(j['checkOut'] as String),
     extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
+    registrationId: j['registrationId'] as String?,
   );
 }
 

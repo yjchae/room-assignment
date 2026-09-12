@@ -1,0 +1,401 @@
+// 집회·신청 모델, 이미지 줄이기, 신청 → 참석자 가져오기.
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
+import 'package:room_assignment/auto_assign.dart';
+import 'package:room_assignment/gathering.dart';
+import 'package:room_assignment/models.dart';
+import 'package:room_assignment/remote.dart';
+import 'package:room_assignment/store.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+final start = DateTime(2026, 10, 9);
+final end = DateTime(2026, 10, 11);
+
+Gathering sample() => Gathering(
+  id: 'g1',
+  name: '가족수양회',
+  start: start,
+  end: end,
+  themes: ['영혼육', '다음세대'],
+  place: '수양관',
+  bank: Bank(bank: '국민', account: '000-00-0000', holder: '교회'),
+  formFields: ['교회'],
+  open: true,
+  deadline: DateTime(2026, 9, 30),
+  fee: FeeRule(
+    full: {AgeGroup.adult: 150000, AgeGroup.youth: 120000},
+    perNight: {AgeGroup.adult: 70000, AgeGroup.kinder: 30000},
+    dayOnly: {AgeGroup.adult: 30000},
+    minAge: {...FeeRule.defaultMinAge, AgeGroup.adult: 20},
+    perRegistration: 10000,
+    fullDiscountPct: 5,
+    periods: [(from: DateTime(2026, 9, 1), to: DateTime(2026, 9, 20), pct: 10)],
+  ),
+);
+
+Person person(
+  String name,
+  int birthYear, {
+  String gender = 'M',
+  DateTime? checkIn,
+  DateTime? checkOut,
+  Map<String, String>? extra,
+}) => Person(
+  id: 'p-$name',
+  name: name,
+  gender: gender,
+  birthYear: birthYear,
+  checkIn: checkIn,
+  checkOut: checkOut,
+  extra: extra,
+);
+
+Registration reg(String id, RegStatus status, List<Person> people) =>
+    Registration(
+      id: id,
+      gatheringId: 'g1',
+      phone: '01012345678',
+      people: people,
+      status: status,
+      createdAt: DateTime(2026, 9, 10),
+    );
+
+Store tmpStore() {
+  final dir = Directory.systemTemp.createTempSync('gathering_test');
+  addTearDown(() => dir.deleteSync(recursive: true));
+  return Store(fileOverride: File('${dir.path}/event.json'))
+    ..event = Event(name: 'x', startDate: start, endDate: end);
+}
+
+void main() {
+  group('모델', () {
+    test('Gathering 은 서버 행(JSON)을 거쳐도 그대로다 — 금액까지', () {
+      final g = sample();
+      final back = Gathering.fromRow({...g.toRow(), 'id': g.id});
+      expect(back.id, 'g1');
+      expect(back.name, g.name);
+      expect(back.themes, g.themes);
+      expect(back.bank.account, '000-00-0000');
+      expect(back.deadline, DateTime(2026, 9, 30));
+      expect(back.formFields, ['교회']);
+      expect(back.fee.minAge[AgeGroup.adult], 20);
+      expect(back.fee.periods.single.pct, 10);
+      final family = [
+        person('아빠', 1985),
+        person('딸', 2012),
+        person('막내', 2021, checkIn: DateTime(2026, 10, 10)),
+      ];
+      final on = DateTime(2026, 9, 10);
+      expect(back.quoteFor(family, on).total, g.quoteFor(family, on).total);
+      expect(g.quoteFor(family, on).total, greaterThan(0));
+    });
+
+    test('모르는 값·빈 값은 기본값으로 읽는다', () {
+      final g = Gathering.fromRow({
+        'id': 'x',
+        'name': 'n',
+        'start_date': '2026-01-01',
+        'end_date': '2026-01-03',
+        'fee': {
+          'full': {'adult': 1000, 'alien': 5},
+          'periods': [
+            {'from': 'bad', 'to': '2026-01-01', 'pct': 5},
+          ],
+        },
+      });
+      expect(g.fee.full, {AgeGroup.adult: 1000});
+      expect(g.fee.periods, isEmpty);
+      expect(g.fee.minAge, FeeRule.defaultMinAge);
+      expect(g.bank.isEmpty, isTrue);
+      expect(g.open, isFalse);
+    });
+
+    test('Registration: 조회 함수가 돌려준 jsonb 를 읽는다', () {
+      final r = Registration.fromRow({
+        'id': 'r1',
+        'gathering_id': 'g1',
+        'phone': '01012345678',
+        'people': [
+          person('아빠', 1985, checkIn: DateTime(2026, 10, 10)).toJson(),
+          person('딸', 2012, gender: 'F', extra: {'교회': '신촌'}).toJson(),
+        ],
+        'quoted': 415000,
+        'status': 'confirmed',
+        'paid': 415000,
+        'paid_at': '2026-09-11',
+        'created_at': '2026-09-10T03:00:00+00:00',
+      });
+      expect(r.status, RegStatus.confirmed);
+      expect(r.applicant, '아빠');
+      expect(r.depositorName, '아빠');
+      expect(r.people[0].checkIn, DateTime(2026, 10, 10));
+      expect(r.people[1].gender, 'F');
+      expect(r.people[1].extra, {'교회': '신촌'});
+      expect(r.paidAt, DateTime(2026, 9, 11));
+      expect(r.createdAt.isUtc, isFalse); // 한국 시간으로 보여준다
+      expect(r.createdAt, DateTime.utc(2026, 9, 10, 3).toLocal());
+    });
+
+    test('신청 받는 중: 마감일 당일까지', () {
+      final g = sample();
+      expect(g.acceptingOn(DateTime(2026, 9, 30, 23, 59)), isTrue);
+      expect(g.acceptingOn(DateTime(2026, 10, 1)), isFalse);
+      expect((g..open = false).acceptingOn(DateTime(2026, 9, 1)), isFalse);
+      expect(
+        (sample()..deadline = null).acceptingOn(DateTime(2030, 1, 1)),
+        isTrue,
+      );
+    });
+
+    test('집회 날짜 목록과 표시 도우미', () {
+      expect(sample().days, [
+        DateTime(2026, 10, 9),
+        DateTime(2026, 10, 10),
+        DateTime(2026, 10, 11),
+      ]);
+      expect(won(415000), '415,000원');
+      expect(won(0), '0원');
+      expect(won(-1500), '-1,500원');
+      expect(fmtPhone('01012345678'), '010-1234-5678');
+      expect(fmtPhone('010-123-4567'), '010-123-4567');
+      expect(validPhone('010-1234-5678'), isTrue);
+      expect(validPhone('02-123-4567'), isFalse);
+      expect(mdw(DateTime(2026, 10, 9)), '10-09(금)');
+      expect(stayLabel(2), '2박3일');
+      expect(stayLabel(0), '당일');
+    });
+
+    test('서버 에러 → 안내 문장', () {
+      expect(
+        errorText(const PostgrestException(message: 'ALREADY_REGISTERED')),
+        contains('이미 신청'),
+      );
+      expect(
+        errorText(const PostgrestException(message: 'TOO_MANY_ATTEMPTS')),
+        contains('30분'),
+      );
+      expect(errorText(const RemoteError('그대로')), '그대로');
+      expect(
+        errorText(Exception('ClientException: Failed host lookup')),
+        contains('인터넷'),
+      );
+    });
+  });
+
+  group('이미지 줄이기', () {
+    /// 사진 비슷한 그림: 부드러운 그라데이션 + 약한 잡음.
+    Uint8List photo(int w, int h, {int noise = 12, int seed = 1}) {
+      final r = Random(seed);
+      final im = img.Image(width: w, height: h);
+      for (final p in im) {
+        int c(int base) =>
+            (base + r.nextInt(noise * 2 + 1) - noise).clamp(0, 255);
+        p
+          ..r = c(p.x * 255 ~/ w)
+          ..g = c(p.y * 255 ~/ h)
+          ..b = c(128);
+      }
+      return img.encodePng(im);
+    }
+
+    test('포스터: 큰 사진을 가로 900px · 250KB 이하 JPEG 로', () {
+      final out = shrinkImage(photo(2000, 2800), ImageKind.poster)!;
+      final back = img.decodeJpg(out)!;
+      expect(back.width, 900);
+      expect(back.height, 1260); // 비율 유지
+      expect(out.length, lessThanOrEqualTo(ImageKind.poster.maxBytes));
+    });
+
+    test('배경: 가로 960px · 80KB 이하', () {
+      final out = shrinkImage(photo(3000, 1700), ImageKind.background)!;
+      expect(img.decodeJpg(out)!.width, 960);
+      expect(out.length, lessThanOrEqualTo(ImageKind.background.maxBytes));
+    });
+
+    test('잡음뿐인 최악의 사진도 서버 한도(1MB)는 넘지 않는다', () {
+      final out = shrinkImage(photo(1800, 2400, noise: 127), ImageKind.poster)!;
+      expect(out.length, lessThan(1024 * 1024));
+    });
+
+    test('작은 사진은 키우지 않는다', () {
+      final out = shrinkImage(photo(400, 300), ImageKind.poster)!;
+      expect(img.decodeJpg(out)!.width, 400);
+    });
+
+    test('투명 PNG 는 흰 바탕에 얹는다 (검게 나오지 않게)', () {
+      final im = img.Image(width: 50, height: 50, numChannels: 4); // 전부 투명
+      final out = shrinkImage(img.encodePng(im), ImageKind.poster)!;
+      final p = img.decodeJpg(out)!.getPixel(25, 25);
+      expect([p.r, p.g, p.b].every((c) => c > 240), isTrue, reason: '$p');
+    });
+
+    test('이미지가 아니면 null', () {
+      expect(
+        shrinkImage(Uint8List.fromList([1, 2, 3]), ImageKind.poster),
+        isNull,
+      );
+    });
+  });
+
+  group('신청 → 참석자 가져오기', () {
+    final g = sample()..fee = FeeRule();
+
+    test('확정된 신청만 가져오고, 전화·나이·일정을 채운다', () {
+      final s = tmpStore();
+      final r = s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [
+          person('아빠', 1985),
+          person('딸', 2012, gender: 'F', checkIn: DateTime(2026, 10, 10)),
+        ]),
+        reg('r2', RegStatus.pending, [person('대기', 1990)]),
+        reg('r3', RegStatus.cancelled, [person('취소', 1990)]),
+      ]);
+      expect((r.added, r.updated, r.removed, r.dayOnly), (2, 0, 0, 0));
+      final dad = s.event.attendees.firstWhere((a) => a.name == '아빠');
+      final kid = s.event.attendees.firstWhere((a) => a.name == '딸');
+      expect(dad.id, 'p-아빠');
+      expect(dad.registrationId, 'r1');
+      expect(dad.age, 41);
+      expect(dad.phone, '010-1234-5678');
+      expect((dad.checkIn, dad.checkOut), (start, end));
+      expect(kid.gender, 'F');
+      expect(kid.phone, '010-1234-5678'); // 동반자는 신청자 번호
+      expect(kid.checkIn, DateTime(2026, 10, 10));
+    });
+
+    test('몇 번 불러도 같다', () {
+      final s = tmpStore();
+      final regs = [
+        reg('r1', RegStatus.confirmed, [person('아빠', 1985)]),
+      ];
+      s.syncRegistrations(g, regs);
+      final again = s.syncRegistrations(g, regs);
+      expect((again.added, again.updated, again.removed), (0, 0, 0));
+      expect(s.event.attendees, hasLength(1));
+    });
+
+    test('바뀐 내용은 덮어쓰되 배정된 방·기타는 그대로', () {
+      final s = tmpStore();
+      final p = person('아빠', 1985);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [p]),
+      ];
+      s.syncRegistrations(g, regs);
+      s.event.attendees.single
+        ..roomId = 'room301'
+        ..note = '강사';
+      p
+        ..name = '아버지'
+        ..checkIn = DateTime(2026, 10, 10);
+      final r = s.syncRegistrations(g, regs);
+      expect(r.updated, 1);
+      final a = s.event.attendees.single;
+      expect(a.name, '아버지');
+      expect(a.checkIn, DateTime(2026, 10, 10));
+      expect(a.roomId, 'room301');
+      expect(a.note, '강사');
+    });
+
+    test('취소되면 빠진다 — 방이 배정된 사람은 먼저 알려준다', () {
+      final s = tmpStore();
+      final r1 = reg('r1', RegStatus.confirmed, [
+        person('아빠', 1985),
+        person('엄마', 1987, gender: 'F'),
+      ]);
+      s.syncRegistrations(g, [r1]);
+      s.event.attendees.first.roomId = 'room301';
+      r1.status = RegStatus.cancelled;
+      expect(s.syncWouldRemove(g, [r1]).map((a) => a.name), ['아빠']);
+      expect(s.syncRegistrations(g, [r1]).removed, 2);
+      expect(s.event.attendees, isEmpty);
+    });
+
+    test('붙여넣기로 등록한 사람은 건드리지 않는다', () {
+      final s = tmpStore();
+      s.event.attendees.add(
+        Attendee(
+          id: 'paste1',
+          name: '현장등록',
+          gender: 'M',
+          age: 30,
+          checkIn: start,
+          checkOut: end,
+        ),
+      );
+      s.syncRegistrations(g, []);
+      expect(s.event.attendees.single.id, 'paste1');
+    });
+
+    test('당일 참석자는 방이 필요 없어 뺀다', () {
+      final s = tmpStore();
+      final day = DateTime(2026, 10, 10);
+      final r = s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [
+          person('자는사람', 1985),
+          person('당일', 1990, checkIn: day, checkOut: day),
+        ]),
+      ]);
+      expect((r.added, r.dayOnly), (1, 1));
+    });
+
+    test('신청서의 추가 항목이 참석자 항목으로 생긴다', () {
+      final s = tmpStore();
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [
+          person('아빠', 1985, extra: {'직분': '집사'}),
+        ]),
+      ]);
+      expect(s.event.customFields, contains('직분'));
+      expect(s.event.attendees.single.extra, {'직분': '집사'});
+    });
+
+    test('집회 설정을 방배정 파일에 반영한다', () {
+      final s = tmpStore();
+      s.applyGathering(
+        Gathering(
+          id: 'g1',
+          name: '새 이름',
+          start: DateTime(2026, 11, 1),
+          end: DateTime(2026, 11, 1), // 당일 행사여도 방배정은 최소 1박
+          formFields: ['교회', '이름'], // 기본 항목과 겹치는 이름은 무시
+        ),
+      );
+      expect(s.event.name, '새 이름');
+      expect(s.event.startDate, DateTime(2026, 11, 1));
+      expect(s.event.endDate, DateTime(2026, 11, 2));
+      expect(s.event.customFields, ['교회']);
+    });
+
+    test('자동배정 "가족" 기준: 같은 신청이면 같은 그룹', () {
+      Attendee a(String id, String? regId) => Attendee(
+        id: id,
+        name: id,
+        gender: 'M',
+        age: 30,
+        checkIn: start,
+        checkOut: end,
+        registrationId: regId,
+      );
+      final rule = AutoRule(groupBy: [GroupField.family]);
+      expect(rule.keyOf(a('1', 'r1')), rule.keyOf(a('2', 'r1')));
+      expect(rule.keyOf(a('1', 'r1')), isNot(rule.keyOf(a('3', 'r2'))));
+      expect(rule.keyOf(a('4', null)), isNull);
+      expect(GroupField.builtins, contains(GroupField.family));
+    });
+
+    test('registrationId 는 방배정 파일에 저장된다', () async {
+      final s = tmpStore();
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [person('아빠', 1985)]),
+      ]);
+      await s.pendingWrites;
+      final back = Store(fileOverride: s.fileOverride);
+      await back.load();
+      expect(back.event.attendees.single.registrationId, 'r1');
+    });
+  });
+}

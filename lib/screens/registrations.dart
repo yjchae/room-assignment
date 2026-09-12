@@ -1,0 +1,854 @@
+import 'package:flutter/material.dart';
+
+import '../gathering.dart';
+import '../main.dart';
+import '../models.dart';
+import '../remote.dart';
+import '../theme.dart';
+import '../widgets/quote_table.dart';
+import 'gatherings.dart';
+
+const _tabular = [FontFeature.tabularFigures()];
+
+/// 신청·입금 관리. 입금 내역을 확인하고 확정한다.
+class RegistrationsScreen extends StatefulWidget {
+  const RegistrationsScreen({super.key});
+
+  @override
+  State<RegistrationsScreen> createState() => _RegistrationsScreenState();
+}
+
+class _RegistrationsScreenState extends State<RegistrationsScreen> {
+  List<Registration>? regs;
+  String? error;
+  bool loading = false;
+  bool busy = false;
+
+  /// null = 전체.
+  RegStatus? filter;
+  String query = '';
+  String? selectedId;
+
+  /// 일괄 확정할 신청 (입금대기만).
+  final checked = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    signInCount.addListener(_onSignIn);
+    if (current.value != null && remote.signedIn) _load();
+  }
+
+  @override
+  void dispose() {
+    signInCount.removeListener(_onSignIn);
+    super.dispose();
+  }
+
+  void _onSignIn() {
+    if (!mounted) return;
+    if (remote.signedIn) {
+      _load();
+    } else {
+      setState(() => regs = null);
+    }
+  }
+
+  Future<void> _load() async {
+    final g = current.value;
+    if (g == null) return;
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      regs = await remote.registrations(g.id);
+      checked.removeWhere(
+        (id) => !regs!.any((r) => r.id == id && r.status == RegStatus.pending),
+      );
+    } catch (e) {
+      error = errorText(e);
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  void _snack(String m) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
+  void _replace(Registration r) => setState(() {
+    final i = regs!.indexWhere((x) => x.id == r.id);
+    if (i >= 0) regs![i] = r;
+    if (r.status != RegStatus.pending) checked.remove(r.id);
+  });
+
+  Future<void> _patch(
+    Registration r,
+    Map<String, dynamic> fields,
+    String done,
+  ) async {
+    setState(() => busy = true);
+    try {
+      _replace(await remote.patchRegistration(r.id, fields));
+      _snack(done);
+    } catch (e) {
+      _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  bool _matches(Registration r) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    final d = digitsOnly(q);
+    return r.people.any((p) => p.name.toLowerCase().contains(q)) ||
+        r.depositorName.toLowerCase().contains(q) ||
+        (d.length >= 3 && r.phone.contains(d));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final g = current.value;
+    if (g == null) {
+      return const EmptyNotice(
+        icon: Icons.cloud_off_outlined,
+        text: '서버에 연결된 집회에서만 신청을 볼 수 있습니다.',
+      );
+    }
+    if (!remote.signedIn) {
+      return EmptyNotice(
+        icon: Icons.lock_outline,
+        text: '신청·입금 관리는 운영자 로그인이 필요합니다.',
+        action: FilledButton(
+          onPressed: () async {
+            if (await ensureAdmin(context)) _load();
+          },
+          child: const Text('운영자 로그인'),
+        ),
+      );
+    }
+    if (regs == null) {
+      return loading
+          ? const Center(child: CircularProgressIndicator())
+          : EmptyNotice(
+              icon: Icons.cloud_off_outlined,
+              text: error ?? '신청을 불러오지 못했습니다.',
+              action: OutlinedButton(
+                onPressed: _load,
+                child: const Text('다시 시도'),
+              ),
+            );
+    }
+
+    final all = regs!;
+    final quotes = {
+      for (final r in all) r.id: g.quoteFor(r.people, r.createdAt),
+    };
+    final shown = [
+      for (final r in all)
+        if ((filter == null || r.status == filter) && _matches(r)) r,
+    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final active = all.where((r) => r.status != RegStatus.cancelled);
+    final pendingSum = active
+        .where((r) => r.status == RegStatus.pending)
+        .fold(0, (s, r) => s + quotes[r.id]!.total);
+    final paidSum = active
+        .where((r) => r.status == RegStatus.confirmed)
+        .fold(0, (s, r) => s + r.paid);
+    final selected = all.where((r) => r.id == selectedId).firstOrNull;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              StatCard('신청', '${active.length}', unit: '건'),
+              StatCard(
+                '인원',
+                '${active.fold(0, (s, r) => s + r.people.length)}',
+                unit: '명',
+              ),
+              StatCard(
+                '입금대기 금액',
+                _n(pendingSum),
+                unit: '원',
+                color: AppColors.warn,
+              ),
+              StatCard('입금 확인', _n(paidSum), unit: '원', color: AppColors.ok),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (final f in [null, ...RegStatus.values])
+                ChoiceChip(
+                  label: Text(
+                    '${f?.label ?? '전체'} ${all.where((r) => f == null || r.status == f).length}',
+                  ),
+                  selected: filter == f,
+                  onSelected: (_) => setState(() => filter = f),
+                ),
+              SizedBox(
+                width: 260,
+                child: TextField(
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search, size: 18),
+                    hintText: '이름 · 입금자명 · 휴대폰',
+                  ),
+                  onChanged: (v) => setState(() => query = v),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: loading ? null : _load,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('새로고침'),
+              ),
+              FilledButton.icon(
+                onPressed: checked.isEmpty || busy
+                    ? null
+                    : () => _bulkConfirm(quotes),
+                icon: const Icon(Icons.done_all, size: 18),
+                label: Text('선택 ${checked.length}건 입금 확인'),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: shown.isEmpty
+                    ? EmptyNotice(
+                        icon: Icons.inbox_outlined,
+                        text: all.isEmpty
+                            ? '아직 신청이 없습니다.\n[집회 설정]에서 신청 링크를 복사해 공지하세요.'
+                            : '조건에 맞는 신청이 없습니다.',
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const _Header(),
+                          const Divider(height: 1),
+                          Expanded(
+                            child: ListView.separated(
+                              itemCount: shown.length,
+                              separatorBuilder: (_, _) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, i) {
+                                final r = shown[i];
+                                return _RegRow(
+                                  r: r,
+                                  q: quotes[r.id]!,
+                                  selected: r.id == selectedId,
+                                  checked: checked.contains(r.id),
+                                  onTap: () => setState(
+                                    () => selectedId = selectedId == r.id
+                                        ? null
+                                        : r.id,
+                                  ),
+                                  onCheck: (v) => setState(
+                                    () => v
+                                        ? checked.add(r.id)
+                                        : checked.remove(r.id),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+              if (selected != null) ...[
+                const VerticalDivider(width: 1),
+                SizedBox(
+                  width: 400,
+                  child: _Detail(
+                    r: selected,
+                    q: quotes[selected.id]!,
+                    busy: busy,
+                    onClose: () => setState(() => selectedId = null),
+                    onConfirm: () => _confirm(selected, quotes[selected.id]!),
+                    onRevert: () => _patch(selected, {
+                      'status': 'pending',
+                      'paid': 0,
+                      'paid_at': null,
+                    }, '입금대기로 되돌렸습니다.'),
+                    onCancel: () => _cancel(selected),
+                    onResetPin: () => _resetPin(selected),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirm(Registration r, Quote q) async {
+    final amount = TextEditingController(text: '${q.total}');
+    final dep = TextEditingController(text: r.depositorName);
+    var date = dateOnly(DateTime.now());
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) {
+          final n = int.tryParse(digitsOnly(amount.text));
+          final diff = n == null ? 0 : n - q.total;
+          return AlertDialog(
+            title: Text('${r.applicant} 입금 확인'),
+            content: SizedBox(
+              width: 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '계산 금액 ${won(q.total)}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amount,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: '입금액',
+                      suffixText: '원',
+                      errorText: n == null ? '숫자로 입력하세요' : null,
+                    ),
+                    onChanged: (_) => setLocal(() {}),
+                  ),
+                  if (diff != 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        '계산 금액보다 ${won(diff.abs())} ${diff > 0 ? '더' : '덜'} 들어왔습니다. 그래도 확정할 수 있습니다.',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.warnInk,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: dep,
+                    decoration: const InputDecoration(labelText: '입금자명'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.event, size: 18),
+                    label: Text('입금일 ${date.year}-${mdw(date)}'),
+                    onPressed: () async {
+                      final d = await pickDate(context, date);
+                      if (d != null) setLocal(() => date = d);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('닫기'),
+              ),
+              FilledButton(
+                onPressed: n == null
+                    ? null
+                    : () => Navigator.pop(context, true),
+                child: const Text('확정'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (ok != true) return;
+    await _patch(r, {
+      'status': 'confirmed',
+      'paid': int.parse(digitsOnly(amount.text)),
+      'paid_at': ymd(date),
+      'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
+    }, '${r.applicant} 입금 확인했습니다.');
+  }
+
+  Future<void> _bulkConfirm(Map<String, Quote> quotes) async {
+    final targets = [
+      for (final r in regs!)
+        if (checked.contains(r.id) && r.status == RegStatus.pending) r,
+    ];
+    final sum = targets.fold(0, (s, r) => s + quotes[r.id]!.total);
+    final ok = await confirmDialog(
+      context,
+      title: '${targets.length}건 입금 확인',
+      body: '각 신청의 계산 금액 그대로(합계 ${won(sum)}) 오늘 날짜로 입금 확인합니다.',
+      action: '확정',
+    );
+    if (!ok) return;
+    setState(() => busy = true);
+    var fail = 0;
+    for (final r in targets) {
+      try {
+        _replace(
+          await remote.patchRegistration(r.id, {
+            'status': 'confirmed',
+            'paid': quotes[r.id]!.total,
+            'paid_at': ymd(DateTime.now()),
+          }),
+        );
+      } catch (_) {
+        fail++;
+      }
+    }
+    if (!mounted) return;
+    setState(() => busy = false);
+    _snack(
+      fail == 0
+          ? '${targets.length}건 입금 확인했습니다.'
+          : '${targets.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.',
+    );
+  }
+
+  Future<void> _cancel(Registration r) async {
+    final memo = TextEditingController(text: r.adminMemo ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${r.applicant} 신청 취소'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                r.status == RegStatus.confirmed
+                    ? '입금이 확인된 신청입니다. 환불 여부를 메모해 두세요.'
+                    : '신청을 취소합니다. 신청자가 조회하면 "취소"로 보입니다.',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: memo,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: '운영자 메모 (신청자에게 안 보임)',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('닫기'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('신청 취소'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _patch(r, {
+      'status': 'cancelled',
+      'admin_memo': memo.text.trim().isEmpty ? null : memo.text.trim(),
+    }, '${r.applicant} 신청을 취소했습니다.');
+  }
+
+  Future<void> _resetPin(Registration r) async {
+    final pin = TextEditingController();
+    String? err;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('PIN 재설정'),
+          content: SizedBox(
+            width: 320,
+            child: TextField(
+              controller: pin,
+              autofocus: true,
+              maxLength: 4,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: '새 PIN (숫자 4자리)',
+                helperText: '신청자에게 알려줄 번호입니다. 조회 잠금도 같이 풀립니다.',
+                errorText: err,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('닫기'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (!RegExp(r'^\d{4}$').hasMatch(pin.text)) {
+                  setLocal(() => err = '숫자 4자리를 입력하세요');
+                  return;
+                }
+                Navigator.pop(context, true);
+              },
+              child: const Text('바꾸기'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await remote.resetPin(r.id, pin.text);
+      _snack('새 PIN ${pin.text} — ${r.applicant}님께 알려주세요.');
+    } catch (e) {
+      _snack(errorText(e));
+    }
+  }
+}
+
+String _n(int n) => won(n).replaceAll('원', '');
+
+String _stay(Quote q) {
+  final full = q.lines.where((l) => l.full).length;
+  final part = q.lines.length - full;
+  return [if (full > 0) '전체 $full', if (part > 0) '부분 $part'].join(' · ');
+}
+
+/// 목록의 열 폭. 머리글과 행이 같은 값을 쓴다.
+const _wCheck = 40.0, _wDate = 84.0, _wStay = 104.0, _wMoney = 100.0;
+const _wName = 100.0, _wStatus = 80.0, _wWarn = 48.0;
+
+class _Header extends StatelessWidget {
+  const _Header();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget h(String t, double? w, {bool right = false}) {
+      final text = Text(
+        t,
+        textAlign: right ? TextAlign.right : null,
+        style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+      );
+      return w == null
+          ? Expanded(child: text)
+          : SizedBox(width: w, child: text);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Row(
+        children: [
+          const SizedBox(width: _wCheck),
+          h('신청일', _wDate),
+          h('신청자', null),
+          h('일정', _wStay),
+          h('금액', _wMoney, right: true),
+          const SizedBox(width: 12),
+          h('입금자명', _wName),
+          h('입금액', _wMoney, right: true),
+          const SizedBox(width: 12),
+          h('상태', _wStatus),
+          const SizedBox(width: _wWarn),
+        ],
+      ),
+    );
+  }
+}
+
+class _RegRow extends StatelessWidget {
+  const _RegRow({
+    required this.r,
+    required this.q,
+    required this.selected,
+    required this.checked,
+    required this.onTap,
+    required this.onCheck,
+  });
+  final Registration r;
+  final Quote q;
+  final bool selected, checked;
+  final VoidCallback onTap;
+  final ValueChanged<bool> onCheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final mismatch = r.quoted != q.total;
+    final diff = r.status == RegStatus.confirmed ? r.paid - q.total : 0;
+    return Material(
+      color: selected ? AppColors.brandSoft : AppColors.surface,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: _wCheck,
+                child: r.status == RegStatus.pending
+                    ? Checkbox(
+                        value: checked,
+                        onChanged: (v) => onCheck(v == true),
+                      )
+                    : null,
+              ),
+              SizedBox(
+                width: _wDate,
+                child: Text(
+                  mdw(r.createdAt),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      r.applicant,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      q.summary,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: _wStay,
+                child: Text(_stay(q), style: const TextStyle(fontSize: 12)),
+              ),
+              SizedBox(
+                width: _wMoney,
+                child: Text(
+                  won(q.total),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: _tabular,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: _wName,
+                child: Text(
+                  r.depositorName,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+              SizedBox(
+                width: _wMoney,
+                child: Text(
+                  r.status == RegStatus.confirmed ? won(r.paid) : '—',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontFeatures: _tabular),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: _wStatus,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: RegStatusBadge(r.status),
+                ),
+              ),
+              SizedBox(
+                width: _wWarn,
+                child: Row(
+                  children: [
+                    if (mismatch)
+                      Tooltip(
+                        message:
+                            '신청 때 보여준 금액(${won(r.quoted)})과 지금 계산 금액이 다릅니다.\n'
+                            '신청 뒤 회비 설정이 바뀌었거나 값이 조작된 경우입니다.',
+                        child: const Icon(
+                          Icons.warning_amber,
+                          size: 18,
+                          color: AppColors.warn,
+                        ),
+                      ),
+                    if (diff != 0)
+                      Tooltip(
+                        message:
+                            '입금액이 계산 금액보다 ${won(diff.abs())} ${diff > 0 ? '많습니다' : '적습니다'}.',
+                        child: const Icon(
+                          Icons.error_outline,
+                          size: 18,
+                          color: AppColors.danger,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Detail extends StatelessWidget {
+  const _Detail({
+    required this.r,
+    required this.q,
+    required this.busy,
+    required this.onClose,
+    required this.onConfirm,
+    required this.onRevert,
+    required this.onCancel,
+    required this.onResetPin,
+  });
+  final Registration r;
+  final Quote q;
+  final bool busy;
+  final VoidCallback onClose, onConfirm, onRevert, onCancel, onResetPin;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = r.createdAt;
+    Widget kv(String k, String v) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              k,
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+          Expanded(child: Text(v)),
+        ],
+      ),
+    );
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                r.applicant,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            RegStatusBadge(r.status),
+            IconButton(
+              tooltip: '닫기',
+              icon: const Icon(Icons.close),
+              onPressed: onClose,
+            ),
+          ],
+        ),
+        Text(
+          '${fmtPhone(r.phone)} · 신청 ${ymd(t)} ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}',
+          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 16),
+        const SectionTitle('금액'),
+        const SizedBox(height: 8),
+        QuoteTable(q),
+        if (r.quoted != q.total)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              '신청 때 보여준 금액: ${won(r.quoted)}',
+              style: const TextStyle(fontSize: 12, color: AppColors.warnInk),
+            ),
+          ),
+        const SizedBox(height: 16),
+        const SectionTitle('참석자'),
+        const SizedBox(height: 6),
+        for (final p in r.people)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Text.rich(
+              TextSpan(
+                text: p.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                children: [
+                  TextSpan(
+                    text:
+                        '  ${p.relation} · ${genderLabel(p.gender)} · ${p.birthYear}년생'
+                        '${(p.cell ?? '').isNotEmpty ? ' · 셀 ${p.cell}' : ''}'
+                        '${(p.zone ?? '').isNotEmpty ? ' · 존 ${p.zone}' : ''}'
+                        '${p.extra.entries.map((e) => ' · ${e.key} ${e.value}').join()}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 16),
+        const SectionTitle('입금'),
+        const SizedBox(height: 6),
+        kv('입금자명', r.depositorName),
+        if (r.status == RegStatus.confirmed) ...[
+          kv('입금액', won(r.paid)),
+          if (r.paidAt != null) kv('입금일', ymd(r.paidAt!)),
+        ],
+        if ((r.memo ?? '').isNotEmpty) kv('신청 메모', r.memo!),
+        if ((r.adminMemo ?? '').isNotEmpty) kv('운영자 메모', r.adminMemo!),
+        const SizedBox(height: 20),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (r.status == RegStatus.pending)
+              FilledButton.icon(
+                onPressed: busy ? null : onConfirm,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('입금 확인'),
+              )
+            else
+              OutlinedButton(
+                onPressed: busy ? null : onRevert,
+                child: const Text('입금대기로 되돌리기'),
+              ),
+            if (r.status != RegStatus.cancelled)
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                ),
+                onPressed: busy ? null : onCancel,
+                child: const Text('신청 취소'),
+              ),
+            TextButton(
+              onPressed: busy ? null : onResetPin,
+              child: const Text('PIN 재설정'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}

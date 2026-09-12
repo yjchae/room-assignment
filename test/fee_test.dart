@@ -43,6 +43,7 @@ FeeRule planRule({
 Person p(String name, int birthYear, {DateTime? checkIn, DateTime? checkOut}) =>
     Person(
       name: name,
+      gender: 'M',
       birthYear: birthYear,
       checkIn: checkIn,
       checkOut: checkOut,
