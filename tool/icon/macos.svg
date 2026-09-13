@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs><linearGradient id="g" x1="1" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#E5485F"/><stop offset="1" stop-color="#A30F2B"/>
+  </linearGradient></defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#fff"/>
+  <g transform="translate(512 512) scale(0.74) translate(-512 -512)">
+  <g fill="none" stroke="url(#g)" stroke-linecap="round">
+    <path d="M200.2 692.0 A360 360 0 1 1 787.8 743.4" stroke-width="58"/>
+    <path d="M305.2 685.6 A270 270 0 1 1 745.8 647.0" stroke-width="50"/>
+    <path d="M543.3 689.3 A180 180 0 1 1 681.1 573.6" stroke-width="42"/>
+  </g>
+  <g fill="url(#g)">
+    <rect x="488" y="362" width="48" height="290" rx="6"/>
+    <rect x="407" y="432" width="210" height="46" rx="6"/>
+  </g>
+  <!-- 집회(사람들) 배지 -->
+  <circle cx="770" cy="770" r="150" fill="#fff" stroke="url(#g)" stroke-width="22"/>
+  <g fill="#B3132F">
+    <circle cx="712" cy="738" r="30"/><circle cx="828" cy="738" r="30"/>
+    <path d="M652 842 a60 52 0 0 1 120 0 z"/><path d="M768 842 a60 52 0 0 1 120 0 z"/>
+    <circle cx="770" cy="716" r="38" stroke="#fff" stroke-width="10"/>
+    <path d="M692 858 a78 66 0 0 1 156 0 z" stroke="#fff" stroke-width="10"/>
+  </g></g>
+</svg>
