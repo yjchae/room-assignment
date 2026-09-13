@@ -61,6 +61,19 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # 앱 전체 글꼴. SIL OFL 1.1 — assets/fonts/Pretendard-LICENSE.txt
+  # 화면에서 쓰는 굵기(400/500/600/700)만 넣는다. 한 벌에 1.5MB 라 웹 첫 로딩에 그대로 얹힌다.
+  fonts:
+    - family: Pretendard
+      fonts:
+        - asset: assets/fonts/Pretendard-Regular.otf
+        - asset: assets/fonts/Pretendard-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Pretendard-SemiBold.otf
+          weight: 600
+        - asset: assets/fonts/Pretendard-Bold.otf
+          weight: 700
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

@@ -103,11 +103,17 @@ class _AssignScreenState extends State<AssignScreen> {
         .where((a) => selected.contains(a.id))
         .toList();
 
-    return ColoredBox(
-      color: AppColors.bg,
+    // 회색 바탕 위에 [인원 카드 | 방 카드] 두 장.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(width: 400, child: _left(filtered, chosen)),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: SizedBox(width: 320, child: _left(filtered, chosen)),
+          ),
+          const SizedBox(width: 16),
           Expanded(child: _right(chosen)),
         ],
       ),
@@ -120,9 +126,10 @@ class _AssignScreenState extends State<AssignScreen> {
     final allSelected =
         filtered.isNotEmpty && filtered.every((a) => selected.contains(a.id));
     return Container(
-      decoration: const BoxDecoration(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border(right: BorderSide(color: AppColors.border)),
+        borderRadius: BorderRadius.circular(Radii.card),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -156,17 +163,20 @@ class _AssignScreenState extends State<AssignScreen> {
                     Expanded(child: _field(ageMin, '나이 ≥')),
                     const SizedBox(width: 8),
                     Expanded(child: _field(ageMax, '나이 ≤')),
-                    const SizedBox(width: 10),
-                    for (final g in [(null, '전체'), ('M', '남'), ('F', '여')])
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: ChoiceChip(
-                          label: Text(g.$2),
-                          selected: gender == g.$1,
-                          onSelected: (_) => setState(() => gender = g.$1),
-                        ),
-                      ),
                   ],
+                ),
+                const SizedBox(height: 8),
+                // 나이 칸과 한 줄에 두면 좁은 카드에서 나이 칸 글자가 사라진다. 따로 한 줄.
+                SegmentedButton<String?>(
+                  expandedInsets: EdgeInsets.zero,
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: null, label: Text('전체')),
+                    ButtonSegment(value: 'M', label: Text('남')),
+                    ButtonSegment(value: 'F', label: Text('여')),
+                  ],
+                  selected: {gender},
+                  onSelectionChanged: (s) => setState(() => gender = s.first),
                 ),
                 const SizedBox(height: 4),
                 Row(
@@ -358,10 +368,9 @@ class _AssignScreenState extends State<AssignScreen> {
     return Column(
       children: [
         _toolbar(chosen, picked, seats),
-        const Divider(height: 1),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            padding: const EdgeInsets.fromLTRB(0, 14, 0, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -441,7 +450,7 @@ class _AssignScreenState extends State<AssignScreen> {
                 '${room.label}호',
                 style: const TextStyle(
                   fontSize: 14,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   color: AppColors.text,
                 ),
               ),
@@ -518,8 +527,11 @@ class _AssignScreenState extends State<AssignScreen> {
     final ready = chosen.isNotEmpty && picked.isNotEmpty;
     return Container(
       width: double.infinity,
-      color: AppColors.surface,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(Radii.card),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
       child: Wrap(
         spacing: 10,
         runSpacing: 10,
@@ -918,10 +930,10 @@ class _CountPill extends StatelessWidget {
     padding: EdgeInsets.fromLTRB(10, 5, onClear == null ? 10 : 4, 5),
     decoration: BoxDecoration(
       color: active ? AppColors.brandSoft : AppColors.surfaceAlt,
-      borderRadius: BorderRadius.circular(999),
+      borderRadius: BorderRadius.circular(Radii.control),
       border: Border.all(
         color: active
-            ? AppColors.brand.withValues(alpha: 0.3)
+            ? AppColors.brand.withValues(alpha: 0.25)
             : AppColors.border,
       ),
     ),
@@ -932,7 +944,8 @@ class _CountPill extends StatelessWidget {
           text,
           style: TextStyle(
             fontSize: 12.5,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w600,
+            fontFeatures: tabular,
             color: active ? AppColors.brand : AppColors.textMuted,
           ),
         ),
@@ -988,18 +1001,17 @@ class _RoomPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: on
-            ? AppColors.info.withValues(alpha: 0.12)
-            : AppColors.surfaceAlt,
+        color: on ? AppColors.fill : AppColors.surface,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: on ? Colors.transparent : AppColors.border),
+        border: Border.all(color: on ? AppColors.fill : AppColors.border),
       ),
       child: Text(
         roomNo ?? '미배정',
         style: TextStyle(
           fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: on ? const Color(0xFF0B6A85) : AppColors.textMuted,
+          fontWeight: on ? FontWeight.w600 : FontWeight.w500,
+          fontFeatures: tabular,
+          color: on ? AppColors.text : AppColors.textFaint,
         ),
       ),
     );

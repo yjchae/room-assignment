@@ -794,7 +794,7 @@ class _Detail extends StatelessWidget {
                 r.applicant,
                 style: const TextStyle(
                   fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),

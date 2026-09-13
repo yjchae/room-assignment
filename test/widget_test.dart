@@ -281,15 +281,21 @@ void main() {
     await pump(tester, const AssignScreen());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    // 층 표시: 건물 이름 한 줄 + 그 아래 층 숫자.
     expect(find.text('3층'), findsOneWidget);
-    expect(find.text('반석관 1층'), findsOneWidget);
-    expect(find.text('은혜관 1층'), findsOneWidget);
+    expect(find.text('반석관'), findsOneWidget);
+    expect(find.text('은혜관'), findsOneWidget);
+    expect(find.text('1층'), findsNWidgets(2));
+    expect(
+      tester.getTopLeft(find.text('반석관')).dy,
+      lessThan(tester.getTopLeft(find.text('1층').first).dy),
+    );
     expect(tile('101'), findsNWidgets(2));
 
     await pump(tester, const RoomsScreen());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('반석관 1층'), findsOneWidget);
+    expect(find.text('반석관'), findsOneWidget);
   });
 
   testWidgets('자동배정: 건물이 있으면 배정할 건물을 고를 수 있고, 다 끄면 미리보기가 꺼진다', (tester) async {

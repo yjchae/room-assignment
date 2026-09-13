@@ -506,7 +506,8 @@ class AdminButton extends StatelessWidget {
       final email = remote.adminEmail;
       if (email == null) {
         return TextButton.icon(
-          icon: const Icon(Icons.login, size: 18),
+          style: TextButton.styleFrom(foregroundColor: AppColors.textMuted),
+          icon: const Icon(Icons.login, size: 16),
           label: const Text('운영자 로그인', style: TextStyle(fontSize: 13)),
           onPressed: () => ensureAdmin(context),
         );
@@ -539,12 +540,18 @@ class AdminButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(
-                Icons.verified_user_outlined,
+                Icons.account_circle_outlined,
                 size: 18,
-                color: AppColors.brand,
+                color: AppColors.textMuted,
               ),
               const SizedBox(width: 6),
-              Text(email, style: const TextStyle(fontSize: 13)),
+              Text(
+                email,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textMuted,
+                ),
+              ),
             ],
           ),
         ),

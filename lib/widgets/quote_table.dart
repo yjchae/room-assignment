@@ -56,7 +56,7 @@ class _Row extends StatelessWidget {
             TextSpan(
               text: label,
               style: TextStyle(
-                fontWeight: strong ? FontWeight.w800 : FontWeight.w500,
+                fontWeight: strong ? FontWeight.w700 : FontWeight.w500,
                 fontSize: strong ? 15 : 14,
               ),
               children: [
@@ -76,7 +76,7 @@ class _Row extends StatelessWidget {
         Text(
           value,
           style: TextStyle(
-            fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
+            fontWeight: strong ? FontWeight.w700 : FontWeight.w600,
             fontSize: strong ? 17 : 14,
             color: strong ? AppColors.brand : AppColors.text,
             fontFeatures: _tabular,

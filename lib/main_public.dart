@@ -141,7 +141,7 @@ class _GatheringView extends StatelessWidget {
                       g.name,
                       style: const TextStyle(
                         fontSize: 22,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                         height: 1.3,
                       ),
                     ),
@@ -952,7 +952,7 @@ class _TotalBar extends StatelessWidget {
                           won(q.total),
                           style: const TextStyle(
                             fontSize: 20,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                             fontFeatures: _tabular,
                           ),
                         ),
@@ -1011,7 +1011,7 @@ class DonePage extends StatelessWidget {
             const Text(
               '신청이 접수되었습니다',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
             ),
             const Text(
               '입금이 확인되면 신청이 확정됩니다.',
@@ -1182,7 +1182,7 @@ class _LookupPageState extends State<LookupPage> {
                   r.applicant,
                   style: const TextStyle(
                     fontSize: 18,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),

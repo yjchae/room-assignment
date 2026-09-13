@@ -234,7 +234,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
         onPressed: !_ageValid || !_buildingsValid
             ? null
             : () => setState(() => result = autoAssign(store.event, _rule())),
-        icon: const Icon(Icons.auto_awesome),
+        icon: const Icon(Icons.shuffle),
         label: Text('미리보기 (미배정 ${store.unassigned.length}명)'),
       ),
     ],

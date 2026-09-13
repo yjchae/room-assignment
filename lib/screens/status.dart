@@ -25,15 +25,16 @@ class StatusScreen extends StatelessWidget {
           runSpacing: 12,
           children: [
             StatCard('총원', '${e.attendees.length}', unit: '명'),
-            StatCard('배정완료', '$assigned', unit: '명', color: AppColors.info),
+            StatCard('배정완료', '$assigned', unit: '명'),
+            // 색은 손봐야 할 게 남았을 때만.
             StatCard(
               '미배정',
               '${unassigned.length}',
               unit: '명',
-              color: unassigned.isEmpty ? AppColors.ok : AppColors.warn,
+              color: unassigned.isEmpty ? null : AppColors.warnInk,
             ),
             StatCard('총 수용', '${store.totalCapacity}', unit: '명'),
-            StatCard('잔여 좌석', '$free', unit: '석', color: AppColors.ok),
+            StatCard('잔여 좌석', '$free', unit: '석'),
           ],
         ),
         const SizedBox(height: 24),
@@ -143,7 +144,7 @@ class StatusScreen extends StatelessWidget {
                           '+${store.freeSeats(r)}',
                           style: const TextStyle(
                             color: AppColors.ok,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                         onTap: () => showRoomOccupants(context, r),
@@ -194,8 +195,9 @@ class _Panel extends StatelessWidget {
                   '$count',
                   style: const TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.brand,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: tabular,
+                    color: AppColors.textMuted,
                   ),
                 ),
               ],

@@ -3,171 +3,102 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../models.dart';
 import '../theme.dart';
-import '../widgets/room_board.dart' show byFloorDesc, floorLabel;
+import '../widgets/room_board.dart' show RoomBoard, RoomLegend;
 
+/// 방 관리. 방배정과 같은 보드를 쓰고, 방을 누르면 수정 창이 뜬다.
 class RoomsScreen extends StatelessWidget {
   const RoomsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final rooms = [...store.event.rooms]..sort(byRoomNo);
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _roomDialog(context),
-        icon: const Icon(Icons.add),
-        label: const Text('방 추가'),
-      ),
-      body: rooms.isEmpty
-          ? const Center(
-              child: Text(
-                '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.\n'
-                '건물이 여러 개면 건물 이름(예: 반석관)도 같이 넣으세요.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.textMuted),
+    final rooms = store.event.rooms;
+    final free = rooms
+        .map(store.freeSeats)
+        .fold(0, (s, x) => s + (x > 0 ? x : 0));
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(Radii.card),
+          ),
+          child: Wrap(
+            spacing: 28,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const SectionTitle(
+                '방 관리',
+                subtitle: '방을 누르면 수정 · 추가할 때 "301-310" 처럼 범위로 한 번에',
               ),
-            )
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 90),
-              children: [
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    StatCard('방', '${rooms.length}', unit: '개'),
-                    StatCard('총 수용', '${store.totalCapacity}', unit: '명'),
-                    StatCard(
-                      '잔여 좌석',
-                      '${rooms.map(store.freeSeats).fold(0, (s, x) => s + (x > 0 ? x : 0))}',
-                      unit: '석',
-                      color: AppColors.ok,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                for (final entry in byFloorDesc(rooms).entries) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, bottom: 8),
-                    child: SectionTitle(
-                      floorLabel(entry.key),
-                      subtitle:
-                          '${entry.value.length}실 · 수용 '
-                          '${entry.value.fold(0, (s, r) => s + r.capacity)}명',
-                    ),
-                  ),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [for (final r in entry.value) _RoomCard(room: r)],
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ],
-            ),
-    );
-  }
-}
-
-class _RoomCard extends StatelessWidget {
-  const _RoomCard({required this.room});
-  final Room room;
-
-  @override
-  Widget build(BuildContext context) {
-    final used = store.peakOccupancy(room);
-    final st = statusOf(used: used, capacity: room.capacity);
-    return SizedBox(
-      width: 196,
-      child: Material(
-        color: AppColors.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(Radii.card),
-          side: const BorderSide(color: AppColors.border),
-        ),
-        child: InkWell(
-          onTap: () => _roomDialog(context, room),
-          borderRadius: BorderRadius.circular(Radii.card),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: st.swatch,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      room.roomNo,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.text,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (room.gender != null) GenderBadge(room.gender!),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(
-                      '$used',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.text,
-                      ),
-                    ),
-                    Text(
-                      ' / ${room.capacity}명',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      st.label,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: st == RoomStatus.empty
-                            ? AppColors.textMuted
-                            : st.swatch,
-                      ),
-                    ),
-                  ],
-                ),
-                if ((room.note ?? '').isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      room.note!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+              _kpi('방', '${rooms.length}', '개'),
+              _kpi('총 수용', '${store.totalCapacity}', '명'),
+              _kpi('빈자리', '$free', '석'),
+              FilledButton.icon(
+                onPressed: () => _roomDialog(context),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('방 추가'),
+              ),
+            ],
           ),
         ),
-      ),
+        const SizedBox(height: 14),
+        const Padding(
+          padding: EdgeInsets.only(left: 4, bottom: 10),
+          child: RoomLegend(),
+        ),
+        RoomBoard(
+          rooms: rooms,
+          onTap: (r) => _roomDialog(context, r),
+          emptyMessage:
+              '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.\n'
+              '건물이 여러 개면 건물 이름(예: 반석관)도 같이 넣으세요.',
+        ),
+      ],
     );
   }
+
+  /// 도구 막대 안의 숫자 하나. 카드 안이라 [StatCard] 처럼 따로 면을 두지 않는다.
+  Widget _kpi(String label, String value, String unit) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textMuted,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: value,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.6,
+                fontFeatures: tabular,
+              ),
+            ),
+            TextSpan(
+              text: ' $unit',
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 /// [room] 이 null 이면 추가(범위 지원), 있으면 수정.
@@ -188,7 +119,10 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
           width: 360,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            // 칸 사이가 붙어 있으면 위 칸의 설명 글과 아래 칸 이름이 겹쳐 보인다.
+            spacing: 16,
             children: [
+              const SizedBox(height: 4),
               TextField(
                 controller: buildingCtl,
                 decoration: const InputDecoration(
@@ -211,7 +145,6 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
                 decoration: const InputDecoration(labelText: '수용 인원'),
                 keyboardType: TextInputType.number,
               ),
-              const SizedBox(height: 12),
               Row(
                 children: [
                   const Text('성별  '),

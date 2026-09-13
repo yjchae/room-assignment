@@ -6,7 +6,7 @@ import '../models.dart';
 import '../theme.dart';
 
 /// 타일 사이 간격.
-const _gap = 8.0;
+const _gap = 6.0;
 
 /// 타일이 이보다 좁아지면 호수가 안 읽힌다. 이 폭이 안 나오면 보드를 가로로 굴린다.
 const _minTile = 74.0;
@@ -14,16 +14,19 @@ const _minTile = 74.0;
 /// 창이 아주 넓을 때 타일이 흉하게 늘어나는 걸 막는다.
 const _maxTile = 150.0;
 
-/// 호수 · 기타 한 줄 · 인원/막대가 들어가는 높이.
+/// 호수 · 기타 한 줄 · 상태/인원이 들어가는 높이.
 const _tileHeight = 76.0;
+
+/// 층 번호를 적는 왼쪽 칸 폭. 방 격자는 이 오른쪽에 붙는다.
+const _gutter = 60.0;
 
 /// 층 격자의 기본 칸 수. 방 자리(slot)가 이 폭을 기준으로 매겨지므로
 /// 보드를 그리는 쪽과 자리를 옮기는 쪽이 같은 값을 봐야 한다.
 const boardColumns = 10;
 
-/// 방 한 칸. 색 = 상태, 숫자 = 인원/정원, 막대 = 채워진 정도.
+/// 방 한 칸. 바탕색 = 상태, 글자 = 상태("2자리"·"1명 초과"), 숫자 = 인원/정원.
 ///
-/// 색만으로 상태를 알려주면 색각 이상이 있는 사람은 못 읽는다. 숫자와 막대를 항상 같이 그린다.
+/// 색만으로 상태를 알려주면 색각 이상이 있는 사람은 못 읽는다. 상태는 항상 글자로도 적는다.
 class RoomTile extends StatelessWidget {
   const RoomTile({
     super.key,
@@ -44,8 +47,6 @@ class RoomTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final used = store.peakOccupancy(room);
     final st = statusOf(used: used, capacity: room.capacity);
-    // 좁은 타일에서는 상태 글자를 빼고 색·숫자만 남긴다.
-    final showLabel = width >= 92;
     // 타일 높이가 고정이라 그룹 이름을 넣을 자리가 없다. 대신 올려두면 보이게 한다.
     final groups = store.groupSummary(room);
     final note = room.note ?? '';
@@ -60,12 +61,15 @@ class RoomTile extends StatelessWidget {
         width: width,
         height: _tileHeight,
         child: Material(
-          color: st.fill,
+          color: selected ? AppColors.brandSoft : st.fill,
           // shape 와 borderRadius 를 같이 주면 Material 이 assert 로 죽는다. shape 만 쓴다.
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(Radii.tile),
             side: selected
-                ? const BorderSide(color: AppColors.brand, width: 3)
+                ? const BorderSide(color: AppColors.brand, width: 1.5)
+                // 빈 방은 흰 보드 위 흰 타일이라 테두리로만 보인다.
+                : st == RoomStatus.empty
+                ? const BorderSide(color: AppColors.border, width: 1.5)
                 : BorderSide.none,
           ),
           child: InkWell(
@@ -73,7 +77,7 @@ class RoomTile extends StatelessWidget {
             onLongPress: onLongPress,
             borderRadius: BorderRadius.circular(Radii.tile),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 7),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -84,11 +88,13 @@ class RoomTile extends StatelessWidget {
                           room.roomNo,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 15,
                             height: 1.2,
-                            fontWeight: FontWeight.w800,
-                            color: st.ink,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                            fontFeatures: tabular,
+                            color: AppColors.text,
                           ),
                         ),
                       ),
@@ -99,7 +105,15 @@ class RoomTile extends StatelessWidget {
                           color: AppColors.brand,
                         )
                       else if (room.gender != null)
-                        GenderBadge(room.gender!, dense: true),
+                        Text(
+                          genderLabel(room.gender!),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            height: 1.2,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
                     ],
                   ),
                   // 방 관리의 [기타]. 길면 잘리고 전체는 툴팁에 나온다.
@@ -110,11 +124,11 @@ class RoomTile extends StatelessWidget {
                         note,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10,
+                        style: const TextStyle(
+                          fontSize: 10.5,
                           height: 1.2,
-                          fontWeight: FontWeight.w600,
-                          color: st.ink.withValues(alpha: 0.8),
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textMuted,
                         ),
                       ),
                     ),
@@ -123,39 +137,35 @@ class RoomTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.baseline,
                     textBaseline: TextBaseline.alphabetic,
                     children: [
-                      Text(
-                        '$used',
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.1,
-                          fontWeight: FontWeight.w800,
-                          color: st.ink,
-                        ),
-                      ),
-                      Text(
-                        '/${room.capacity}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          height: 1.3,
-                          fontWeight: FontWeight.w600,
-                          color: st.ink.withValues(alpha: 0.65),
-                        ),
-                      ),
-                      const Spacer(),
-                      if (showLabel)
-                        Text(
-                          st.label,
+                      // Flexible + Spacer 로 두면 남는 폭을 반씩 나눠 가져 "2…" 로 잘린다.
+                      Expanded(
+                        child: Text(
+                          // 좁은 타일(방배정)에선 "1명 초과" 가 잘린다. 몇 명 넘었는지는 옆 숫자가 말해 준다.
+                          st == RoomStatus.over && width < 96
+                              ? st.label
+                              : statusText(used: used, capacity: room.capacity),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 10,
-                            height: 1.4,
+                            fontSize: 11.5,
                             fontWeight: FontWeight.w700,
-                            color: st.ink.withValues(alpha: 0.75),
+                            fontFeatures: tabular,
+                            color: st.ink,
                           ),
                         ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$used/${room.capacity}',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: tabular,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  _SeatBar(used: used, capacity: room.capacity, ink: st.ink),
                 ],
               ),
             ),
@@ -166,36 +176,10 @@ class RoomTile extends StatelessWidget {
   }
 }
 
-/// 정원 대비 채워진 정도. 초과면 끝까지 찬 채로 남는다(숫자와 색이 초과를 말해준다).
-class _SeatBar extends StatelessWidget {
-  const _SeatBar({
-    required this.used,
-    required this.capacity,
-    required this.ink,
-  });
-  final int used, capacity;
-  final Color ink;
-
-  @override
-  Widget build(BuildContext context) {
-    final ratio = capacity <= 0
-        ? 1.0
-        : (used / capacity).clamp(0.0, 1.0).toDouble();
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: LinearProgressIndicator(
-        value: ratio,
-        minHeight: 5,
-        backgroundColor: ink.withValues(alpha: 0.16),
-        valueColor: AlwaysStoppedAnimation(ink.withValues(alpha: 0.72)),
-      ),
-    );
-  }
-}
-
 /// 건물·층별로 묶어 그리는 방 보드. 방배정 화면과 현황 화면이 같은 걸 쓴다.
 ///
 /// 높은 층이 위로 온다 — 엘리베이터 층 표시와 같은 순서라 건물이 그대로 보인다.
+/// 한 층은 [왼쪽 층 번호 | 방 격자] 한 줄이고, 층과 층 사이는 선으로 나눈다.
 /// 층 안에서는 [columns] 칸짜리 격자다. 방이 놓이지 않은 칸은 빈 자리로 남아
 /// 복도·엘리베이터·계단 같은 실제 건물 모양을 그릴 수 있다.
 class RoomBoard extends StatelessWidget {
@@ -235,40 +219,76 @@ class RoomBoard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       decoration: BoxDecoration(
-        color: AppColors.board,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(Radii.card),
       ),
       child: rooms.isEmpty
           ? Padding(
-              padding: const EdgeInsets.symmetric(vertical: 28),
+              padding: const EdgeInsets.symmetric(vertical: 32),
               child: Center(
                 child: Text(
                   emptyMessage,
-                  style: const TextStyle(color: AppColors.boardTextDim),
+                  style: const TextStyle(color: AppColors.textMuted),
                 ),
               ),
             )
           : LayoutBuilder(
               builder: (context, c) {
-                final w = ((c.maxWidth - _gap * (columns - 1)) / columns).clamp(
-                  _minTile,
-                  _maxTile,
-                );
-                final rowWidth = w * columns + _gap * (columns - 1);
+                final w =
+                    ((c.maxWidth - _gutter - _gap * (columns - 1)) / columns)
+                        .clamp(_minTile, _maxTile);
+                final rowWidth = _gutter + w * columns + _gap * (columns - 1);
                 final floors = byFloorDesc(rooms);
+                final keys = floors.keys.toList();
                 final board = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     for (final (i, e) in floors.entries.indexed) ...[
-                      if (i > 0) const SizedBox(height: 16),
-                      SizedBox(
-                        width: rowWidth,
-                        child: _FloorHeader(group: e.key, rooms: e.value),
+                      if (i > 0)
+                        SizedBox(width: rowWidth, child: const Divider()),
+                      // 건물이 바뀌는 첫 층 위에 건물 이름을 보드 폭 한 줄로.
+                      // 층 칸(폭 60)에 넣으면 "반석관 - 예배실" 같은 긴 이름이 안 읽힌다.
+                      if (e.key.building != null &&
+                          (i == 0 || keys[i - 1].building != e.key.building))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: SizedBox(
+                            width: rowWidth,
+                            child: Text(
+                              e.key.building!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.3,
+                                color: AppColors.text,
+                              ),
+                            ),
+                          ),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: _gutter,
+                              child: Padding(
+                                // 긴 건물 이름이 첫 방 타일에 붙지 않게.
+                                padding: const EdgeInsets.only(right: 8),
+                                child: _FloorHeader(
+                                  group: e.key,
+                                  rooms: e.value,
+                                ),
+                              ),
+                            ),
+                            _floorGrid(e.key, e.value, w),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      _floorGrid(e.key, e.value, w),
                     ],
                   ],
                 );
@@ -404,7 +424,7 @@ class _DropSlot<T extends Object> extends StatelessWidget {
               if (hot)
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: AppColors.brand.withValues(alpha: 0.22),
+                    color: AppColors.brand.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(Radii.tile),
                     border: Border.all(color: AppColors.brand, width: 2),
                   ),
@@ -425,9 +445,9 @@ class _EmptySlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
-      color: hint ? AppColors.boardLine.withValues(alpha: 0.25) : null,
+      color: hint ? AppColors.surfaceAlt : null,
       borderRadius: BorderRadius.circular(Radii.tile),
-      border: Border.all(color: AppColors.boardLine),
+      border: Border.all(color: AppColors.border),
     ),
   );
 }
@@ -452,32 +472,66 @@ class _DragGhost extends StatelessWidget {
   );
 }
 
+/// 층 줄 왼쪽의 층 표시. [큰 층 숫자] → [방 수·인원].
+/// 건물 이름은 여기 넣지 않는다 — [RoomBoard] 가 그 건물 첫 층 위에 한 줄로 크게 적는다.
 class _FloorHeader extends StatelessWidget {
   const _FloorHeader({required this.group, required this.rooms});
   final FloorGroup group;
   final List<Room> rooms;
 
+  static const _small = TextStyle(
+    fontSize: 12,
+    height: 1.5,
+    fontWeight: FontWeight.w600,
+    color: AppColors.textMuted,
+  );
+
   @override
   Widget build(BuildContext context) {
     final used = rooms.fold(0, (s, r) => s + store.peakOccupancy(r));
     final cap = rooms.fold(0, (s, r) => s + r.capacity);
-    return Row(
+    final f = group.floor;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (f != null)
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$f',
+                  style: const TextStyle(
+                    fontSize: 26,
+                    height: 1.05,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -1,
+                    fontFeatures: tabular,
+                    color: AppColors.text,
+                  ),
+                ),
+                const TextSpan(text: '층', style: _small),
+              ],
+            ),
+          )
+        else
+          const Text(
+            '기타',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.text,
+            ),
+          ),
+        const SizedBox(height: 6),
         Text(
-          floorLabel(group),
+          '${rooms.length}실\n$used/$cap명',
           style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            color: AppColors.boardText,
+            fontSize: 11.5,
+            height: 1.45,
+            fontFeatures: tabular,
+            color: AppColors.textMuted,
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${rooms.length}실 · $used/$cap명',
-          style: const TextStyle(fontSize: 11, color: AppColors.boardTextDim),
-        ),
-        const SizedBox(width: 10),
-        const Expanded(child: Divider(color: AppColors.boardLine, height: 1)),
       ],
     );
   }
@@ -485,14 +539,10 @@ class _FloorHeader extends StatelessWidget {
 
 /// 색이 뭘 뜻하는지. 보드를 쓰는 화면은 이걸 같이 둔다.
 class RoomLegend extends StatelessWidget {
-  const RoomLegend({super.key, this.onDark = false});
-
-  /// 어두운 보드 위에 올릴 때 글자색을 바꾼다.
-  final bool onDark;
+  const RoomLegend({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final ink = onDark ? AppColors.boardText : AppColors.textMuted;
     return Wrap(
       spacing: 12,
       runSpacing: 6,
@@ -502,20 +552,20 @@ class RoomLegend extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 10,
-                height: 10,
+                width: 8,
+                height: 8,
                 decoration: BoxDecoration(
                   color: s.swatch,
-                  borderRadius: BorderRadius.circular(3),
+                  shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 5),
               Text(
                 s.label,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 12,
-                  color: ink,
-                  fontWeight: FontWeight.w600,
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],

@@ -71,13 +71,13 @@ class Shell extends StatelessWidget {
   };
 
   static const _dest = [
-    (Icons.tune_outlined, Icons.tune, '집회 설정'),
-    (Icons.receipt_long_outlined, Icons.receipt_long, '신청·입금'),
-    (Icons.meeting_room_outlined, Icons.meeting_room, '방 관리'),
-    (Icons.people_outline, Icons.people, '참석자'),
-    (Icons.assignment_ind_outlined, Icons.assignment_ind, '방배정'),
-    (Icons.auto_awesome_outlined, Icons.auto_awesome, '자동배정'),
-    (Icons.dashboard_outlined, Icons.dashboard, '현황'),
+    (Icons.tune_outlined, '집회 설정'),
+    (Icons.receipt_long_outlined, '신청·입금'),
+    (Icons.meeting_room_outlined, '방 관리'),
+    (Icons.people_outline, '참석자'),
+    (Icons.assignment_ind_outlined, '방배정'),
+    (Icons.shuffle, '자동배정'),
+    (Icons.space_dashboard_outlined, '현황'),
   ];
 
   @override
@@ -87,30 +87,15 @@ class Shell extends StatelessWidget {
       builder: (context, _) => Scaffold(
         appBar: AppBar(
           titleSpacing: Navigator.canPop(context) ? 0 : 20,
-          title: Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: AppColors.brand,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.hotel, size: 16, color: Colors.white),
-              ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(store.event.name, overflow: TextOverflow.ellipsis),
-              ),
-            ],
-          ),
+          title: Text(store.event.name, overflow: TextOverflow.ellipsis),
           shape: const Border(bottom: BorderSide(color: AppColors.border)),
           actions: [
             TextButton.icon(
-              icon: const Icon(Icons.event, size: 18),
+              style: TextButton.styleFrom(foregroundColor: AppColors.textMuted),
+              icon: const Icon(Icons.event_outlined, size: 16),
               label: Text(
                 '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}',
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 13, fontFeatures: tabular),
               ),
               // 날짜·이름은 집회 설정(서버)에서 바꾼다. 여기서 바꾸면 신청 웹과 어긋난다.
               onPressed: () => tabIndex.value = settingsTab,
@@ -126,40 +111,105 @@ class Shell extends StatelessWidget {
           children: [
             if (store.loadError != null || store.saveError != null)
               _Warning(store.loadError ?? store.saveError!),
-            Expanded(child: _rail(context)),
+            Expanded(
+              child: Row(
+                children: [
+                  ValueListenableBuilder(
+                    valueListenable: tabIndex,
+                    builder: (context, index, _) => _SideNav(index),
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(
+                    child: ValueListenableBuilder(
+                      valueListenable: tabIndex,
+                      builder: (context, index, _) => _page(index),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _rail(BuildContext context) {
-    return Row(
+/// 왼쪽 메뉴. 하는 순서대로 [준비 | 배정] 두 묶음.
+class _SideNav extends StatelessWidget {
+  const _SideNav(this.index);
+  final int index;
+
+  /// 숫자는 [Shell._dest] 의 탭 번호.
+  static const _groups = [
+    ('준비', [0, 1, 2, 3]),
+    ('배정', [4, 5, 6]),
+  ];
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 148,
+    color: AppColors.surface,
+    child: ListView(
+      padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
       children: [
-        ValueListenableBuilder(
-          valueListenable: tabIndex,
-          builder: (context, index, _) => NavigationRail(
-            selectedIndex: index,
-            labelType: NavigationRailLabelType.all,
-            onDestinationSelected: (i) => tabIndex.value = i,
-            destinations: [
-              for (final d in _dest)
-                NavigationRailDestination(
-                  icon: Icon(d.$1),
-                  selectedIcon: Icon(d.$2),
-                  label: Text(d.$3),
-                ),
-            ],
+        for (final (label, tabs) in _groups) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 16, 10, 6),
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textFaint,
+              ),
+            ),
           ),
-        ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: ValueListenableBuilder(
-            valueListenable: tabIndex,
-            builder: (context, index, _) => _page(index),
-          ),
-        ),
+          for (final i in tabs) _item(i),
+        ],
       ],
+    ),
+  );
+
+  Widget _item(int i) {
+    final on = i == index;
+    final (icon, label) = Shell._dest[i];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Semantics(
+        selected: on,
+        child: Material(
+          color: on ? AppColors.bg : AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(Radii.control),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(Radii.control),
+            onTap: () => tabIndex.value = i,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(
+                children: [
+                  Icon(
+                    icon,
+                    size: 18,
+                    color: on ? AppColors.brand : AppColors.textMuted,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: on ? AppColors.text : AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -185,7 +235,7 @@ class _Warning extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    color: const Color(0xFFFDECEC),
+    color: AppColors.dangerSoft,
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
     child: Row(
       children: [
@@ -218,34 +268,25 @@ class Gate extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Center(
-                        child: Container(
-                          width: 52,
-                          height: 52,
-                          decoration: BoxDecoration(
-                            color: AppColors.brand,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: const Icon(Icons.hotel, color: Colors.white),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
                       const Text(
                         '집회관리',
-                        textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.8,
                           color: AppColors.text,
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      if (reset) ...[
-                        const Text(
-                          '새 비밀번호를 정하세요.',
-                          style: TextStyle(color: AppColors.textMuted),
+                      const SizedBox(height: 4),
+                      Text(
+                        reset ? '새 비밀번호를 정하세요.' : '운영자 계정으로 로그인하세요.',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textMuted,
                         ),
-                        const SizedBox(height: 8),
+                      ),
+                      const SizedBox(height: 24),
+                      if (reset) ...[
                         PasswordForm(
                           askCurrent: false,
                           onDone: () {
@@ -283,9 +324,12 @@ class BackupButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.save_alt_outlined, size: 18, color: AppColors.brand),
+          Icon(Icons.save_alt_outlined, size: 16, color: AppColors.textMuted),
           SizedBox(width: 6),
-          Text('백업', style: TextStyle(fontSize: 13)),
+          Text(
+            '백업',
+            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+          ),
         ],
       ),
     ),
