@@ -126,7 +126,7 @@ class StatusScreen extends StatelessWidget {
                         title: Row(
                           children: [
                             Text(
-                              '${r.roomNo}호',
+                              '${r.label}호',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                               ),

@@ -344,39 +344,40 @@ class Store extends ChangeNotifier {
     commit();
   }
 
-  /// "301-310" 또는 "301" 범위 문자열을 방으로 일괄 생성. 이미 있는 호수는 건너뜀.
+  /// "301-310" 또는 "301" 범위 문자열을 [building] 건물의 방으로 일괄 생성.
+  /// 같은 건물에 이미 있는 호수는 건너뛴다 (건물이 다르면 같은 호수도 만든다).
   /// 반환값: (생성 수, 건너뛴 수)
   (int, int) addRoomRange(
     String range, {
     required int capacity,
+    String? building,
     String? gender,
     String? note,
   }) {
-    final nums = parseRoomRange(range);
-    final existing = event.rooms.map((r) => r.roomNo).toSet();
+    final b = (building ?? '').trim().isEmpty ? null : building!.trim();
+    final existing = event.rooms.map((r) => r.label).toSet();
     var made = 0, skipped = 0;
-    for (final n in nums) {
-      if (existing.contains(n)) {
+    for (final n in parseRoomRange(range)) {
+      final room = Room(
+        id: newId(),
+        roomNo: n,
+        building: b,
+        capacity: capacity,
+        gender: gender,
+        note: note,
+      );
+      if (!existing.add(room.label)) {
         skipped++;
         continue;
       }
-      event.rooms.add(
-        Room(
-          id: newId(),
-          roomNo: n,
-          capacity: capacity,
-          gender: gender,
-          note: note,
-        ),
-      );
-      existing.add(n);
+      event.rooms.add(room);
       made++;
     }
     if (made > 0) commit();
     return (made, skipped);
   }
 
-  /// 같은 층 격자 안에서 [room] 을 [slot] 자리로 옮긴다.
+  /// 같은 건물·층 격자 안에서 [room] 을 [slot] 자리로 옮긴다.
   /// 그 자리에 다른 방이 있으면 서로 자리를 바꾼다.
   ///
   /// 옮기기 전에 지금 보이는 배치를 그대로 자리 번호로 굳힌다. 자동 배치된 방들은
@@ -385,7 +386,7 @@ class Store extends ChangeNotifier {
   void moveRoom(Room room, int slot, {required int cols}) {
     if (slot < 0) return;
     final floor = layoutSlots(
-      event.rooms.where((r) => r.floor == room.floor).toList(),
+      event.rooms.where((r) => r.floorGroup == room.floorGroup).toList(),
       cols,
     );
     for (var i = 0; i < floor.length; i++) {

@@ -56,6 +56,8 @@ class AutoRule {
     this.floorMax,
     this.roomNoMin,
     this.roomNoMax,
+    this.priorityBuilding,
+    this.buildings,
     this.separateGender = true,
     List<GroupField>? groupBy,
   }) : groupBy = groupBy ?? const [GroupField.zone, GroupField.cell];
@@ -69,6 +71,13 @@ class AutoRule {
   /// 우대 대상 배정 구역 — 층 범위 또는 호수 범위. 둘 다 null 이면 제한 없음.
   int? floorMin, floorMax;
   int? roomNoMin, roomNoMax;
+
+  /// 우대 구역을 이 건물로 좁힌다. null = 건물 상관없음.
+  String? priorityBuilding;
+
+  /// 배정에 쓸 건물 (건물 없는 방은 null). null = 전부.
+  /// 여기 없는 건물의 방에는 아무도 새로 넣지 않는다 (이미 있는 사람은 그대로).
+  Set<String?>? buildings;
 
   bool separateGender;
 
@@ -112,6 +121,9 @@ class AutoRule {
   /// 우대 구역에 속하는 방인가.
   bool inPriorityZone(Room r) {
     final f = r.floor, n = r.roomNumber;
+    if (priorityBuilding != null && r.building != priorityBuilding) {
+      return false;
+    }
     if (floorMin != null && (f == null || f < floorMin!)) return false;
     if (floorMax != null && (f == null || f > floorMax!)) return false;
     if (roomNoMin != null && (n == null || n < roomNoMin!)) return false;
@@ -152,9 +164,11 @@ class AutoAssignResult {
 /// 운영자가 결과를 보고 수동으로 고치는 게 전제 — 불만이 나오면 백트래킹/코스트 함수로 올린다.
 AutoAssignResult autoAssign(Event event, AutoRule rule) {
   final nights = event.nights;
+  final allowed = rule.buildings;
   final rooms = [
-    ...event.rooms,
-  ]..sort((a, b) => (a.roomNumber ?? 999999).compareTo(b.roomNumber ?? 999999));
+    for (final r in event.rooms)
+      if (allowed == null || allowed.contains(r.building)) r,
+  ]..sort(byRoomNo);
 
   // 방별 밤별 현재 인원. 기존 배정에서 시작.
   final counts = {
@@ -240,7 +254,6 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
   Room? pickRoom(Attendee a) {
     final same = sameGroupRooms(a);
     final sameIds = same.map((r) => r.id).toSet();
-    final anchors = same.map((r) => r.roomNumber).whereType<int>().toList();
 
     int tier(Room r) => sameIds.contains(r.id)
         ? 0
@@ -254,7 +267,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
         if (t != 0) return t;
         // 빈 방을 새로 열 때는 낮은 호수(=낮은 층)부터. 운영자가 예측할 수 있게.
         if (tier(x) == 1) return byRoomNo(x, y);
-        final d = _dist(x, anchors).compareTo(_dist(y, anchors));
+        final d = _dist(x, same).compareTo(_dist(y, same));
         if (d != 0) return d;
         final f = free(x).compareTo(free(y));
         return f != 0 ? f : byRoomNo(x, y);
@@ -334,12 +347,17 @@ void applyAssignments(List<Assignment> assignments) {
 /// 그룹 기준 값이 하나도 없는 사람들이 공유하는 키. 이들끼리는 같은 그룹으로 본다.
 const _looseKey = '\u0000loose';
 
-/// 기준 호수들과의 최소 거리. 기준이 없으면 0 (거리 무시).
-int _dist(Room r, List<int> anchors) {
+/// 기준 방들과의 최소 호수 거리. 기준이 없으면 0 (거리 무시).
+/// 다른 건물의 방은 호수가 가까워도 멀리 있는 것으로 본다.
+int _dist(Room r, List<Room> anchors) {
   if (anchors.isEmpty) return 0;
   final n = r.roomNumber;
-  if (n == null) return 1 << 20;
-  return anchors.map((a) => (n - a).abs()).reduce(math.min);
+  final near = [
+    for (final a in anchors)
+      if (a.building == r.building) ?a.roomNumber,
+  ];
+  if (n == null || near.isEmpty) return 1 << 20;
+  return near.map((a) => (n - a).abs()).reduce(math.min);
 }
 
 /// 운영자가 고른 [people] 을 운영자가 고른 [rooms] 에 호수 순으로 채워 넣는다.
@@ -357,9 +375,7 @@ AutoAssignResult distribute(
   bool overflow = false,
 }) {
   final nights = event.nights;
-  final ordered = [
-    ...rooms,
-  ]..sort((a, b) => (a.roomNumber ?? 999999).compareTo(b.roomNumber ?? 999999));
+  final ordered = [...rooms]..sort(byRoomNo);
   final moving = people.map((a) => a.id).toSet();
 
   final counts = {

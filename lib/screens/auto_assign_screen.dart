@@ -22,6 +22,22 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
   final noMax = TextEditingController();
   bool separateGender = true;
 
+  /// 배정에서 뺄 건물. '넣을 것' 대신 '뺄 것'을 기억해서 새로 생긴 건물은 기본으로 들어간다.
+  final Set<String?> offBuildings = {};
+
+  /// 우대 구역 건물. null = 건물 상관없음.
+  String? zoneBuilding;
+
+  /// 이 집회 방들의 건물 (건물 없는 방은 null). 건물 이름이 하나도 없으면 빈 목록 — 건물 UI 를 숨긴다.
+  List<String?> get _buildings {
+    final all = {for (final r in store.event.rooms) r.building};
+    if (all.every((b) => b == null)) return [];
+    return all.toList()..sort((a, b) => (a ?? '').compareTo(b ?? ''));
+  }
+
+  bool get _buildingsValid =>
+      _buildings.isEmpty || _buildings.any((b) => !offBuildings.contains(b));
+
   /// 같이 배정할 기준. 목록 순서가 곧 우선순위(위가 1순위), 체크된 것만 쓴다.
   /// 운영자가 만든 항목(교회 등)도 여기에 자동으로 들어온다.
   List<GroupField> groupOrder = [];
@@ -57,6 +73,13 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
     floorMax: zoneMode == 'floor' ? int.tryParse(floorMax.text.trim()) : null,
     roomNoMin: zoneMode == 'roomNo' ? int.tryParse(noMin.text.trim()) : null,
     roomNoMax: zoneMode == 'roomNo' ? int.tryParse(noMax.text.trim()) : null,
+    priorityBuilding: _buildings.contains(zoneBuilding) ? zoneBuilding : null,
+    buildings: offBuildings.isEmpty
+        ? null
+        : {
+            for (final b in _buildings)
+              if (!offBuildings.contains(b)) b,
+          },
     separateGender: separateGender,
     groupBy: _groupBy,
   );
@@ -113,8 +136,51 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
       ),
       const SizedBox(height: 20),
       _groupSection(),
+      if (_buildings.isNotEmpty) ...[
+        const SizedBox(height: 20),
+        Text('배정할 건물', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final b in _buildings)
+              FilterChip(
+                label: Text(b ?? '건물 없음'),
+                selected: !offBuildings.contains(b),
+                onSelected: (on) => setState(
+                  () => on ? offBuildings.remove(b) : offBuildings.add(b),
+                ),
+              ),
+          ],
+        ),
+        if (!_buildingsValid)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              '건물을 하나 이상 고르세요.',
+              style: TextStyle(fontSize: 12, color: AppColors.danger),
+            ),
+          ),
+      ],
       const SizedBox(height: 20),
       Text('우대 배정 구역', style: Theme.of(context).textTheme.titleMedium),
+      if (_buildings.isNotEmpty)
+        Row(
+          children: [
+            const Text('건물 '),
+            DropdownButton<String?>(
+              value: _buildings.contains(zoneBuilding) ? zoneBuilding : null,
+              isDense: true,
+              onChanged: (v) => setState(() => zoneBuilding = v),
+              items: [
+                const DropdownMenuItem(value: null, child: Text('전체')),
+                for (final b in _buildings)
+                  if (b != null) DropdownMenuItem(value: b, child: Text(b)),
+              ],
+            ),
+          ],
+        ),
       RadioGroup<String>(
         groupValue: zoneMode,
         onChanged: (v) => setState(() => zoneMode = v!),
@@ -150,7 +216,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
               value: 'none',
               dense: true,
               contentPadding: EdgeInsets.zero,
-              title: Text('제한 없음'),
+              title: Text('층·호수 제한 없음'),
             ),
           ],
         ),
@@ -165,7 +231,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
       ),
       const SizedBox(height: 20),
       FilledButton.icon(
-        onPressed: !_ageValid
+        onPressed: !_ageValid || !_buildingsValid
             ? null
             : () => setState(() => result = autoAssign(store.event, _rule())),
         icon: const Icon(Icons.auto_awesome),
@@ -311,7 +377,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
               '우대 대상 ${r.priorityOutsideZone.length}명'
               '(${r.priorityOutsideZone.take(3).map((a) => a.name).join(', ')}'
               '${r.priorityOutsideZone.length > 3 ? ' 외' : ''})은 '
-              '지정한 구역에 빈자리가 없어 다른 층에 배정됩니다.',
+              '지정한 구역에 빈자리가 없어 구역 밖 다른 방에 배정됩니다.',
               style: const TextStyle(fontSize: 12, color: AppColors.text),
             ),
           ),
@@ -343,7 +409,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
                     ].join('  '),
                   ),
                   trailing: Text(
-                    '→ ${x.room.roomNo}',
+                    '→ ${x.room.label}',
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 );

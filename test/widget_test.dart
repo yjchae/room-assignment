@@ -268,6 +268,56 @@ void main() {
     expect(find.text('JSON 파일로 되살리기'), findsOneWidget);
   });
 
+  testWidgets('건물이 다르면 보드·방 관리에서 건물·층별로 따로 묶인다', (tester) async {
+    store.event.rooms
+      ..clear()
+      ..addAll([
+        Room(id: 'a', roomNo: '101', building: '반석관', capacity: 4),
+        Room(id: 'b', roomNo: '101', building: '은혜관', capacity: 4),
+        room('301', 4),
+      ]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('3층'), findsOneWidget);
+    expect(find.text('반석관 1층'), findsOneWidget);
+    expect(find.text('은혜관 1층'), findsOneWidget);
+    expect(tile('101'), findsNWidgets(2));
+
+    await pump(tester, const RoomsScreen());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('반석관 1층'), findsOneWidget);
+  });
+
+  testWidgets('자동배정: 건물이 있으면 배정할 건물을 고를 수 있고, 다 끄면 미리보기가 꺼진다', (tester) async {
+    // 설정 패널은 ListView 라 화면 밖의 [미리보기] 버튼은 만들어지지 않는다. 창을 세로로 늘린다.
+    tester.view.physicalSize = const Size(1400, 1800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    store.event.rooms.add(
+      Room(id: 'x1', roomNo: '101', building: '반석관', capacity: 4),
+    );
+    await pump(tester, const AutoAssignScreen());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('배정할 건물'), findsOneWidget);
+    for (final b in ['반석관', '건물 없음']) {
+      await tester.tap(
+        find.widgetWithText(FilterChip, b),
+      ); // 기존 301·302 = 건물 없음
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('건물을 하나 이상 고르세요.'), findsOneWidget);
+    final preview = tester.widget<FilledButton>(
+      find.ancestor(
+        of: find.textContaining('미리보기'),
+        matching: find.byWidgetPredicate((w) => w is FilledButton),
+      ),
+    );
+    expect(preview.onPressed, isNull);
+  });
+
   testWidgets('Shift+클릭하면 두 호실 사이의 방이 전부 선택된다', (tester) async {
     store.event.rooms
       ..clear()

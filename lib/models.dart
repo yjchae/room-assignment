@@ -61,9 +61,16 @@ class Event {
   );
 }
 
+/// 보드에서 같이 묶이는 단위 = 건물 + 층. 방 자리(slot)도 이 단위마다 따로 매긴다.
+typedef FloorGroup = ({String? building, int? floor});
+
 class Room {
   String id;
   String roomNo;
+
+  /// 건물(동) 이름. 예: '반석관'. null = 건물 구분 없음.
+  /// 건물이 다르면 같은 호수가 따로 있을 수 있고, 보드에서도 건물·층별로 따로 묶인다.
+  String? building;
   int capacity;
   String? gender; // 'M' | 'F' | null(무관)
   String? note;
@@ -75,6 +82,7 @@ class Room {
   Room({
     required this.id,
     required this.roomNo,
+    this.building,
     required this.capacity,
     this.gender,
     this.note,
@@ -89,9 +97,15 @@ class Room {
 
   int? get roomNumber => int.tryParse(roomNo.trim());
 
+  /// 화면에 보이는 이름. "반석관 101" / "101"
+  String get label => building == null ? roomNo : '$building $roomNo';
+
+  FloorGroup get floorGroup => (building: building, floor: floor);
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'roomNo': roomNo,
+    'building': building,
     'capacity': capacity,
     'gender': gender,
     'note': note,
@@ -101,6 +115,7 @@ class Room {
   factory Room.fromJson(Map<String, dynamic> j) => Room(
     id: j['id'] as String,
     roomNo: j['roomNo'] as String,
+    building: j['building'] as String?,
     capacity: (j['capacity'] as num).toInt(),
     gender: j['gender'] as String?,
     note: j['note'] as String?,
@@ -180,9 +195,11 @@ class Attendee {
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
-/// 호수 오름차순. 숫자가 아닌 호수는 문자열로 비교한다.
+/// 건물 이름 순(건물 없는 방이 먼저) → 호수 오름차순. 숫자가 아닌 호수는 문자열로 비교한다.
 /// 화면과 배정 엔진이 같은 순서를 봐야 해서 모델 쪽에 둔다.
 int byRoomNo(Room a, Room b) {
+  final bd = (a.building ?? '').compareTo(b.building ?? '');
+  if (bd != 0) return bd;
   final x = a.roomNumber, y = b.roomNumber;
   if (x != null && y != null) return x.compareTo(y);
   if (x != null) return -1;

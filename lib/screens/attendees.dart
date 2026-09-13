@@ -115,7 +115,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                           ].join('  '),
                         ),
                         trailing: Text(
-                          room == null ? '미배정' : room.roomNo,
+                          room == null ? '미배정' : room.label,
                           style: TextStyle(
                             color: room == null ? Colors.grey : Colors.indigo,
                             fontWeight: FontWeight.bold,
@@ -135,9 +135,13 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     'age' => b.age.compareTo(a.age),
     'cell' => (a.cell ?? '').compareTo(b.cell ?? ''),
     'zone' => (a.zone ?? '').compareTo(b.zone ?? ''),
-    'room' => (store.roomById(a.roomId)?.roomNumber ?? 999999).compareTo(
-      store.roomById(b.roomId)?.roomNumber ?? 999999,
-    ),
+    // 건물 → 호수 순, 미배정은 맨 뒤
+    'room' => switch ((store.roomById(a.roomId), store.roomById(b.roomId))) {
+      (final x?, final y?) => byRoomNo(x, y),
+      (null, null) => 0,
+      (null, _) => 1,
+      _ => -1,
+    },
     _ => a.name.compareTo(b.name),
   };
 }
@@ -157,7 +161,7 @@ Future<void> importRegistrations(BuildContext context) async {
         title: '방이 배정된 ${gone.length}명이 빠집니다',
         body:
             '신청이 취소됐거나 입금대기로 되돌려진 사람들입니다. 빼면 방 배정도 풀립니다.\n\n'
-            '${gone.take(20).map((a) => '· ${a.name} (${store.roomById(a.roomId)?.roomNo ?? '-'}호)').join('\n')}'
+            '${gone.take(20).map((a) => '· ${a.name} (${store.roomById(a.roomId)?.label ?? '-'}호)').join('\n')}'
             '${gone.length > 20 ? '\n… 외 ${gone.length - 20}명' : ''}',
         action: '빼고 가져오기',
         danger: true,

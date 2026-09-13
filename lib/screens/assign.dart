@@ -305,7 +305,7 @@ class _AssignScreenState extends State<AssignScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            _RoomPill(room?.roomNo),
+            _RoomPill(room?.label),
           ],
         ),
       ),
@@ -410,7 +410,7 @@ class _AssignScreenState extends State<AssignScreen> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
-                '${room.roomNo}호',
+                '${room.label}호',
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
@@ -540,7 +540,7 @@ class _AssignScreenState extends State<AssignScreen> {
                 style: const TextStyle(fontSize: 13),
                 decoration: const InputDecoration(
                   labelText: '호수 범위로 선택',
-                  hintText: '301-304, 401',
+                  hintText: '301-304, 401 / 반석관 101-104',
                 ),
                 onSubmitted: (_) => _selectRoomRange(rooms),
               ),
@@ -671,15 +671,24 @@ class _AssignScreenState extends State<AssignScreen> {
   }
 
   /// "301-304" 같은 범위로 방을 한 번에 선택한다. (store.parseRoomRange 재사용)
+  /// "반석관 301-304" 처럼 앞에 건물 이름을 붙이면 그 건물 방만 고른다.
   void _selectRoomRange(List<Room> rooms) {
-    final wanted = parseRoomRange(roomRange.text).toSet();
+    final m = RegExp(r'^\s*(\D*?)\s*(\d.*)$').firstMatch(roomRange.text);
+    final building = m?.group(1)?.trim() ?? '';
+    final wanted = parseRoomRange(m?.group(2) ?? '').toSet();
     if (wanted.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('호수를 인식하지 못했습니다. 예: 301-304')),
       );
       return;
     }
-    final hit = rooms.where((r) => wanted.contains(r.roomNo)).toList();
+    final hit = rooms
+        .where(
+          (r) =>
+              wanted.contains(r.roomNo) &&
+              (building.isEmpty || r.building == building),
+        )
+        .toList();
     setState(() => selectedRooms.addAll(hit.map((r) => r.id)));
     if (hit.length < wanted.length) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -738,7 +747,7 @@ class _AssignScreenState extends State<AssignScreen> {
     // 방별 인원 요약을 보여주고 최종 확인.
     final byRoom = <String, int>{};
     for (final x in plan.assignments) {
-      byRoom[x.room.roomNo] = (byRoom[x.room.roomNo] ?? 0) + 1;
+      byRoom[x.room.label] = (byRoom[x.room.label] ?? 0) + 1;
     }
     final lines = byRoom.entries.map((e) => '${e.key}호  ${e.value}명').toList()
       ..sort();
@@ -934,7 +943,7 @@ Future<void> showRoomOccupants(BuildContext context, Room room) {
             ),
           ),
           const SizedBox(width: 8),
-          Text('${room.roomNo}호'),
+          Text('${room.label}호'),
           const SizedBox(width: 8),
           Text(
             '$used/${room.capacity} · ${st.label}',

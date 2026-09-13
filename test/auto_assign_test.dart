@@ -907,6 +907,66 @@ void main() {
     });
   });
 
+  group('건물', () {
+    test('건물이 다르면 같은 호수도 따로 만들고, 같은 건물 안에서만 중복을 건너뛴다', () {
+      final s = Store()..event = ev();
+      expect(s.addRoomRange('101-103', capacity: 4, building: '반석관'), (3, 0));
+      expect(s.addRoomRange('101-102', capacity: 4, building: '은혜관'), (2, 0));
+      expect(s.addRoomRange('103-104', capacity: 4, building: ' 반석관 '), (1, 1));
+      expect(s.addRoomRange('101', capacity: 4), (1, 0)); // 건물 없는 101 도 따로
+      expect(s.event.rooms.map((r) => r.label), contains('반석관 104'));
+      // 정렬: 건물 없는 방 → 건물 이름 순 → 호수 순
+      expect((s.event.rooms..sort(byRoomNo)).map((r) => r.label).take(3), [
+        '101',
+        '반석관 101',
+        '반석관 102',
+      ]);
+      expect(Event.fromJson(s.event.toJson()).rooms[1].building, '반석관');
+    });
+
+    test('자동배정: 배정할 건물을 고르면 그 건물 방에만 넣는다', () {
+      final e = ev(
+        rooms: [
+          Room(id: 'a', roomNo: '101', building: '반석관', capacity: 2),
+          Room(id: 'b', roomNo: '101', building: '은혜관', capacity: 2),
+        ],
+        attendees: [person('A'), person('B'), person('C')],
+      );
+      final res = autoAssign(e, AutoRule(buildings: {'은혜관'}));
+      expect(res.assignments.map((x) => x.room.id).toSet(), {'b'});
+      expect(res.unplaced, hasLength(1)); // 반석관은 비어 있어도 쓰지 않는다
+    });
+
+    test('자동배정: 우대 구역을 건물까지 좁힌다', () {
+      Event e() => ev(
+        rooms: [
+          Room(id: 'a', roomNo: '101', building: '반석관', capacity: 1),
+          Room(id: 'b', roomNo: '101', building: '은혜관', capacity: 1),
+        ],
+        attendees: [person('어르신', age: 70)],
+      );
+      AutoRule rule([String? b]) => AutoRule(
+        priorityAge: 65,
+        floorMin: 1,
+        floorMax: 1,
+        priorityBuilding: b,
+      );
+      // 건물을 안 고르면 이름 순으로 반석관부터
+      expect(autoAssign(e(), rule()).assignments.single.room.id, 'a');
+      expect(autoAssign(e(), rule('은혜관')).assignments.single.room.id, 'b');
+    });
+
+    test('자리 옮기기는 같은 건물·같은 층 방끼리만 자리를 바꾼다', () {
+      final a = Room(id: 'a', roomNo: '101', building: '반석관', capacity: 4);
+      final b = Room(id: 'b', roomNo: '101', building: '은혜관', capacity: 4);
+      final s = Store()..event = ev(rooms: [a, b]);
+      s.moveRoom(a, 0, cols: 5);
+      // 은혜관 101 을 0번으로 옮겨도 반석관 101 과 자리를 바꾸지 않는다 (격자가 따로다)
+      s.moveRoom(b, 0, cols: 5);
+      expect((a.slot, b.slot), (0, 0));
+    });
+  });
+
   group('저장/불러오기', () {
     test('JSON 왕복', () {
       final e = ev(

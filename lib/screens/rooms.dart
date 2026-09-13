@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/room_board.dart' show byFloorDesc, floorLabel;
 
 class RoomsScreen extends StatelessWidget {
   const RoomsScreen({super.key});
@@ -20,7 +21,9 @@ class RoomsScreen extends StatelessWidget {
       body: rooms.isEmpty
           ? const Center(
               child: Text(
-                '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.',
+                '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.\n'
+                '건물이 여러 개면 건물 이름(예: 반석관)도 같이 넣으세요.',
+                textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.textMuted),
               ),
             )
@@ -42,11 +45,11 @@ class RoomsScreen extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 20),
-                for (final entry in _byFloor(rooms).entries) ...[
+                for (final entry in byFloorDesc(rooms).entries) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 4, bottom: 8),
                     child: SectionTitle(
-                      entry.key == null ? '기타' : '${entry.key}층',
+                      floorLabel(entry.key),
                       subtitle:
                           '${entry.value.length}실 · 수용 '
                           '${entry.value.fold(0, (s, r) => s + r.capacity)}명',
@@ -63,16 +66,6 @@ class RoomsScreen extends StatelessWidget {
             ),
     );
   }
-}
-
-Map<int?, List<Room>> _byFloor(List<Room> rooms) {
-  final map = <int?, List<Room>>{};
-  for (final r in rooms) {
-    map.putIfAbsent(r.floor, () => []).add(r);
-  }
-  final keys = map.keys.toList()
-    ..sort((a, b) => (b ?? -9999).compareTo(a ?? -9999));
-  return {for (final k in keys) k: map[k]!};
 }
 
 class _RoomCard extends StatelessWidget {
@@ -179,6 +172,7 @@ class _RoomCard extends StatelessWidget {
 
 /// [room] 이 null 이면 추가(범위 지원), 있으면 수정.
 Future<void> _roomDialog(BuildContext context, [Room? room]) async {
+  final buildingCtl = TextEditingController(text: room?.building ?? '');
   final noCtl = TextEditingController(text: room?.roomNo ?? '');
   final capCtl = TextEditingController(text: '${room?.capacity ?? 4}');
   final noteCtl = TextEditingController(text: room?.note ?? '');
@@ -189,12 +183,21 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setLocal) => AlertDialog(
-        title: Text(room == null ? '방 추가' : '방 ${room.roomNo} 수정'),
+        title: Text(room == null ? '방 추가' : '방 ${room.label} 수정'),
         content: SizedBox(
           width: 360,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              TextField(
+                controller: buildingCtl,
+                decoration: const InputDecoration(
+                  labelText: '건물 (선택)',
+                  hintText: '예: 반석관',
+                  helperText: '건물이 여러 개일 때만. 건물이 다르면 같은 호수도 따로 만들어집니다.',
+                  helperMaxLines: 2,
+                ),
+              ),
               TextField(
                 controller: noCtl,
                 autofocus: true,
@@ -291,12 +294,16 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
     return;
   }
   final note = noteCtl.text.trim().isEmpty ? null : noteCtl.text.trim();
+  final building = buildingCtl.text.trim().isEmpty
+      ? null
+      : buildingCtl.text.trim();
 
   if (room != null) {
     final no = noCtl.text.trim();
     if (no.isEmpty) return;
     room
       ..roomNo = no
+      ..building = building
       ..capacity = cap
       ..gender = gender
       ..note = note;
@@ -307,6 +314,7 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
   final (made, skipped) = store.addRoomRange(
     noCtl.text,
     capacity: cap,
+    building: building,
     gender: gender,
     note: note,
   );

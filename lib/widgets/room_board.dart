@@ -50,7 +50,7 @@ class RoomTile extends StatelessWidget {
 
     return Tooltip(
       message:
-          '${room.roomNo}호  $used/${room.capacity}  ${st.label}'
+          '${room.label}호  $used/${room.capacity}  ${st.label}'
           '\n${groups.isEmpty ? '비어 있음' : groups}',
       waitDuration: const Duration(milliseconds: 400),
       child: SizedBox(
@@ -174,7 +174,7 @@ class _SeatBar extends StatelessWidget {
   }
 }
 
-/// 층별로 묶어 그리는 방 보드. 방배정 화면과 현황 화면이 같은 걸 쓴다.
+/// 건물·층별로 묶어 그리는 방 보드. 방배정 화면과 현황 화면이 같은 걸 쓴다.
 ///
 /// 높은 층이 위로 온다 — 엘리베이터 층 표시와 같은 순서라 건물이 그대로 보인다.
 /// 층 안에서는 [columns] 칸짜리 격자다. 방이 놓이지 않은 칸은 빈 자리로 남아
@@ -242,7 +242,7 @@ class RoomBoard extends StatelessWidget {
                       if (i > 0) const SizedBox(height: 16),
                       SizedBox(
                         width: rowWidth,
-                        child: _FloorHeader(floor: e.key, rooms: e.value),
+                        child: _FloorHeader(group: e.key, rooms: e.value),
                       ),
                       const SizedBox(height: 8),
                       _floorGrid(e.key, e.value, w),
@@ -261,7 +261,7 @@ class RoomBoard extends StatelessWidget {
     );
   }
 
-  Widget _floorGrid(int? floor, List<Room> floorRooms, double w) {
+  Widget _floorGrid(FloorGroup group, List<Room> floorRooms, double w) {
     final slots = layoutSlots(floorRooms, columns);
     // 옮기는 중에는 맨 아래에 빈 줄을 하나 더 둔다. 새 줄로 내릴 자리가 없으면
     // 아래쪽으로는 아예 옮길 수가 없다.
@@ -278,7 +278,7 @@ class RoomBoard extends StatelessWidget {
             children: [
               for (var i = row * columns; i < (row + 1) * columns; i++) ...[
                 if (i > row * columns) const SizedBox(width: _gap),
-                _slot(floor, slots[i], i, w),
+                _slot(group, slots[i], i, w),
               ],
             ],
           ),
@@ -287,7 +287,7 @@ class RoomBoard extends StatelessWidget {
     );
   }
 
-  Widget _slot(int? floor, Room? room, int index, double w) {
+  Widget _slot(FloorGroup group, Room? room, int index, double w) {
     final tile = room == null
         ? null
         : RoomTile(
@@ -308,8 +308,9 @@ class RoomBoard extends StatelessWidget {
 
     final target = _DropSlot(
       width: w,
-      // 층마다 자리 번호가 따로라 다른 층 방은 받지 않는다.
-      accepts: (r) => r.floor == floor && !(room != null && room.id == r.id),
+      // 건물·층마다 자리 번호가 따로라 다른 건물·층 방은 받지 않는다.
+      accepts: (r) =>
+          r.floorGroup == group && !(room != null && room.id == r.id),
       onAccept: (r) => onMove!(r, index),
       child: tile,
     );
@@ -421,8 +422,8 @@ class _DragGhost extends StatelessWidget {
 }
 
 class _FloorHeader extends StatelessWidget {
-  const _FloorHeader({required this.floor, required this.rooms});
-  final int? floor;
+  const _FloorHeader({required this.group, required this.rooms});
+  final FloorGroup group;
   final List<Room> rooms;
 
   @override
@@ -432,7 +433,7 @@ class _FloorHeader extends StatelessWidget {
     return Row(
       children: [
         Text(
-          floor == null ? '기타' : '$floor층',
+          floorLabel(group),
           style: const TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w800,
@@ -493,14 +494,24 @@ class RoomLegend extends StatelessWidget {
   }
 }
 
-/// 층별로 묶는다. 높은 층이 앞, 층 안에서는 호수 오름차순. 층 없는 방(비숫자 호수)은 맨 뒤.
-Map<int?, List<Room>> byFloorDesc(List<Room> rooms) {
+/// 건물·층별로 묶는다. 건물 이름 순(건물 없는 방이 먼저), 건물 안에서는 높은 층이 앞,
+/// 층 안에서는 호수 오름차순. 층 없는 방(비숫자 호수)은 그 건물의 맨 뒤.
+Map<FloorGroup, List<Room>> byFloorDesc(List<Room> rooms) {
   final sorted = [...rooms]..sort(byRoomNo);
-  final map = <int?, List<Room>>{};
+  final map = <FloorGroup, List<Room>>{};
   for (final r in sorted) {
-    map.putIfAbsent(r.floor, () => []).add(r);
+    map.putIfAbsent(r.floorGroup, () => []).add(r);
   }
   final keys = map.keys.toList()
-    ..sort((a, b) => (b ?? -9999).compareTo(a ?? -9999));
+    ..sort((a, b) {
+      final bd = (a.building ?? '').compareTo(b.building ?? '');
+      return bd != 0 ? bd : (b.floor ?? -9999).compareTo(a.floor ?? -9999);
+    });
   return {for (final k in keys) k: map[k]!};
+}
+
+/// "반석관 3층" / "3층" / "반석관" / "기타"
+String floorLabel(FloorGroup g) {
+  final parts = [?g.building, if (g.floor != null) '${g.floor}층'];
+  return parts.isEmpty ? '기타' : parts.join(' ');
 }
