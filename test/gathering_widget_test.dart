@@ -292,6 +292,8 @@ void main() {
       await tester.tap(find.text('남').first);
       await tester.pumpAndSettle();
       expect(find.text('160,000원'), findsOneWidget); // 150,000 + 가족당 10,000
+      await tester.enterText(field('셀'), '1셀');
+      await tester.enterText(field('존'), 'A존');
 
       await tester.tap(find.text('동반 참석자 추가 (가족 등)'));
       await tester.pumpAndSettle();
@@ -325,6 +327,9 @@ void main() {
       ]);
       expect(people.first.phone, '01012345678');
       expect(people.last.relation, '자녀');
+      // 셀·존은 신청자 것을 따라가지 않고 빈칸으로 시작한다.
+      expect((people.first.cell, people.first.zone), ('1셀', 'A존'));
+      expect((people.last.cell, people.last.zone), (null, null));
     });
 
     testWidgets('부분 참석으로 바꾸면 1박 금액이 된다', (tester) async {

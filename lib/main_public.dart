@@ -360,8 +360,9 @@ class _PersonForm {
       birth = TextEditingController(
         text: p == null || p.birthYear == 0 ? '' : '${p.birthYear}',
       ),
-      cell = TextEditingController(text: p?.cell ?? copyFrom?.cell.text ?? ''),
-      zone = TextEditingController(text: p?.zone ?? copyFrom?.zone.text ?? ''),
+      // 셀·존은 가족이라도 다를 수 있어 동반자는 빈칸으로 시작한다.
+      cell = TextEditingController(text: p?.cell ?? ''),
+      zone = TextEditingController(text: p?.zone ?? ''),
       gender = p?.gender,
       relation = p?.relation ?? (applicant ? '본인' : '자녀'),
       checkIn = p?.checkIn,
