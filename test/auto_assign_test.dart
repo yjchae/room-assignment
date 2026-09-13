@@ -79,6 +79,49 @@ Attendee person(
 );
 
 void main() {
+  test('가족 기준을 켜면 성별 분리와 상관없이 한 가족은 한 방, 남은 자리엔 남이 안 들어온다', () {
+    final dad = person('아빠', zone: 'A', cell: '1')..registrationId = 'r1';
+    final mom = person('엄마', gender: 'F')..registrationId = 'r1';
+    final kid = person('딸', gender: 'F', age: 10)..registrationId = 'r1';
+    final other = person('남', zone: 'A', cell: '1');
+    final e = ev(
+      // 301 은 남자 방. 가족은 성별 무관한 302 로 가야 흩어지지 않는다.
+      rooms: [
+        room('301', 4, gender: 'M'),
+        room('302', 4),
+        room('303', 4),
+      ],
+      attendees: [dad, mom, kid, other],
+    );
+    final on = autoAssign(
+      e,
+      AutoRule(groupBy: [GroupField.family, GroupField.zone, GroupField.cell]),
+    );
+    final roomOf = {for (final x in on.assignments) x.attendee: x.room.id};
+    expect(on.unplaced, isEmpty);
+    expect({roomOf[dad], roomOf[mom], roomOf[kid]}, hasLength(1));
+    expect(roomOf[other], isNot(roomOf[dad])); // 가족 방에 빈자리가 있어도 남은 안 들어온다
+
+    // 가족 기준을 끄면 예전처럼 성별로 나뉜다.
+    final off = autoAssign(e, AutoRule());
+    final offRoom = {for (final x in off.assignments) x.attendee: x.room.id};
+    expect(offRoom[mom], isNot(offRoom[dad]));
+
+    // 방에 정해 둔 성별은 가족이라도 지킨다 — 정해진 방뿐이면 성별대로 나뉜다.
+    final fixed = autoAssign(
+      ev(
+        rooms: [
+          room('301', 4, gender: 'M'),
+          room('302', 4, gender: 'F'),
+        ],
+        attendees: [dad, mom, kid],
+      ),
+      AutoRule(groupBy: [GroupField.family]),
+    );
+    final at = {for (final x in fixed.assignments) x.attendee: x.room.id};
+    expect((at[dad], at[mom], at[kid]), ('r301', 'r302', 'r302'));
+  });
+
   group('정원 계산', () {
     test('날짜가 겹치지 않으면 정원을 나눠 쓴다', () {
       final r = room('101', 1);

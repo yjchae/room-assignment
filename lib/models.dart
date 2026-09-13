@@ -12,6 +12,9 @@ class Event {
   /// 값은 [Attendee.extra] 에 같은 이름을 키로 들어간다.
   List<String> customFields;
 
+  /// 운영자가 지운, 신청에서 온 참석자 id. 다시 가져올 때 되살릴지 묻는 데 쓴다.
+  Set<String> deletedIds = {};
+
   Event({
     required this.name,
     required this.startDate,
@@ -45,6 +48,7 @@ class Event {
     'rooms': rooms.map((r) => r.toJson()).toList(),
     'attendees': attendees.map((a) => a.toJson()).toList(),
     'customFields': customFields,
+    'deletedIds': deletedIds.toList(),
   };
 
   factory Event.fromJson(Map<String, dynamic> j) => Event(
@@ -58,7 +62,7 @@ class Event {
         .map((e) => Attendee.fromJson(e as Map<String, dynamic>))
         .toList(),
     customFields: (j['customFields'] as List? ?? []).map((e) => '$e').toList(),
-  );
+  )..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'};
 }
 
 /// 보드에서 같이 묶이는 단위 = 건물 + 층. 방 자리(slot)도 이 단위마다 따로 매긴다.
@@ -140,6 +144,9 @@ class Attendee {
   /// null = 붙여넣기·직접 추가한 사람.
   String? registrationId;
 
+  /// 운영자가 참석자 화면에서 직접 고쳤다. 신청에서 다시 가져올 때 덮어쓸지 묻는 데 쓴다.
+  bool editedByAdmin = false;
+
   Attendee({
     required this.id,
     required this.name,
@@ -174,6 +181,7 @@ class Attendee {
     'checkOut': checkOut.toIso8601String(),
     'extra': extra,
     'registrationId': registrationId,
+    if (editedByAdmin) 'edited': true,
   };
 
   factory Attendee.fromJson(Map<String, dynamic> j) => Attendee(
@@ -190,7 +198,7 @@ class Attendee {
     checkOut: DateTime.parse(j['checkOut'] as String),
     extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
     registrationId: j['registrationId'] as String?,
-  );
+  )..editedByAdmin = j['edited'] == true;
 }
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);

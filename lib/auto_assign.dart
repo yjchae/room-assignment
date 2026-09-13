@@ -197,10 +197,45 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     }
   }
 
+  // 방마다 들어있는 사람들의 신청 id (신청 없이 들어온 사람은 null).
+  // '가족' 기준이 켜져 있으면 자기 가족만 있는 방에는 성별과 상관없이 들어간다.
+  final familyOn = rule.groupBy.contains(GroupField.family);
+  final roomFamilies = <String, Set<String?>>{for (final r in rooms) r.id: {}};
+
+  // 남녀가 섞인 가족. 성별이 정해진 방을 열면 나머지 가족이 못 따라 들어오므로
+  // 성별 무관한 빈 방을 먼저 연다.
+  final familyGenders = <String, Set<String>>{};
+  for (final a in event.attendees) {
+    final f = a.registrationId;
+    if (familyOn && f != null) {
+      familyGenders.putIfAbsent(f, () => {}).add(a.gender);
+    }
+  }
+  final mixedFamilies = {
+    for (final e in familyGenders.entries)
+      if (e.value.length > 1) e.key,
+  };
+
+  /// [a] 가 방에 들어왔음을 기록한다. 가족이라 남녀가 섞이면 방 성별을 '섞임'으로 두어
+  /// 남은 자리에 다른 사람이 들어오지 못하게 한다 (그 가족만 더 들어올 수 있다).
+  void settle(String roomId, Attendee a) {
+    final g = roomGender[roomId];
+    roomGender[roomId] = g == null || g == a.gender ? a.gender : _mixedGender;
+    roomFamilies[roomId]!.add(a.registrationId);
+    remember(roomId, a);
+  }
+
   final result = <Assignment>[];
 
   bool fits(Room r, Attendee a) {
-    if (rule.separateGender) {
+    final fam = familyOn ? a.registrationId : null;
+    // 운영자가 방에 정해 둔 성별(r.gender)은 가족이라도 지킨다.
+    final ownFamilyRoom =
+        fam != null &&
+        r.gender == null &&
+        roomFamilies[r.id]!.length == 1 &&
+        roomFamilies[r.id]!.first == fam;
+    if (rule.separateGender && !ownFamilyRoom) {
       final g = roomGender[r.id];
       if (g != null && g != a.gender) return false;
     }
@@ -218,8 +253,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     for (var i = 0; i < nights.length; i++) {
       if (stays[i]) c[i]++;
     }
-    roomGender[r.id] ??= a.gender;
-    remember(r.id, a);
+    settle(r.id, a);
     result.add(Assignment(a, r, stage));
   }
 
@@ -255,11 +289,13 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     final same = sameGroupRooms(a);
     final sameIds = same.map((r) => r.id).toSet();
 
+    final mixedFamily = mixedFamilies.contains(a.registrationId);
+    // 남녀가 섞인 가족에게 성별이 정해진 빈 방은 무관한 빈 방보다 뒤(2등급)다.
     int tier(Room r) => sameIds.contains(r.id)
         ? 0
         : isEmptyRoom(r)
-        ? 1
-        : 2;
+        ? (mixedFamily && r.gender != null ? 2 : 1)
+        : 3;
 
     final candidates = rooms.where((r) => fits(r, a)).toList()
       ..sort((x, y) {
@@ -277,8 +313,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
 
   for (final a in event.attendees) {
     if (a.roomId == null || !counts.containsKey(a.roomId)) continue;
-    roomGender[a.roomId!] ??= a.gender;
-    remember(a.roomId!, a);
+    settle(a.roomId!, a);
   }
 
   final todo = event.attendees.where((a) => a.roomId == null).toList();
@@ -343,6 +378,9 @@ void applyAssignments(List<Assignment> assignments) {
     x.attendee.roomId = x.room.id;
   }
 }
+
+/// 가족이라 남녀가 한 방에 섞였을 때의 방 성별. 어느 성별과도 같지 않아 남은 자리를 막는다.
+const _mixedGender = ' mixed';
 
 /// 그룹 기준 값이 하나도 없는 사람들이 공유하는 키. 이들끼리는 같은 그룹으로 본다.
 const _looseKey = '\u0000loose';

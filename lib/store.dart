@@ -160,6 +160,28 @@ class Store extends ChangeNotifier {
         .toList();
   }
 
+  /// 운영자가 직접 고쳤는데 신청 내용과 다른 사람 / 직접 지웠는데 신청에는 아직 있는 사람.
+  /// [syncRegistrations] 전에 운영자에게 어느 쪽을 쓸지 묻는다.
+  ({List<Attendee> edited, List<Attendee> deleted}) syncConflicts(
+    Gathering g,
+    List<Registration> regs,
+  ) {
+    final want = _wanted(g, regs);
+    return (
+      edited: [
+        for (final a in event.attendees)
+          if (a.editedByAdmin &&
+              want[a.id] != null &&
+              !_sameSource(a, want[a.id]!))
+            a,
+      ],
+      deleted: [
+        for (final w in want.values)
+          if (event.deletedIds.contains(w.id)) w,
+      ],
+    );
+  }
+
   /// 확정된 신청을 참석자로 맞춘다. 몇 번 불러도 결과가 같다 (사람 id 로 맞춘다).
   ///
   /// - 신청에서 온 항목(이름·성별·나이·전화·셀·존·사용자 항목·일정)만 덮어쓰고
@@ -168,10 +190,13 @@ class Store extends ChangeNotifier {
   ///   [remove] 가 false 면 지우지 않는다 — 입금 확인 때 자동으로 부를 때. 방 배정이
   ///   말없이 풀리면 안 되므로, 지우는 건 경고를 보여주는 [신청에서 가져오기]에서만 한다.
   /// - 붙여넣기·직접 추가한 사람(registrationId == null)은 건드리지 않는다.
+  /// - 운영자가 직접 고치거나 지운 사람([syncConflicts])은 [keepAdminEdits] 면 그대로 두고,
+  ///   아니면 신청 내용으로 덮어쓰거나 되살린다.
   ({int added, int updated, int removed, int dayOnly}) syncRegistrations(
     Gathering g,
     List<Registration> regs, {
     bool remove = true,
+    bool keepAdminEdits = true,
   }) {
     final want = _wanted(g, regs);
     final confirmedPeople = regs
@@ -182,9 +207,14 @@ class Store extends ChangeNotifier {
     for (final w in want.values) {
       final a = have[w.id];
       if (a == null) {
+        if (event.deletedIds.contains(w.id)) {
+          if (keepAdminEdits) continue;
+          event.deletedIds.remove(w.id);
+        }
         event.attendees.add(w);
         added++;
       } else if (!_sameSource(a, w)) {
+        if (a.editedByAdmin && keepAdminEdits) continue;
         a
           ..name = w.name
           ..gender = w.gender
@@ -195,7 +225,8 @@ class Store extends ChangeNotifier {
           ..checkIn = w.checkIn
           ..checkOut = w.checkOut
           ..extra = w.extra
-          ..registrationId = w.registrationId;
+          ..registrationId = w.registrationId
+          ..editedByAdmin = false;
         updated++;
       }
     }
@@ -452,6 +483,10 @@ class Store extends ChangeNotifier {
 
   void deleteAttendees(Iterable<Attendee> people) {
     final ids = people.map((a) => a.id).toSet();
+    // 신청에서 온 사람은 지웠다는 걸 기억한다. 안 그러면 다음 [신청에서 가져오기]에 말없이 되살아난다.
+    event.deletedIds.addAll(
+      people.where((a) => a.registrationId != null).map((a) => a.id),
+    );
     event.attendees.removeWhere((a) => ids.contains(a.id));
     commit();
   }

@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/screens/assign.dart';
+import 'package:room_assignment/screens/attendees.dart';
 import 'package:room_assignment/screens/auto_assign_screen.dart';
 import 'package:room_assignment/screens/rooms.dart';
 import 'package:room_assignment/screens/status.dart';
@@ -549,6 +550,56 @@ void main() {
     );
     expect(find.text('선택 0명'), findsOneWidget);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('참석자 수정 창: 삭제·저장은 한 번 더 묻고, [닫기]면 그대로다', (tester) async {
+    final a = Attendee(
+      id: 'p1',
+      name: '홍길동',
+      gender: 'M',
+      age: 30,
+      checkIn: DateTime(2026, 1, 1),
+      checkOut: DateTime(2026, 1, 4),
+    );
+    store.event.attendees.add(a);
+    await pump(
+      tester,
+      Builder(
+        builder: (context) => TextButton(
+          onPressed: () => attendeeDialog(context, a),
+          child: const Text('열기'),
+        ),
+      ),
+    );
+
+    /// 수정 창을 열고 [button] 을 누른 뒤, 확인창에서 [answer] 를 누른다.
+    Future<void> run(String button, String answer, {String? rename}) async {
+      await tester.tap(find.text('열기'));
+      await tester.pumpAndSettle();
+      if (rename != null) {
+        await tester.enterText(find.widgetWithText(TextField, '이름 *'), rename);
+      }
+      await tester.tap(find.text(button));
+      await tester.pumpAndSettle();
+      expect(find.text(answer), findsOneWidget, reason: '$button 확인창');
+      await tester.tap(find.text(answer));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+
+    await run('저장', '닫기', rename: '김철수');
+    expect(a.name, '홍길동');
+    // 아무것도 안 바꾸고 저장하면 "운영자가 고침"이 아니다 (가져오기가 계속 신청 변경을 반영한다).
+    await run('저장', '저장');
+    expect(a.editedByAdmin, isFalse);
+    await run('저장', '저장', rename: '김철수');
+    expect(a.name, '김철수');
+    expect(a.editedByAdmin, isTrue);
+
+    await run('삭제', '닫기');
+    expect(store.event.attendees, contains(a));
+    await run('삭제', '삭제');
+    expect(store.event.attendees, isNot(contains(a)));
+  });
 
   testWidgets('옮겨 놓은 자리는 현황 화면에서도 그대로다', (tester) async {
     tester.view.physicalSize = const Size(1400, 900);

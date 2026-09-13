@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart';
@@ -168,7 +169,14 @@ Future<void> importRegistrations(BuildContext context) async {
       );
       if (!ok) return;
     }
-    final r = store.syncRegistrations(g, regs);
+    var keep = true;
+    final c = store.syncConflicts(g, regs);
+    if ((c.edited.isNotEmpty || c.deleted.isNotEmpty) && context.mounted) {
+      final choice = await _askKeepAdminEdits(context, c);
+      if (choice == null) return;
+      keep = choice;
+    }
+    final r = store.syncRegistrations(g, regs, keepAdminEdits: keep);
     messenger.showSnackBar(
       SnackBar(
         content: Text(
@@ -180,6 +188,51 @@ Future<void> importRegistrations(BuildContext context) async {
   } catch (e) {
     messenger.showSnackBar(SnackBar(content: Text(errorText(e))));
   }
+}
+
+/// 운영자가 직접 고치거나 지운 사람을 신청 내용으로 되돌릴지 묻는다.
+/// true = 운영자 수정 유지, false = 신청 내용으로, null = 가져오기 취소.
+Future<bool?> _askKeepAdminEdits(
+  BuildContext context,
+  ({List<Attendee> edited, List<Attendee> deleted}) c,
+) {
+  String names(List<Attendee> xs) =>
+      xs.take(20).map((a) => '· ${a.name}').join('\n') +
+      (xs.length > 20 ? '\n… 외 ${xs.length - 20}명' : '');
+  return showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('운영자가 고친 참석자가 있습니다'),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Text(
+            [
+              if (c.edited.isNotEmpty)
+                '직접 수정한 ${c.edited.length}명 (신청 내용과 다름)\n${names(c.edited)}',
+              if (c.deleted.isNotEmpty)
+                '직접 삭제한 ${c.deleted.length}명 (신청에는 있음)\n${names(c.deleted)}',
+              '운영자가 고친 내용을 그대로 둘까요, 신청 내용으로 되돌릴까요?',
+            ].join('\n\n'),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        OutlinedButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('신청 내용으로'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('운영자 수정 유지'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// 개별 추가/수정/삭제.
@@ -316,7 +369,15 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
 
   if (action == null || action == 'cancel') return;
   if (action == 'delete' && a != null) {
-    store.deleteAttendees([a]);
+    if (!context.mounted) return;
+    final ok = await confirmDialog(
+      context,
+      title: '참석자 삭제',
+      body: "'${a.name}' 님을 참석자에서 삭제합니다. 배정된 방도 풀리고 되돌릴 수 없습니다.",
+      action: '삭제',
+      danger: true,
+    );
+    if (ok) store.deleteAttendees([a]);
     return;
   }
 
@@ -326,6 +387,15 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
     messenger.showSnackBar(const SnackBar(content: Text('이름과 나이는 필수입니다')));
     return;
   }
+  // 입력 검사를 먼저 하고 묻는다 — 확인하고 나서 필수값 오류가 나면 헛걸음이다.
+  if (!context.mounted) return;
+  final save = await confirmDialog(
+    context,
+    title: a == null ? '참석자 추가' : '참석자 수정',
+    body: "'$n' 님 정보를 저장합니다.",
+    action: '저장',
+  );
+  if (!save) return;
   String? opt(TextEditingController c) =>
       c.text.trim().isEmpty ? null : c.text.trim();
 
@@ -351,6 +421,17 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
       ),
     );
   } else {
+    // 신청에서 오는 항목이 실제로 바뀌었을 때만 "운영자가 고침"으로 친다.
+    // 기타(note)는 가져오기가 덮어쓰지 않으니 빼고, 그냥 [저장]만 누른 것도 치지 않는다.
+    // 안 그러면 입금 확인 때의 자동 가져오기가 그 사람의 신청 변경을 말없이 건너뛴다.
+    final changed =
+        a.name != n ||
+        a.gender != gender ||
+        a.age != ageN ||
+        a.phone != opt(phone) ||
+        a.cell != opt(cell) ||
+        a.zone != opt(zone) ||
+        !mapEquals(a.extra, extraValues);
     a
       ..name = n
       ..gender = gender
@@ -360,6 +441,7 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
       ..zone = opt(zone)
       ..note = opt(note)
       ..extra = extraValues;
+    if (changed) a.editedByAdmin = true;
   }
   store.commit();
 }

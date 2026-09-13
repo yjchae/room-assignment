@@ -307,6 +307,43 @@ void main() {
       expect(a.note, '강사');
     });
 
+    test('운영자가 고치거나 지운 사람은 먼저 알려주고, 고른 쪽으로 맞춘다', () {
+      final s = tmpStore();
+      final regs = [
+        reg('r1', RegStatus.confirmed, [
+          person('아빠', 1985),
+          person('엄마', 1987, gender: 'F'),
+        ]),
+      ];
+      s.syncRegistrations(g, regs);
+      s.event.attendees.firstWhere((a) => a.name == '아빠')
+        ..name = '아빠(수정)'
+        ..editedByAdmin = true;
+      s.deleteAttendees(s.event.attendees.where((a) => a.name == '엄마'));
+
+      final c = s.syncConflicts(g, regs);
+      expect(c.edited.map((a) => a.name), ['아빠(수정)']);
+      expect(c.deleted.map((a) => a.name), ['엄마']);
+
+      // 운영자 수정 유지 (기본값 — 입금 확인 때 자동으로 부를 때도 이쪽)
+      s.syncRegistrations(g, regs);
+      expect(s.event.attendees.map((a) => a.name), ['아빠(수정)']);
+
+      // 신청 내용으로
+      s.syncRegistrations(g, regs, keepAdminEdits: false);
+      expect(
+        s.event.attendees.map((a) => a.name),
+        unorderedEquals(['아빠', '엄마']),
+      );
+      final after = s.syncConflicts(g, regs);
+      expect(after.edited, isEmpty);
+      expect(after.deleted, isEmpty);
+
+      // 지운 기록은 JSON 에도 남는다 (다른 기기에서 가져오기를 눌러도 같게)
+      s.deleteAttendees(s.event.attendees.where((a) => a.name == '엄마'));
+      expect(Event.fromJson(s.event.toJson()).deletedIds, {'p-엄마'});
+    });
+
     test('취소되면 빠진다 — 방이 배정된 사람은 먼저 알려준다', () {
       final s = tmpStore();
       final r1 = reg('r1', RegStatus.confirmed, [
