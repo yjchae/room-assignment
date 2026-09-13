@@ -4,17 +4,14 @@ import 'package:room_assignment/gathering.dart';
 // 기획서 §3.3 예시 집회: 2026-10-09(금) ~ 10-11(일), 2박3일
 final start = DateTime(2026, 10, 9);
 final end = DateTime(2026, 10, 11);
-final earlyBird = (
-  from: DateTime(2026, 9, 1),
-  to: DateTime(2026, 9, 20),
-  pct: 10,
-);
+// 38일 전 = 09-01, 19일 전 = 09-20
+const earlyBird = (fromDays: 38, toDays: 19, pct: 10);
 
 /// 기획서 §3.2 금액표.
 FeeRule planRule({
   int perRegistration = 10000,
   int fullDiscountPct = 0,
-  List<PeriodDiscount>? periods,
+  List<EarlyDiscount>? early,
 }) => FeeRule(
   full: {
     AgeGroup.adult: 150000,
@@ -37,7 +34,7 @@ FeeRule planRule({
   },
   perRegistration: perRegistration,
   fullDiscountPct: fullDiscountPct,
-  periods: periods ?? [earlyBird],
+  early: early ?? [earlyBird],
 );
 
 Person p(String name, int birthYear, {DateTime? checkIn, DateTime? checkOut}) =>
@@ -81,7 +78,7 @@ void main() {
     expect(r.lines.last.nights, 1);
     expect(r.lines.last.full, isFalse);
     expect(r.subtotal, 450000);
-    expect(r.periodDiscount, 45000);
+    expect(r.earlyDiscount, 45000);
     expect(r.total, 415000);
   });
 
@@ -116,13 +113,13 @@ void main() {
   });
 
   test('영유아는 0원', () {
-    final r = q(planRule(perRegistration: 0, periods: []), [p('아기', 2025)]);
+    final r = q(planRule(perRegistration: 0, early: []), [p('아기', 2025)]);
     expect(r.lines.single.group, AgeGroup.infant);
     expect(r.total, 0);
   });
 
   test('일정이 집회 기간 전체면 전체 참석 — 기간 밖 날짜는 잘라서 본다', () {
-    final r = q(planRule(periods: []), [
+    final r = q(planRule(early: []), [
       p('딱 맞춤', 1990, checkIn: start, checkOut: end),
       p(
         '넘침',
@@ -137,7 +134,7 @@ void main() {
 
   test('당일(0박)은 당일 금액', () {
     final day = DateTime(2026, 10, 10);
-    final r = q(planRule(periods: []), [
+    final r = q(planRule(early: []), [
       p('당일', 1990, checkIn: day, checkOut: day),
     ]);
     expect(r.lines.single.nights, 0);
@@ -146,7 +143,7 @@ void main() {
 
   test('부분 참석 금액은 전체 참석 금액을 넘지 않는다', () {
     // 3박 집회, 1박 80,000 × 2박 = 160,000 > 전체 150,000 → 150,000
-    final f = planRule(periods: [])..perNight[AgeGroup.adult] = 80000;
+    final f = planRule(early: [])..perNight[AgeGroup.adult] = 80000;
     final r = q(
       f,
       [p('2박', 1990, checkIn: DateTime(2026, 10, 10))],
@@ -158,7 +155,7 @@ void main() {
     expect(r.lines.single.amount, 150000);
   });
 
-  test('전체 정액을 비우면 1박당 × 박수, 전체참석 할인 → 기간 할인 순서로 겹쳐 적용', () {
+  test('전체 정액을 비우면 1박당 × 박수, 전체참석 할인 → 사전등록 할인 순서로 겹쳐 적용', () {
     final f = planRule(fullDiscountPct: 10)..full.remove(AgeGroup.adult);
     final r = q(f, [
       p('전체', 1990), // 70,000 × 2박 = 140,000 → 10% 할인 126,000
@@ -169,27 +166,39 @@ void main() {
     expect(r.total, 196000 * 90 ~/ 100 + 10000); // 186,400
   });
 
-  test('기간 할인: 양 끝 날짜 포함, 겹치면 큰 쪽', () {
+  test('사전등록 할인: 집회 며칠 전인지로, 양 끝 포함, 겹치면 큰 쪽', () {
     final f = planRule(
       perRegistration: 0,
-      periods: [
+      early: [
         earlyBird,
-        (from: DateTime(2026, 9, 15), to: DateTime(2026, 9, 16), pct: 20),
+        (fromDays: 24, toDays: 23, pct: 20), // 09-15 ~ 09-16
       ],
     );
     final people = [p('a', 1990)];
-    expect(q(f, people, on: DateTime(2026, 9, 1)).periodPct, 10);
-    expect(q(f, people, on: DateTime(2026, 9, 20, 23, 59)).periodPct, 10);
-    expect(q(f, people, on: DateTime(2026, 9, 21)).periodPct, 0);
-    expect(q(f, people, on: DateTime(2026, 9, 15)).periodPct, 20);
+    expect(q(f, people, on: DateTime(2026, 9, 1)).earlyPct, 10);
+    expect(q(f, people, on: DateTime(2026, 9, 20, 23, 59)).earlyPct, 10);
+    expect(q(f, people, on: DateTime(2026, 9, 21)).earlyPct, 0);
+    expect(q(f, people, on: DateTime(2026, 9, 15)).earlyPct, 20);
     expect(q(f, people, on: DateTime(2026, 8, 31)).total, 150000);
+    // 집회 날짜가 바뀌면 구간도 같이 움직인다: 10-19 시작이면 09-20 은 29일 전
+    expect(
+      q(
+        f,
+        people,
+        on: DateTime(2026, 9, 20),
+        from: DateTime(2026, 10, 19),
+        to: DateTime(2026, 10, 21),
+      ).earlyPct,
+      10,
+    );
+    expect(daysBefore(start, 38), DateTime(2026, 9, 1));
   });
 
   test('원 미만 버림', () {
-    final f = FeeRule(full: {AgeGroup.adult: 33333}, periods: [earlyBird]);
+    final f = FeeRule(full: {AgeGroup.adult: 33333}, early: [earlyBird]);
     final r = q(f, [p('a', 1990)]);
     expect(r.total, 29999); // 33,333 × 0.9 = 29,999.7
-    expect(r.subtotal - r.periodDiscount, r.total);
+    expect(r.subtotal - r.earlyDiscount, r.total);
   });
 
   test('참석자가 없으면 그룹당 금액도 붙지 않는다', () {
@@ -200,9 +209,7 @@ void main() {
   test('할인율이 범위를 벗어나도 음수 금액이 나오지 않는다', () {
     final f = planRule(
       fullDiscountPct: 150,
-      periods: [
-        (from: DateTime(2026, 9, 1), to: DateTime(2026, 9, 30), pct: 200),
-      ],
+      early: [(fromDays: 38, toDays: 9, pct: 200)],
     );
     final r = q(f, [p('a', 1990)]);
     expect(r.lines.single.amount, 0);

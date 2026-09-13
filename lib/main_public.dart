@@ -326,10 +326,11 @@ class _FeeTable extends StatelessWidget {
         for (final line in [
           '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
           if (f.fullDiscountPct > 0)
-            '전체 참석 금액은 ${f.fullDiscountPct}% 할인이 반영된 금액입니다.',
+            '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
           '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
-          for (final p in f.periods)
-            '${mdw(p.from)} ~ ${mdw(p.to)} 신청 시 ${p.pct}% 할인',
+          for (final e in f.early)
+            '사전등록 할인: ${mdw(daysBefore(g.start, e.fromDays))} ~ '
+                '${mdw(daysBefore(g.start, e.toDays))} 신청 시 ${e.pct}%',
           if (f.perRegistration > 0)
             '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
         ])

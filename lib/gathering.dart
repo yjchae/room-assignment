@@ -15,8 +15,9 @@ enum AgeGroup {
   final String label;
 }
 
-/// 기간 할인 한 구간. [from]~[to] 사이(양 끝 포함)에 신청하면 [pct]% 할인.
-typedef PeriodDiscount = ({DateTime from, DateTime to, int pct});
+/// 사전등록 할인 한 구간. 집회 시작 [fromDays]일 전 ~ [toDays]일 전(양 끝 포함)에
+/// 신청하면 [pct]% 할인. fromDays ≥ toDays.
+typedef EarlyDiscount = ({int fromDays, int toDays, int pct});
 
 class FeeRule {
   FeeRule({
@@ -26,12 +27,12 @@ class FeeRule {
     Map<AgeGroup, int>? minAge,
     this.perRegistration = 0,
     this.fullDiscountPct = 0,
-    List<PeriodDiscount>? periods,
+    List<EarlyDiscount>? early,
   }) : full = full ?? {},
        perNight = perNight ?? {},
        dayOnly = dayOnly ?? {},
        minAge = minAge ?? {...defaultMinAge},
-       periods = periods ?? [];
+       early = early ?? [];
 
   /// 전체 참석 정액. 키가 없으면 1박당 × 전체 박수.
   Map<AgeGroup, int> full;
@@ -51,8 +52,8 @@ class FeeRule {
   /// 전체 참석자 1인 금액에 적용하는 할인율(%).
   int fullDiscountPct;
 
-  /// 신청일 기준 할인. 구간이 겹치면 큰 쪽 하나만.
-  List<PeriodDiscount> periods;
+  /// 사전등록 할인. 신청일이 집회 시작 며칠 전인지로 본다. 구간이 겹치면 큰 쪽 하나만.
+  List<EarlyDiscount> early;
 
   static const defaultMinAge = {
     AgeGroup.adult: 19,
@@ -73,12 +74,12 @@ class FeeRule {
     return AgeGroup.infant;
   }
 
-  /// [on] 날짜에 신청했을 때의 기간 할인율.
-  int periodPctOn(DateTime on) {
-    final d = _day(on);
-    return periods
-        .where((p) => !d.isBefore(_day(p.from)) && !d.isAfter(_day(p.to)))
-        .fold(0, (m, p) => math.max(m, p.pct));
+  /// [start] 에 시작하는 집회에 [on] 날짜에 신청했을 때의 사전등록 할인율.
+  int earlyPctOn(DateTime on, DateTime start) {
+    final d = _nights(_day(on), _day(start));
+    return early
+        .where((e) => d <= e.fromDays && d >= e.toDays)
+        .fold(0, (m, e) => math.max(m, e.pct));
   }
 
   Map<String, dynamic> toJson() => {
@@ -88,9 +89,9 @@ class FeeRule {
     'minAge': _groupsOut(minAge),
     'perRegistration': perRegistration,
     'fullDiscountPct': fullDiscountPct,
-    'periods': [
-      for (final p in periods)
-        {'from': ymd(p.from), 'to': ymd(p.to), 'pct': p.pct},
+    'early': [
+      for (final e in early)
+        {'fromDays': e.fromDays, 'toDays': e.toDays, 'pct': e.pct},
     ],
   };
 
@@ -103,10 +104,14 @@ class FeeRule {
       minAge: {...defaultMinAge, ..._groupsIn(j['minAge'])},
       perRegistration: _int(j['perRegistration']),
       fullDiscountPct: _int(j['fullDiscountPct']),
-      periods: [
-        for (final p in (j['periods'] is List ? j['periods'] as List : []))
-          if (p is Map && _date(p['from']) != null && _date(p['to']) != null)
-            (from: _date(p['from'])!, to: _date(p['to'])!, pct: _int(p['pct'])),
+      early: [
+        for (final e in (j['early'] is List ? j['early'] as List : []))
+          if (e is Map)
+            (
+              fromDays: _int(e['fromDays']),
+              toDays: _int(e['toDays']),
+              pct: _int(e['pct']),
+            ),
       ],
     );
   }
@@ -325,7 +330,7 @@ class Registration {
   int paid;
   DateTime? paidAt;
 
-  /// 신청 시각 (한국 시간). 기간 할인 기준.
+  /// 신청 시각 (한국 시간). 사전등록 할인 기준.
   DateTime createdAt;
 
   String get applicant => people.isEmpty ? '' : people.first.name;
@@ -375,17 +380,17 @@ class QuoteLine {
 }
 
 class Quote {
-  const Quote(this.lines, this.periodPct, this.perRegistration);
+  const Quote(this.lines, this.earlyPct, this.perRegistration);
   final List<QuoteLine> lines;
-  final int periodPct;
+  final int earlyPct;
   final int perRegistration;
 
   int get subtotal => lines.fold(0, (s, l) => s + l.amount);
 
   /// 할인 후 금액의 원 미만을 버리도록 계산한다 (할인액 쪽이 올림).
-  int get periodDiscount => subtotal - subtotal * (100 - periodPct) ~/ 100;
+  int get earlyDiscount => subtotal - subtotal * (100 - earlyPct) ~/ 100;
 
-  int get total => subtotal - periodDiscount + perRegistration;
+  int get total => subtotal - earlyDiscount + perRegistration;
 
   /// "성인 2 · 중고등 1 · 유치 1"
   String get summary {
@@ -401,7 +406,7 @@ class Quote {
 }
 
 /// 신청 합계와 내역. 신청 웹·조회·관리자 화면 전부 이것 하나를 부른다.
-/// [appliedAt] = 신청일 (기간 할인 기준).
+/// [appliedAt] = 신청일 (사전등록 할인 기준).
 ///
 /// - 일정이 집회 기간 전체면 전체 참석(정액), 아니면 부분 참석(1박당 × 박수, 0박이면 당일).
 /// - 일정은 집회 기간 안으로 잘라서 본다.
@@ -443,7 +448,7 @@ Quote quote(
   final lines = people.map(line).toList();
   return Quote(
     lines,
-    lines.isEmpty ? 0 : fee.periodPctOn(appliedAt).clamp(0, 100),
+    lines.isEmpty ? 0 : fee.earlyPctOn(appliedAt, s).clamp(0, 100),
     lines.isEmpty ? 0 : fee.perRegistration,
   );
 }
@@ -459,6 +464,9 @@ const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
 /// "10-09(금)"
 String mdw(DateTime d) =>
     '${_pad2(d.month)}-${_pad2(d.day)}(${_weekdays[d.weekday - 1]})';
+
+/// [d] 의 [n]일 전 날짜.
+DateTime daysBefore(DateTime d, int n) => DateTime(d.year, d.month, d.day - n);
 
 /// "2박3일" / "당일"
 String stayLabel(int nights) => nights == 0 ? '당일' : '$nights박${nights + 1}일';

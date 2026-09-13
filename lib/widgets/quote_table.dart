@@ -15,7 +15,7 @@ class QuoteTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final extra = q.periodPct > 0 || q.perRegistration > 0;
+    final extra = q.earlyPct > 0 || q.perRegistration > 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -30,8 +30,8 @@ class QuoteTable extends StatelessWidget {
           child: Divider(),
         ),
         if (extra) _Row('소계', won(q.subtotal)),
-        if (q.periodPct > 0)
-          _Row('기간 할인 ${q.periodPct}%', '-${won(q.periodDiscount)}'),
+        if (q.earlyPct > 0)
+          _Row('사전등록 할인 ${q.earlyPct}%', '-${won(q.earlyDiscount)}'),
         if (q.perRegistration > 0)
           _Row('가족(신청 1건)당', '+${won(q.perRegistration)}'),
         _Row('합계', won(q.total), strong: true),

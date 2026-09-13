@@ -20,11 +20,13 @@ class GatheringSettingsScreen extends StatefulWidget {
       _GatheringSettingsScreenState();
 }
 
-class _Period {
-  _Period(this.from, this.to, int pct)
-    : pct = TextEditingController(text: '$pct');
-  DateTime from, to;
-  final TextEditingController pct;
+/// 사전등록 할인 한 줄의 입력칸.
+class _Early {
+  _Early(int fromDays, int toDays, int pct)
+    : fromDays = TextEditingController(text: '$fromDays'),
+      toDays = TextEditingController(text: '$toDays'),
+      pct = TextEditingController(text: '$pct');
+  final TextEditingController fromDays, toDays, pct;
 }
 
 /// 회비표의 열: 키 → 머리글.
@@ -52,7 +54,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
 
   /// '열키:구분' → 입력칸. 예: 'full:adult'
   final fee = <String, TextEditingController>{};
-  final periods = <_Period>[];
+  final early = <_Early>[];
 
   List<String> errors = [];
   bool saving = false;
@@ -91,9 +93,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         text: x.fee.dayOnly[ag]?.toString() ?? '',
       );
     }
-    periods
+    early
       ..clear()
-      ..addAll(x.fee.periods.map((p) => _Period(p.from, p.to, p.pct)));
+      ..addAll(x.fee.early.map((e) => _Early(e.fromDays, e.toDays, e.pct)));
   }
 
   void _snack(String m) =>
@@ -148,11 +150,18 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         errs.add('시작 나이 · ${ag.label}: 비워둘 수 없습니다.');
       }
     }
-    final ps = <PeriodDiscount>[];
-    for (final (i, p) in periods.indexed) {
-      final n = number(p.pct.text, '기간 할인 ${i + 1}', max: 100);
-      if (p.to.isBefore(p.from)) errs.add('기간 할인 ${i + 1}: 끝 날짜가 시작보다 빠릅니다.');
-      if (n != null) ps.add((from: p.from, to: p.to, pct: n));
+    final es = <EarlyDiscount>[];
+    for (final (i, e) in early.indexed) {
+      final label = '사전등록 할인 ${i + 1}';
+      var from = number(e.fromDays.text, label, max: 3650);
+      var to = number(e.toDays.text, label, max: 3650);
+      final pct = number(e.pct.text, label, max: 100);
+      if (from == null || to == null || pct == null) {
+        errs.add('$label: 며칠 전부터·까지와 할인율을 모두 입력하세요.');
+        continue;
+      }
+      if (from < to) (from, to) = (to, from);
+      es.add((fromDays: from, toDays: to, pct: pct));
     }
     x.fee = FeeRule(
       full: column('full'),
@@ -161,7 +170,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       minAge: {...FeeRule.defaultMinAge, ...minAge},
       perRegistration: number(perReg.text, '가족당 금액') ?? 0,
       fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
-      periods: ps,
+      early: es,
     );
     if (x.open && x.bank.isEmpty) errs.add('신청을 받으려면 입금 계좌를 입력하세요.');
     return errs;
@@ -489,40 +498,53 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      SizedBox(
-                        width: 220,
-                        child: TextField(
-                          controller: perReg,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: '가족(신청 1건)당 금액',
-                            suffixText: '원',
-                          ),
-                        ),
+                  SizedBox(
+                    width: 220,
+                    child: TextField(
+                      controller: perReg,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: '가족(신청 1건)당 금액',
+                        suffixText: '원',
                       ),
-                      SizedBox(
-                        width: 220,
-                        child: TextField(
-                          controller: fullPct,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: '전체 참석 할인율',
-                            suffixText: '%',
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 16),
+                ]),
+                _card('할인', [
                   const Text(
-                    '기간 할인 (신청일 기준, 구간이 겹치면 큰 쪽 하나)',
+                    '전체 참석 할인',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
-                  for (final (i, p) in periods.indexed)
+                  const Text(
+                    '집회 기간 전체를 참석하는 사람의 금액에만 적용합니다.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      width: 220,
+                      child: TextField(
+                        controller: fullPct,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: '할인율',
+                          suffixText: '%',
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    '사전등록 할인',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  const Text(
+                    '신청한 날이 집회 시작 며칠 전인지로 정합니다. 구간이 겹치면 큰 쪽 하나만 적용하고, '
+                    '전체 참석 할인 뒤에 합계에서 한 번 더 뺍니다.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  for (final (i, e) in early.indexed)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Wrap(
@@ -530,12 +552,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                         runSpacing: 8,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          _dateButton('부터', p.from, (d) => p.from = d),
-                          _dateButton('까지', p.to, (d) => p.to = d),
+                          const Text('집회'),
+                          _daysField(e.fromDays, '일 전부터'),
+                          _daysField(e.toDays, '일 전까지'),
                           SizedBox(
                             width: 110,
                             child: TextField(
-                              controller: p.pct,
+                              controller: e.pct,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
                                 labelText: '할인율',
@@ -543,11 +566,17 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                               ),
                             ),
                           ),
+                          Text(
+                            _earlyDates(x.start, e),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
                           IconButton(
-                            tooltip: '이 기간 할인 삭제',
+                            tooltip: '이 사전등록 할인 삭제',
                             icon: const Icon(Icons.delete_outline),
-                            onPressed: () =>
-                                setState(() => periods.removeAt(i)),
+                            onPressed: () => setState(() => early.removeAt(i)),
                           ),
                         ],
                       ),
@@ -556,19 +585,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
                       icon: const Icon(Icons.add, size: 18),
-                      label: const Text('기간 할인 추가'),
-                      onPressed: () => setState(() {
-                        final today = dateOnly(DateTime.now());
-                        final before = dateOnly(x.start)
-                            .subtract(const Duration(days: 1));
-                        periods.add(
-                          _Period(
-                            today,
-                            before.isAfter(today) ? before : today,
-                            10,
-                          ),
-                        );
-                      }),
+                      label: const Text('사전등록 할인 추가'),
+                      onPressed: () =>
+                          setState(() => early.add(_Early(30, 1, 10))),
                     ),
                   ),
                 ]),
@@ -724,6 +743,26 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
     ),
   );
+
+  Widget _daysField(TextEditingController c, String suffix) => SizedBox(
+    width: 130,
+    child: TextField(
+      controller: c,
+      keyboardType: TextInputType.number,
+      textAlign: TextAlign.right,
+      decoration: InputDecoration(suffixText: suffix),
+      onChanged: (_) => setState(() {}), // 옆의 실제 날짜 갱신
+    ),
+  );
+
+  /// "09-09(수) ~ 10-08(목) 신청분". 숫자가 아니면 빈칸.
+  String _earlyDates(DateTime start, _Early e) {
+    final a = int.tryParse(e.fromDays.text.trim());
+    final b = int.tryParse(e.toDays.text.trim());
+    if (a == null || b == null) return '';
+    final (from, to) = a >= b ? (a, b) : (b, a);
+    return '${mdw(daysBefore(start, from))} ~ ${mdw(daysBefore(start, to))} 신청분';
+  }
 
   Widget _dateButton(
     String label,

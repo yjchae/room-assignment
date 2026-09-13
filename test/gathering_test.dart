@@ -33,7 +33,7 @@ Gathering sample() => Gathering(
     minAge: {...FeeRule.defaultMinAge, AgeGroup.adult: 20},
     perRegistration: 10000,
     fullDiscountPct: 5,
-    periods: [(from: DateTime(2026, 9, 1), to: DateTime(2026, 9, 20), pct: 10)],
+    early: [(fromDays: 38, toDays: 19, pct: 10)],
   ),
 );
 
@@ -83,7 +83,7 @@ void main() {
       expect(back.deadline, DateTime(2026, 9, 30));
       expect(back.formFields, ['교회']);
       expect(back.fee.minAge[AgeGroup.adult], 20);
-      expect(back.fee.periods.single.pct, 10);
+      expect(back.fee.early.single, (fromDays: 38, toDays: 19, pct: 10));
       final family = [
         person('아빠', 1985),
         person('딸', 2012),
@@ -102,13 +102,11 @@ void main() {
         'end_date': '2026-01-03',
         'fee': {
           'full': {'adult': 1000, 'alien': 5},
-          'periods': [
-            {'from': 'bad', 'to': '2026-01-01', 'pct': 5},
-          ],
+          'early': ['bad'],
         },
       });
       expect(g.fee.full, {AgeGroup.adult: 1000});
-      expect(g.fee.periods, isEmpty);
+      expect(g.fee.early, isEmpty);
       expect(g.fee.minAge, FeeRule.defaultMinAge);
       expect(g.bank.isEmpty, isTrue);
       expect(g.open, isFalse);
