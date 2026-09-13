@@ -1,6 +1,7 @@
 // 화면이 "그려지기는 하는지"만 보는 최소 테스트.
 // flutter analyze 는 Material(shape + borderRadius 동시 지정) 같은 런타임 assert 를
 // 못 잡는다. 실제로 한 번 pump 해봐야 걸린다.
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,7 +88,7 @@ void main() {
     await pump(tester, const AssignScreen());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    // 타일은 66px 고정이라 그룹 이름은 툴팁으로 보여준다.
+    // 타일 높이가 고정이라 그룹 이름은 툴팁으로 보여준다.
     final tips = tester
         .widgetList<Tooltip>(find.byType(Tooltip))
         .map((t) => t.message ?? '')
@@ -508,6 +509,46 @@ void main() {
     expect(find.byType(LongPressDraggable<Room>), findsNWidgets(2));
     expect(find.byType(Draggable<Room>), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('체크한 사람 하나를 방에 끌어다 놓으면 체크한 사람 전부가 그 방으로 간다', (tester) async {
+    const names = ['가철수', '나영희', '다민수'];
+    store.event.rooms.first.note = '2층 침대';
+    store.event.attendees.addAll([
+      for (final n in names)
+        Attendee(
+          id: n,
+          name: n,
+          gender: 'F',
+          age: 30,
+          checkIn: DateTime(2026, 1, 1),
+          checkOut: DateTime(2026, 1, 4),
+        ),
+    ]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    expect(find.text('2층 침대'), findsOneWidget); // 방 기타가 타일에 보인다
+
+    for (final n in names.take(2)) {
+      await tester.tap(find.text(n));
+      await tester.pump();
+    }
+    final row = find.ancestor(
+      of: find.text('가철수'),
+      matching: find.byType(Draggable<List<Attendee>>),
+    );
+    await tester.drag(
+      row,
+      tester.getCenter(tile('301')) - tester.getCenter(row),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      store.event.attendees.where((a) => a.roomId == 'r301').map((a) => a.name),
+      unorderedEquals(names.take(2)),
+    );
+    expect(find.text('선택 0명'), findsOneWidget);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('옮겨 놓은 자리는 현황 화면에서도 그대로다', (tester) async {
     tester.view.physicalSize = const Size(1400, 900);

@@ -14,7 +14,8 @@ const _minTile = 74.0;
 /// 창이 아주 넓을 때 타일이 흉하게 늘어나는 걸 막는다.
 const _maxTile = 150.0;
 
-const _tileHeight = 66.0;
+/// 호수 · 기타 한 줄 · 인원/막대가 들어가는 높이.
+const _tileHeight = 76.0;
 
 /// 층 격자의 기본 칸 수. 방 자리(slot)가 이 폭을 기준으로 매겨지므로
 /// 보드를 그리는 쪽과 자리를 옮기는 쪽이 같은 값을 봐야 한다.
@@ -45,13 +46,15 @@ class RoomTile extends StatelessWidget {
     final st = statusOf(used: used, capacity: room.capacity);
     // 좁은 타일에서는 상태 글자를 빼고 색·숫자만 남긴다.
     final showLabel = width >= 92;
-    // 타일은 66px 고정이라 그룹 이름을 넣을 자리가 없다. 대신 올려두면 보이게 한다.
+    // 타일 높이가 고정이라 그룹 이름을 넣을 자리가 없다. 대신 올려두면 보이게 한다.
     final groups = store.groupSummary(room);
+    final note = room.note ?? '';
 
     return Tooltip(
       message:
           '${room.label}호  $used/${room.capacity}  ${st.label}'
-          '\n${groups.isEmpty ? '비어 있음' : groups}',
+          '\n${groups.isEmpty ? '비어 있음' : groups}'
+          '${note.isEmpty ? '' : '\n$note'}',
       waitDuration: const Duration(milliseconds: 400),
       child: SizedBox(
         width: width,
@@ -99,7 +102,23 @@ class RoomTile extends StatelessWidget {
                         GenderBadge(room.gender!, dense: true),
                     ],
                   ),
-                  const Spacer(),
+                  // 방 관리의 [기타]. 길면 잘리고 전체는 툴팁에 나온다.
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        note,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          height: 1.2,
+                          fontWeight: FontWeight.w600,
+                          color: st.ink.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
+                  ),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.baseline,
                     textBaseline: TextBaseline.alphabetic,
@@ -190,6 +209,7 @@ class RoomBoard extends StatelessWidget {
     this.emptyMessage = '방이 없습니다.',
     this.editingLayout = false,
     this.onMove,
+    this.onDropPeople,
   });
 
   final List<Room> rooms;
@@ -207,6 +227,9 @@ class RoomBoard extends StatelessWidget {
 
   /// 드롭됐을 때. [slot] 은 그 방이 속한 층 격자에서 0부터 세는 칸 번호.
   final void Function(Room room, int slot)? onMove;
+
+  /// 참석자를 방 타일에 끌어다 놓았을 때. 자리 옮기기 모드에서는 받지 않는다.
+  final void Function(Room room, List<Attendee> people)? onDropPeople;
 
   @override
   Widget build(BuildContext context) {
@@ -299,6 +322,14 @@ class RoomBoard extends StatelessWidget {
           );
 
     if (!editingLayout || onMove == null) {
+      if (room != null && onDropPeople != null) {
+        return _DropSlot<List<Attendee>>(
+          width: w,
+          accepts: (people) => people.isNotEmpty,
+          onAccept: (people) => onDropPeople!(room, people),
+          child: tile,
+        );
+      }
       return SizedBox(
         width: w,
         height: _tileHeight,
@@ -306,7 +337,7 @@ class RoomBoard extends StatelessWidget {
       );
     }
 
-    final target = _DropSlot(
+    final target = _DropSlot<Room>(
       width: w,
       // 건물·층마다 자리 번호가 따로라 다른 건물·층 방은 받지 않는다.
       accepts: (r) =>
@@ -342,8 +373,8 @@ class RoomBoard extends StatelessWidget {
   }
 }
 
-/// 옮기기 모드에서 방 하나가 놓일 수 있는 칸.
-class _DropSlot extends StatelessWidget {
+/// 끌어온 것(옮기는 방, 또는 배정할 참석자들)이 놓일 수 있는 칸.
+class _DropSlot<T extends Object> extends StatelessWidget {
   const _DropSlot({
     required this.width,
     required this.accepts,
@@ -352,13 +383,13 @@ class _DropSlot extends StatelessWidget {
   });
 
   final double width;
-  final bool Function(Room) accepts;
-  final void Function(Room) onAccept;
+  final bool Function(T) accepts;
+  final void Function(T) onAccept;
   final Widget? child;
 
   @override
   Widget build(BuildContext context) {
-    return DragTarget<Room>(
+    return DragTarget<T>(
       onWillAcceptWithDetails: (d) => accepts(d.data),
       onAcceptWithDetails: (d) => onAccept(d.data),
       builder: (context, candidate, _) {

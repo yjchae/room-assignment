@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -230,7 +231,8 @@ class _AssignScreenState extends State<AssignScreen> {
                 : ListView.separated(
                     itemCount: filtered.length,
                     separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, i) => _attendeeRow(filtered[i]),
+                    itemBuilder: (context, i) =>
+                        _attendeeRow(filtered[i], chosen),
                   ),
           ),
         ],
@@ -238,9 +240,33 @@ class _AssignScreenState extends State<AssignScreen> {
     );
   }
 
-  Widget _attendeeRow(Attendee a) {
-    final room = store.roomById(a.roomId);
+  /// 참석자 한 줄. 끌어서 방 타일에 놓으면 바로 배정된다 —
+  /// 체크된 사람을 끌면 체크된 사람 전부가, 아니면 이 사람만 딸려간다.
+  Widget _attendeeRow(Attendee a, List<Attendee> chosen) {
     final on = selected.contains(a.id);
+    final people = on ? chosen : [a];
+    final row = _attendeeRowBody(a, on);
+    final ghost = _DragChip(people);
+    // 태블릿은 길게 눌러야 끌린다 — 바로 끌리면 목록을 스크롤하려던 손가락이 사람을 끈다.
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.iOS ||
+      TargetPlatform.android => LongPressDraggable<List<Attendee>>(
+        data: people,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: ghost,
+        child: row,
+      ),
+      _ => Draggable<List<Attendee>>(
+        data: people,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: ghost,
+        child: row,
+      ),
+    };
+  }
+
+  Widget _attendeeRowBody(Attendee a, bool on) {
+    final room = store.roomById(a.roomId);
     final sub = [
       if ((a.zone ?? '').isNotEmpty) '존 ${a.zone}',
       if ((a.cell ?? '').isNotEmpty) '셀 ${a.cell}',
@@ -348,6 +374,8 @@ class _AssignScreenState extends State<AssignScreen> {
                   onLongPress: (r) => showRoomOccupants(context, r),
                   emptyMessage: '방이 없습니다. [방 관리]에서 먼저 만들어 주세요.',
                   editingLayout: editingLayout,
+                  onDropPeople: (room, people) =>
+                      _assignToRooms(people, [room], confirm: false),
                   onMove: (room, slot) {
                     store.moveRoom(room, slot, cols: boardColumns);
                     setState(() {});
@@ -435,6 +463,14 @@ class _AssignScreenState extends State<AssignScreen> {
                     color: AppColors.brand,
                   ),
                 ),
+              if ((room.note ?? '').isNotEmpty)
+                Text(
+                  room.note!,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
             ],
           ),
         ),
@@ -499,7 +535,7 @@ class _AssignScreenState extends State<AssignScreen> {
                 : () => setState(selectedRooms.clear),
           ),
           FilledButton.icon(
-            onPressed: ready ? () => _assignToRooms(chosen) : null,
+            onPressed: ready ? () => _assignToRooms(chosen, picked) : null,
             icon: const Icon(Icons.login, size: 18),
             label: Text('${chosen.length}명 → ${picked.length}개 방 배정'),
           ),
@@ -582,7 +618,8 @@ class _AssignScreenState extends State<AssignScreen> {
             Text(
               editingLayout
                   ? '타일을 끌어서 실제 건물 자리로 옮기세요 · 다른 방 위에 놓으면 서로 바뀝니다'
-                  : '클릭=선택 · Shift+클릭=사이 방까지 한 번에 · 길게 누르면 인원 목록',
+                  : '클릭=선택 · Shift+클릭=사이 방까지 한 번에 · 길게 누르면 인원 목록'
+                        ' · 왼쪽 인원을 방에 끌어다 놓으면 바로 배정',
               style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ],
@@ -703,10 +740,12 @@ class _AssignScreenState extends State<AssignScreen> {
 
   /// 선택한 인원을 선택한 여러 방에 호수 순으로 채운다.
   /// 어디에 몇 명이 들어가는지 먼저 보여주고 확인받는다.
-  Future<void> _assignToRooms(List<Attendee> chosen) async {
-    final rooms = store.event.rooms
-        .where((r) => selectedRooms.contains(r.id))
-        .toList();
+  /// [confirm] 이 false 면(끌어다 놓기) 요약 확인은 건너뛴다. 자리가 모자라면 그래도 묻는다.
+  Future<void> _assignToRooms(
+    List<Attendee> chosen,
+    List<Room> rooms, {
+    bool confirm = true,
+  }) async {
     if (rooms.isEmpty) return;
 
     var plan = distribute(store.event, chosen, rooms);
@@ -752,44 +791,56 @@ class _AssignScreenState extends State<AssignScreen> {
     final lines = byRoom.entries.map((e) => '${e.key}호  ${e.value}명').toList()
       ..sort();
     if (!mounted) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('${plan.assignments.length}명 배정'),
-        content: SizedBox(
-          width: 320,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (overflow)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '정원을 넘겨 배정합니다.',
-                    style: TextStyle(color: AppColors.danger),
+    final ok =
+        !confirm ||
+        await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: Text('${plan.assignments.length}명 배정'),
+                content: SizedBox(
+                  width: 320,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (overflow)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            '정원을 넘겨 배정합니다.',
+                            style: TextStyle(color: AppColors.danger),
+                          ),
+                        ),
+                      for (final l in lines) Text(l),
+                    ],
                   ),
                 ),
-              for (final l in lines) Text(l),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('배정'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('취소'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('배정'),
+                  ),
+                ],
+              ),
+            ) ==
+            true;
+    if (!ok) return;
 
     applyAssignments(plan.assignments);
     store.commit();
+    if (!confirm && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${plan.assignments.length}명 → ${rooms.first.label}호 배정',
+          ),
+        ),
+      );
+    }
     // 배정된 사람은 체크를 푼다. 자리가 모자라 못 들어간 사람은 체크된 채로 남겨
     // 다른 방을 골라 바로 이어서 배정할 수 있게 한다.
     if (mounted) {
@@ -897,6 +948,31 @@ class _CountPill extends StatelessWidget {
             onPressed: onClear,
           ),
       ],
+    ),
+  );
+}
+
+/// 참석자를 끌 때 손끝에 붙는 이름표.
+class _DragChip extends StatelessWidget {
+  const _DragChip(this.people);
+  final List<Attendee> people;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: AppColors.brand,
+    borderRadius: BorderRadius.circular(999),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Text(
+        people.length == 1
+            ? people.first.name
+            : '${people.first.name} 외 ${people.length - 1}명',
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: AppColors.surface,
+        ),
+      ),
     ),
   );
 }
