@@ -166,6 +166,36 @@ class Remote {
     );
   }
 
+  // --- 방배정 (운영자) --------------------------------------------------------
+
+  /// 집회의 방배정 문서와 그 버전. 아직 저장한 적 없으면 null.
+  Future<({Map<String, dynamic> data, int version})?> roomPlan(
+    String gatheringId,
+  ) async {
+    final r = await _db
+        .from('room_plans')
+        .select('data, version')
+        .eq('gathering_id', gatheringId)
+        .maybeSingle();
+    return r == null
+        ? null
+        : (
+            data: Map<String, dynamic>.from(r['data'] as Map),
+            version: (r['version'] as num).toInt(),
+          );
+  }
+
+  /// 방배정 저장. [version] = 마지막으로 읽은 버전(서버에 아직 없으면 0). 새 버전을 돌려준다.
+  /// 그사이 다른 기기가 저장했으면 CONFLICT 에러 ([isConflict]).
+  Future<int> saveRoomPlan(
+    String gatheringId,
+    Map<String, dynamic> data,
+    int version,
+  ) async => ((await _db.rpc(
+    'save_room_plan',
+    params: {'p_gathering': gatheringId, 'p_data': data, 'p_version': version},
+  )) as num).toInt();
+
   // --- 신청 (신청자, 로그인 없음) ----------------------------------------------
 
   /// 신청하고 신청 id 를 돌려준다.
@@ -254,15 +284,22 @@ class RemoteError implements Exception {
   String toString() => message;
 }
 
+/// 서버 에러의 원문 메시지.
+String _raw(Object e) => switch (e) {
+  PostgrestException(:final message) => message,
+  AuthException(:final message) => message,
+  RemoteError(:final message) => message,
+  _ => '$e',
+};
+
+/// 다른 기기가 먼저 저장해서 거절됐는가 ([Remote.saveRoomPlan]).
+bool isConflict(Object e) => _raw(e).contains('CONFLICT');
+
 /// 서버 에러 → 화면에 보일 문장. 서버 함수가 던지는 코드는 supabase/schema.sql 맨 위 참고.
 String errorText(Object e) {
-  final raw = switch (e) {
-    PostgrestException(:final message) => message,
-    AuthException(:final message) => message,
-    RemoteError(:final message) => message,
-    _ => '$e',
-  };
+  final raw = _raw(e);
   const known = {
+    'CONFLICT': '다른 기기에서 먼저 저장했습니다. 집회를 다시 열어 최신 내용을 불러오세요.',
     'CLOSED': '지금은 신청을 받지 않습니다.',
     'INVALID_PHONE': '휴대폰번호를 확인하세요. (010으로 시작하는 숫자)',
     'INVALID_PIN': 'PIN은 숫자 4자리입니다.',

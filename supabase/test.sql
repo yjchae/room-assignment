@@ -114,6 +114,8 @@ select t.err('select * from public.admins', 'permission denied');
 select t.err($q$select public._verify('00000000-0000-0000-0000-000000000001', '01012345678', '1234')$q$, 'permission denied');
 select t.err($q$select public.reset_pin(gen_random_uuid(), '0000')$q$, 'permission denied');
 select t.err($q$insert into public.admins values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
+select t.err('select * from public.room_plans', 'permission denied');
+select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'permission denied');
 
 -- 조회
 select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000001', '010-1234-5678', '1234') ->> 'status' = 'pending',
@@ -161,6 +163,9 @@ select t.ok((select count(*) from public.registrations) = 0, '운영자가 아�
 select t.err($q$insert into public.gatherings (name, start_date, end_date) values ('x', '2026-01-01', '2026-01-02')$q$, 'row-level security');
 select t.err($q$select public.reset_pin(gen_random_uuid(), '0000')$q$, 'FORBIDDEN');
 select t.err($q$insert into storage.objects (bucket_id, name) values ('gathering-images', 'x.jpg')$q$, 'row-level security');
+select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'FORBIDDEN');
+select t.err($q$insert into public.room_plans (gathering_id, data) values ('00000000-0000-0000-0000-000000000001', '{}')$q$,
+             'row-level security');
 do $$ begin
   update public.registrations set status = 'confirmed';
   perform t.ok(not found, '운영자가 아니면 신청을 못 고친다');
@@ -178,6 +183,15 @@ update public.registrations set status = 'confirmed', paid = 445000, paid_at = c
 update public.gatherings set notice = '준비물: 성경' where id = '00000000-0000-0000-0000-000000000001';
 insert into storage.objects (bucket_id, name) values ('gathering-images', 'g1/poster-1.jpg');
 select public.reset_pin(id, '4444') from public.registrations where phone = '01099998888';
+
+-- 방배정: 읽은 버전으로만 저장된다 (두 기기가 동시에 고치면 늦은 쪽이 CONFLICT)
+select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001', '{"rooms":[]}', 0) = 1,
+  '방배정 첫 저장 = 버전 1');
+select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'CONFLICT');
+select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001', '{"rooms":[1]}', 1) = 2,
+  '읽은 버전으로 저장하면 버전이 오른다');
+select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 1)$q$, 'CONFLICT');
+select t.ok((select data from public.room_plans) = '{"rooms":[1]}', '늦게 온 저장은 덮어쓰지 않는다');
 
 -- ===========================================================================
 -- 다시 신청자: 확정 후엔 못 고치고, 운영자가 PIN 을 바꾸면 잠금이 풀린다

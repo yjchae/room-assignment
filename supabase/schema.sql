@@ -8,11 +8,12 @@
 --   gatherings      누구나 읽기 / 운영자만 쓰기
 --   registrations   신청자는 테이블에 직접 못 닿는다 — 아래 submit/lookup/update/cancel 함수로만.
 --                   운영자는 전부.
+--   room_plans      운영자만. 집회별 방배정(방·참석자·배정) 문서. 저장은 save_room_plan — 버전 검사.
 --   운영자 = auth.users 에 있고 public.admins 에도 있는 사람. 공개 회원가입은 대시보드에서 끈다.
 --
 -- 함수가 던지는 에러 메시지(앱이 이 문자열로 안내 문구를 고른다)
 --   CLOSED  INVALID_PHONE  INVALID_PIN  INVALID_PEOPLE  INVALID_TEXT  INVALID_QUOTED
---   ALREADY_REGISTERED  TOO_MANY_ATTEMPTS  NOT_EDITABLE  FORBIDDEN  NOT_FOUND
+--   ALREADY_REGISTERED  TOO_MANY_ATTEMPTS  NOT_EDITABLE  FORBIDDEN  NOT_FOUND  CONFLICT
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -58,7 +59,7 @@ create table if not exists public.registrations (
   paid int not null default 0,
   paid_at date,
   admin_memo text,                           -- 신청자에게는 안 보인다
-  created_at timestamptz not null default now(),  -- 기간 할인 기준. 앱이 못 바꾼다
+  created_at timestamptz not null default now(),  -- 사전등록 할인 기준. 앱이 못 바꾼다
   updated_at timestamptz not null default now()
 );
 
@@ -72,6 +73,14 @@ create table if not exists public.lookup_failures (
   at timestamptz not null default now()
 );
 create index if not exists lookup_failures_phone_at on public.lookup_failures (phone, at);
+
+-- 방배정. 집회 하나 = 문서 하나 (lib/models.dart 의 Event JSON). 여러 PC·태블릿이 같은 문서를 연다.
+create table if not exists public.room_plans (
+  gathering_id uuid primary key references public.gatherings on delete cascade,
+  data jsonb not null,
+  version int not null default 1,            -- 저장할 때마다 +1. 동시 수정 검사용
+  updated_at timestamptz not null default now()
+);
 
 create or replace function public._touch() returns trigger
 language plpgsql set search_path = '' as $$
@@ -97,6 +106,7 @@ alter table public.admins enable row level security;           -- 정책 없음 
 alter table public.gatherings enable row level security;
 alter table public.registrations enable row level security;
 alter table public.lookup_failures enable row level security;  -- 정책 없음
+alter table public.room_plans enable row level security;
 
 drop policy if exists "누구나 읽기" on public.gatherings;
 create policy "누구나 읽기" on public.gatherings
@@ -110,12 +120,18 @@ drop policy if exists "운영자만" on public.registrations;
 create policy "운영자만" on public.registrations
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
+drop policy if exists "운영자만" on public.room_plans;
+create policy "운영자만" on public.room_plans
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
 -- 테이블 권한을 명시한다. Supabase 의 "새 테이블 자동 공개" 설정이 켜져 있든 꺼져 있든 같게 동작하도록.
-revoke all on public.admins, public.gatherings, public.registrations, public.lookup_failures
+revoke all on public.admins, public.gatherings, public.registrations, public.lookup_failures,
+  public.room_plans
   from anon, authenticated;
 grant select on public.gatherings to anon, authenticated;
 grant insert, update, delete on public.gatherings to authenticated;
 grant select, insert, update, delete on public.registrations to authenticated;  -- RLS 가 운영자로 제한
+grant select, insert, update on public.room_plans to authenticated;  -- RLS 가 운영자로 제한. 저장은 save_room_plan 으로
 
 -- ---------------------------------------------------------------------------
 -- 내부 함수 (API 로 못 부른다)
@@ -281,13 +297,37 @@ begin
   delete from public.lookup_failures where phone = ph;
 end $$;
 
+-- 방배정 저장. p_version = 마지막으로 읽은 버전(서버에 아직 없으면 0). 성공하면 새 버전.
+-- 그사이 다른 기기가 저장했으면 CONFLICT — 앱은 덮어쓰지 않고 최신 문서를 다시 읽는다.
+create or replace function public.save_room_plan(p_gathering uuid, p_data jsonb, p_version int)
+returns int
+language plpgsql set search_path = '' as $$
+declare
+  v int;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if p_version = 0 then
+    insert into public.room_plans (gathering_id, data) values (p_gathering, p_data)
+    on conflict (gathering_id) do nothing
+    returning version into v;
+  else
+    update public.room_plans
+       set data = p_data, version = version + 1, updated_at = now()
+     where gathering_id = p_gathering and version = p_version
+    returning version into v;
+  end if;
+  if v is null then raise exception 'CONFLICT'; end if;
+  return v;
+end $$;
+
 -- 함수 실행 권한도 명시한다 (Postgres 기본값은 "누구나 실행 가능").
 revoke execute on function
   public._touch(),
   public._assert_open(uuid),
   public._check_input(jsonb, text, text, int),
   public._verify(uuid, text, text),
-  public.reset_pin(uuid, text)
+  public.reset_pin(uuid, text),
+  public.save_room_plan(uuid, jsonb, int)
   from public, anon, authenticated;
 
 grant execute on function
@@ -298,7 +338,10 @@ grant execute on function
   public.cancel_registration(uuid, text, text)
   to anon, authenticated;
 
-grant execute on function public.reset_pin(uuid, text) to authenticated;
+grant execute on function
+  public.reset_pin(uuid, text),
+  public.save_room_plan(uuid, jsonb, int)
+  to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 이미지 저장소 — 누구나 보기(공개 버킷) / 운영자만 올리기·지우기

@@ -27,6 +27,12 @@ class FakeRemote extends Remote {
   String? get adminEmail => admin ? 'admin@test' : null;
 
   @override
+  Future<void> signIn(String email, String password) async {
+    if (password != 'pw') throw const RemoteError('Invalid login credentials');
+    admin = true;
+  }
+
+  @override
   Future<List<Gathering>> gatherings() async => [for (final g in gs) g.copy()];
 
   @override
@@ -397,6 +403,25 @@ void main() {
   });
 
   group('관리자 화면', () {
+    testWidgets('첫 화면: 로그인 전엔 로그인, 틀리면 칸 옆에 안내, 맞으면 집회 목록', (tester) async {
+      fake.admin = false;
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Gate());
+      expect(find.text('신촌하나교회 가족수양회'), findsNothing);
+
+      await tester.enterText(find.widgetWithText(TextField, '이메일'), 'a@test');
+      await tester.enterText(find.widgetWithText(TextField, '비밀번호'), 'x');
+      await tester.tap(find.widgetWithText(FilledButton, '로그인'));
+      await tester.pumpAndSettle();
+      expect(find.text('이메일 또는 비밀번호가 다릅니다.'), findsOneWidget);
+
+      await tester.enterText(find.widgetWithText(TextField, '비밀번호'), 'pw');
+      await tester.tap(find.widgetWithText(FilledButton, '로그인'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('신촌하나교회 가족수양회'), findsOneWidget);
+    });
+
     testWidgets('집회 목록: 서버 집회가 카드로 보인다', (tester) async {
       setView(tester, const Size(1400, 900));
       await pumpPage(tester, const GatheringsScreen());

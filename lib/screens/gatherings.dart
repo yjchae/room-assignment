@@ -4,88 +4,119 @@ import '../gathering.dart';
 import '../main.dart';
 import '../models.dart';
 import '../remote.dart';
-import '../store.dart';
 import '../theme.dart';
 
 /// 운영자 로그인/로그아웃이 일어날 때마다 올라간다. 서버 탭들이 이걸 보고 다시 그린다.
 final signInCount = ValueNotifier<int>(0);
 
-/// 운영자로 로그인돼 있으면 true. 아니면 로그인 창을 띄운다.
+/// 운영자로 로그인돼 있으면 true. 아니면(로그인이 풀렸으면) 로그인 창을 띄운다.
 Future<bool> ensureAdmin(BuildContext context) async {
   if (remote.signedIn) return true;
-  final email = TextEditingController();
-  final pw = TextEditingController();
-  String? err;
-  var busy = false;
   final ok = await showDialog<bool>(
     context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setLocal) {
-        Future<void> go() async {
-          setLocal(() {
-            busy = true;
-            err = null;
-          });
-          try {
-            await remote.signIn(email.text, pw.text);
-            if (context.mounted) Navigator.pop(context, true);
-          } catch (e) {
-            setLocal(() {
-              busy = false;
-              err = errorText(e);
-            });
-          }
-        }
-
-        return AlertDialog(
-          title: const Text('운영자 로그인'),
-          content: SizedBox(
-            width: 340,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  '집회 설정과 신청·입금 관리는 운영자 계정이 필요합니다. 한 번 로그인하면 이 PC에서 유지됩니다.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: email,
-                  autofocus: true,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: '이메일'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: pw,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: '비밀번호',
-                    errorText: err,
-                    errorMaxLines: 3,
-                  ),
-                  onSubmitted: (_) => busy ? null : go(),
-                ),
-              ],
+    builder: (context) => AlertDialog(
+      title: const Text('운영자 로그인'),
+      content: SizedBox(
+        width: 340,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '로그인이 풀렸습니다. 다시 로그인하세요.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
-            ),
-            FilledButton(
-              onPressed: busy ? null : go,
-              child: Text(busy ? '확인 중…' : '로그인'),
-            ),
+            const SizedBox(height: 12),
+            LoginForm(onDone: () => Navigator.pop(context, true)),
           ],
-        );
-      },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('취소'),
+        ),
+      ],
     ),
   );
   if (ok == true) signInCount.value++;
   return ok == true;
+}
+
+/// 운영자 이메일·비밀번호 입력. 로그인되면 [onDone]. 첫 화면과 로그인 창이 같이 쓴다.
+class LoginForm extends StatefulWidget {
+  const LoginForm({super.key, required this.onDone});
+  final VoidCallback onDone;
+
+  @override
+  State<LoginForm> createState() => _LoginFormState();
+}
+
+class _LoginFormState extends State<LoginForm> {
+  final email = TextEditingController();
+  final pw = TextEditingController();
+  String? err;
+  bool busy = false;
+
+  @override
+  void dispose() {
+    email.dispose();
+    pw.dispose();
+    super.dispose();
+  }
+
+  Future<void> _go() async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      err = null;
+    });
+    try {
+      await remote.signIn(email.text, pw.text);
+      widget.onDone();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          busy = false;
+          err = errorText(e);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AutofillGroup(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: email,
+          autofocus: true,
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email],
+          decoration: const InputDecoration(labelText: '이메일'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: pw,
+          obscureText: true,
+          autofillHints: const [AutofillHints.password],
+          decoration: InputDecoration(
+            labelText: '비밀번호',
+            errorText: err,
+            errorMaxLines: 3,
+          ),
+          onSubmitted: (_) => _go(),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: busy ? null : _go,
+          child: Text(busy ? '확인 중…' : '로그인'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// 앱바의 운영자 계정 버튼. 로그인 전엔 [운영자 로그인], 후엔 이메일 + 로그아웃 메뉴.
@@ -109,6 +140,10 @@ class AdminButton extends StatelessWidget {
         onSelected: (_) async {
           await remote.signOut();
           signInCount.value++;
+          // 집회 탭 화면에서 로그아웃해도 첫 화면(로그인)으로 돌아간다.
+          if (context.mounted) {
+            Navigator.of(context).popUntil((r) => r.isFirst);
+          }
         },
         itemBuilder: (_) => const [
           PopupMenuItem(value: 'out', child: Text('로그아웃')),
@@ -133,17 +168,20 @@ class AdminButton extends StatelessWidget {
   );
 }
 
-/// 집회 하나를 열어 탭 화면(Shell)으로 들어간다. [g] 가 null 이면 서버 없이 방배정만.
-Future<void> openGathering(
-  BuildContext context,
-  String id,
-  Gathering? g,
-  Event fallback,
-) async {
-  await store.open(id, fallback);
+/// 집회 하나를 열어 탭 화면(Shell)으로 들어간다. 방배정은 서버에서 읽고, 없으면 빈 채로 시작한다.
+Future<void> openGathering(BuildContext context, Gathering g) async {
+  await store.open(
+    g.id,
+    Event(
+      name: g.name,
+      startDate: dateOnly(g.start),
+      endDate: dateOnly(g.end),
+      customFields: [...g.formFields],
+    ),
+  );
   current.value = g;
-  if (g != null) store.applyGathering(g);
-  tabIndex.value = g == null ? assignTab : settingsTab;
+  store.applyGathering(g);
+  tabIndex.value = settingsTab;
   if (!context.mounted) return;
   await Navigator.of(context)
       .push(MaterialPageRoute(builder: (_) => const Shell()));
@@ -161,16 +199,10 @@ class GatheringsScreen extends StatefulWidget {
 class _GatheringsScreenState extends State<GatheringsScreen> {
   bool loading = true;
 
-  /// 서버를 못 읽은 이유. null 이 아니면 이 PC 의 파일만 보여준다.
+  /// 서버를 못 읽은 이유.
   String? error;
   List<Gathering> list = [];
   Map<String, ({int total, int confirmed})> counts = {};
-
-  /// 이 PC 에 방배정 파일이 있는 집회.
-  Map<String, Event> local = {};
-
-  /// 집회 목록이 생기기 전 버전의 방배정 파일.
-  Event? legacy;
 
   @override
   void initState() {
@@ -190,8 +222,6 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       loading = true;
       error = null;
     });
-    // 이 PC 의 파일은 따로 읽는다 — 서버 목록이 파일 읽기를 기다리지 않게.
-    _loadLocal();
     try {
       list = await remote.gatherings();
       counts = remote.signedIn ? await remote.registrationCounts() : {};
@@ -202,32 +232,11 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
     if (mounted) setState(() => loading = false);
   }
 
-  Future<void> _loadLocal() async {
-    try {
-      final l = await Store.localEvents();
-      final old = await Store.legacyEvent();
-      if (mounted) {
-        setState(() {
-          local = l;
-          legacy = old;
-        });
-      }
-    } catch (_) {
-      // 파일 폴더를 못 읽는 환경. 서버 목록만 보여준다.
-    }
-  }
-
   void _snack(String m) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
-  Future<void> _open(String id, Gathering? g, [Event? localEvent]) async {
-    final fallback = Event(
-      name: g?.name ?? localEvent?.name ?? '집회',
-      startDate: dateOnly(g?.start ?? localEvent?.startDate ?? DateTime.now()),
-      endDate: dateOnly(g?.end ?? localEvent?.endDate ?? DateTime.now()),
-      customFields: [...?g?.formFields],
-    );
-    await openGathering(context, id, g, fallback);
+  Future<void> _open(Gathering g) async {
+    await openGathering(context, g);
     if (mounted) _load();
   }
 
@@ -313,40 +322,15 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       final g = await remote.saveGathering(
         Gathering(name: name.text.trim(), start: start, end: end),
       );
-      if (mounted) await _open(g.id, g);
+      if (mounted) await _open(g);
     } catch (e) {
       _snack(errorText(e));
-    }
-  }
-
-  Future<void> _adoptLegacy() async {
-    final e = legacy!;
-    if (!await ensureAdmin(context)) return;
-    try {
-      final g = await remote.saveGathering(
-        Gathering(
-          name: e.name,
-          start: e.startDate,
-          end: e.endDate,
-          formFields: [...e.customFields],
-        ),
-      );
-      await Store.adoptLegacy(g.id);
-      await _load();
-      _snack('기존 방배정 데이터를 "${g.name}" 집회로 옮겼습니다.');
-    } catch (err) {
-      _snack(errorText(err));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final offline = error != null;
-    final serverIds = {for (final g in list) g.id};
-    final localOnly = [
-      for (final e in local.entries)
-        if (!serverIds.contains(e.key)) e,
-    ];
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 20,
@@ -376,28 +360,16 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                 if (offline)
                   _Banner(
                     icon: Icons.cloud_off_outlined,
-                    text:
-                        '$error\n이 PC에 저장된 집회만 보여줍니다. 방배정은 계속 할 수 있고, '
-                        '집회 설정·신청 관리는 연결된 뒤에 됩니다.',
-                  ),
-                if (legacy != null)
-                  _Banner(
-                    icon: Icons.inventory_2_outlined,
-                    text:
-                        '이전 버전의 방배정 데이터가 있습니다: ${legacy!.name} '
-                        '(${ymd(legacy!.startDate)} ~ ${ymd(legacy!.endDate)}, '
-                        '참석자 ${legacy!.attendees.length}명)',
-                    action: FilledButton(
-                      onPressed: offline ? null : _adoptLegacy,
-                      child: const Text('집회로 등록'),
+                    text: '$error\n연결되면 [새로고침]을 누르세요.',
+                    action: OutlinedButton(
+                      onPressed: _load,
+                      child: const Text('새로고침'),
                     ),
                   ),
-                if (list.isEmpty && localOnly.isEmpty)
-                  EmptyNotice(
+                if (list.isEmpty && !offline)
+                  const EmptyNotice(
                     icon: Icons.event_note_outlined,
-                    text: offline
-                        ? '이 PC에 저장된 집회가 없습니다.'
-                        : '아직 집회가 없습니다. [새 집회]로 시작하세요.',
+                    text: '아직 집회가 없습니다. [새 집회]로 시작하세요.',
                   ),
                 Wrap(
                   spacing: 16,
@@ -420,15 +392,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                               AppColors.brand,
                             ),
                         ],
-                        onTap: () => _open(g.id, g),
-                      ),
-                    for (final e in localOnly)
-                      _GatheringCard(
-                        name: e.value.name,
-                        dates:
-                            '${ymd(e.value.startDate)} ~ ${ymd(e.value.endDate)}',
-                        badges: const [_Badge('이 PC 파일만', AppColors.textMuted)],
-                        onTap: () => _open(e.key, null, e.value),
+                        onTap: () => _open(g),
                       ),
                   ],
                 ),

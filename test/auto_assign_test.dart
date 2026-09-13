@@ -1,9 +1,10 @@
-import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:room_assignment/auth.dart';
 import 'package:room_assignment/auto_assign.dart';
+import 'package:room_assignment/gathering.dart' show Gathering;
 import 'package:room_assignment/models.dart';
+import 'package:room_assignment/remote.dart';
 import 'package:room_assignment/store.dart';
 
 final d0 = DateTime(2026, 1, 1);
@@ -12,11 +13,30 @@ final d3 = DateTime(2026, 1, 4); // 3박
 int _n = 0;
 String nid() => 'id${_n++}';
 
-/// 저장이 진짜 파일로 나가도 테스트가 서로 안 밟게, 매번 임시 폴더를 하나 쓴다.
-File tmpFile() {
-  final dir = Directory.systemTemp.createTempSync('room_assign_test');
-  addTearDown(() => dir.deleteSync(recursive: true));
-  return File('${dir.path}/event.json');
+/// 메모리 서버의 방배정 문서 하나. schema.sql save_room_plan 과 같은 버전 규칙.
+class PlanRemote extends Remote {
+  Map<String, dynamic>? data;
+  int version = 0, saves = 0;
+
+  Map<String, dynamic> _copy(Map<String, dynamic> m) =>
+      jsonDecode(jsonEncode(m)) as Map<String, dynamic>;
+
+  @override
+  Future<({Map<String, dynamic> data, int version})?> roomPlan(
+    String gatheringId,
+  ) async => data == null ? null : (data: _copy(data!), version: version);
+
+  @override
+  Future<int> saveRoomPlan(
+    String gatheringId,
+    Map<String, dynamic> d,
+    int v,
+  ) async {
+    if (v != version) throw const RemoteError('CONFLICT');
+    data = _copy(d);
+    saves++;
+    return ++version;
+  }
 }
 
 Event ev({
@@ -900,59 +920,79 @@ void main() {
       expect(back.nights.length, 3);
     });
 
-    test('깨진 파일은 옆으로 치우고 빈 집회로 시작한다', () async {
-      final dir = Directory.systemTemp.createTempSync('room_assign_test');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final f = File('${dir.path}/event.json')
-        ..writeAsStringSync('{"name": "잘린');
-      final s = Store(fileOverride: f);
-      await s.load();
+    test('서버 문서가 깨져 있으면 저장하지 않는다 (빈 화면으로 덮어쓰지 않게)', () async {
+      final r = PlanRemote()
+        ..data = {'name': '잘린'}
+        ..version = 3;
+      remote = r;
+      final s = Store();
+      await s.open('g1', ev());
       expect(s.loadError, isNotNull);
-      expect(s.event.attendees, isEmpty);
-      expect(File('${f.path}.corrupt').existsSync(), isTrue);
-    });
-
-    test('저장 후 다시 읽으면 그대로다', () async {
-      final dir = Directory.systemTemp.createTempSync('room_assign_test');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final f = File('${dir.path}/event.json');
-      final s = Store(fileOverride: f)
-        ..event = ev(rooms: [room('101', 2)], attendees: [person('홍길동')]);
-      await s.load();
-      s.event = ev(rooms: [room('101', 2)], attendees: [person('홍길동')]);
       s.commit();
       await s.pendingWrites;
-      final s2 = Store(fileOverride: f);
-      await s2.load();
+      expect(r.saves, 0);
+    });
+
+    test('저장 후 다시 열면 그대로다', () async {
+      remote = PlanRemote();
+      final s = Store();
+      await s.open('g1', ev(rooms: [room('101', 2)]));
+      s.event.attendees.add(person('홍길동'));
+      s.commit();
+      await s.pendingWrites;
+      final s2 = Store();
+      await s2.open('g1', ev());
       expect(s2.loadError, isNull);
+      expect(s2.event.rooms.single.roomNo, '101');
       expect(s2.event.attendees.single.name, '홍길동');
     });
-  });
 
-  group('비밀번호', () {
-    test('설정 → 확인', () async {
-      final dir = Directory.systemTemp.createTempSync('room_assign_auth');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final f = File('${dir.path}/auth.json');
-      final a = Auth(fileOverride: f);
-      await a.load();
-      expect(a.isSet, isFalse);
-      await a.setPassword('1234');
-      final b = Auth(fileOverride: f);
-      await b.load();
-      expect(b.check('1234'), isTrue);
-      expect(b.check('4321'), isFalse);
+    test('연달아 바꿔도 한 번에 하나씩 올리고 마지막 상태가 남는다', () async {
+      final r = PlanRemote();
+      remote = r;
+      final s = Store();
+      await s.open('g1', ev());
+      for (var i = 0; i < 10; i++) {
+        s.event.attendees.add(person('p$i'));
+        s.commit();
+      }
+      await s.pendingWrites;
+      expect(r.saves, 2); // 첫 변경 + 올리는 동안 쌓인 변경 한 번
+      expect(r.data!['attendees'] as List, hasLength(10));
     });
 
-    test('salt 가 없는 반쪽 파일은 미설정으로 본다 (잠금화면에서 크래시 금지)', () async {
-      final dir = Directory.systemTemp.createTempSync('room_assign_auth');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final f = File('${dir.path}/auth.json')
-        ..writeAsStringSync('{"hash":"deadbeef"}');
-      final a = Auth(fileOverride: f);
-      await a.load();
-      expect(a.isSet, isFalse);
-      expect(a.check('아무거나'), isFalse);
+    test('다른 기기가 먼저 저장했으면 덮어쓰지 않고 그 내용을 불러온다', () async {
+      final r = PlanRemote();
+      remote = r;
+      final a = Store(), b = Store();
+      await a.open('g1', ev());
+      await b.open('g1', ev());
+      b.event.attendees.add(person('B가 추가'));
+      b.commit();
+      await b.pendingWrites;
+
+      a.event.attendees.add(person('A가 추가'));
+      a.commit();
+      await a.pendingWrites;
+      expect((r.data!['attendees'] as List).single['name'], 'B가 추가');
+      expect(a.event.attendees.single.name, 'B가 추가');
+      expect(a.saveError, contains('다른 기기'));
+
+      // 그다음 변경은 최신 버전 위에 저장된다
+      a.commit();
+      await a.pendingWrites;
+      expect(r.version, 2);
+      expect(a.saveError, isNull);
+    });
+
+    test('집회를 열기만 해서는 저장하지 않는다 (다른 기기와 괜한 충돌 방지)', () async {
+      final r = PlanRemote();
+      remote = r;
+      final s = Store();
+      await s.open('g1', ev());
+      s.applyGathering(Gathering(name: 't', start: d0, end: d3));
+      await s.pendingWrites;
+      expect(r.saves, 0);
     });
   });
 
@@ -1006,7 +1046,7 @@ void main() {
     });
 
     test('빈 칸으로 옮기면 그 자리로 가고 옆방은 그대로 있다', () async {
-      final store = Store(fileOverride: tmpFile());
+      final store = Store();
       store.event = ev(rooms: [room('301', 4), room('302', 4)]);
       store.moveRoom(store.event.rooms[0], 3, cols: 5);
       await store.pendingWrites;
@@ -1016,7 +1056,7 @@ void main() {
     });
 
     test('다른 방 위에 놓으면 서로 자리를 바꾼다', () async {
-      final store = Store(fileOverride: tmpFile());
+      final store = Store();
       store.event = ev(rooms: [room('301', 4), room('302', 4)]);
       store.moveRoom(store.event.rooms[0], 1, cols: 5);
       await store.pendingWrites;
@@ -1025,7 +1065,7 @@ void main() {
     });
 
     test('층이 달라도 자리 번호는 서로 간섭하지 않는다', () async {
-      final store = Store(fileOverride: tmpFile());
+      final store = Store();
       store.event = ev(rooms: [room('301', 4), room('401', 4)]);
       store.moveRoom(store.event.rooms[1], 2, cols: 5);
       await store.pendingWrites;
@@ -1036,7 +1076,7 @@ void main() {
     });
 
     test('배치 초기화하면 자리가 전부 지워진다', () async {
-      final store = Store(fileOverride: tmpFile());
+      final store = Store();
       store.event = ev(rooms: [room('301', 4)..slot = 6, room('302', 4)]);
       store.resetLayout();
       await store.pendingWrites;

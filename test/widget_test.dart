@@ -258,22 +258,14 @@ void main() {
     expect(find.text('현재 순서: 존 → 셀 → 교회'), findsOneWidget);
   });
 
-  testWidgets('앱바에 비밀번호 변경 버튼이 보인다', (tester) async {
+  testWidgets('앱바의 [백업]을 누르면 내려받기·되살리기 메뉴가 뜬다', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Shell()));
     await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.text('비밀번호'), findsOneWidget);
-  });
-
-  testWidgets('비밀번호 변경 다이얼로그가 뜬다', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: Shell()));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('비밀번호'));
+    await tester.tap(find.text('백업'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('비밀번호 변경'), findsOneWidget);
-    expect(find.text('현재 비밀번호'), findsOneWidget);
-    expect(find.textContaining('새 비밀번호'), findsWidgets);
+    expect(find.text('JSON으로 내려받기'), findsOneWidget);
+    expect(find.text('JSON 파일로 되살리기'), findsOneWidget);
   });
 
   testWidgets('Shift+클릭하면 두 호실 사이의 방이 전부 선택된다', (tester) async {
@@ -338,7 +330,7 @@ void main() {
       tester.getCenter(tile('301')).dx,
       greaterThan(tester.getCenter(tile('302')).dx),
     );
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('자리 옮기기: 빈 칸으로 옮기면 그 자리가 비어 남는다', (tester) async {
     await pump(tester, const AssignScreen());
@@ -356,7 +348,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(store.event.rooms[1].slot, 3); // 302 가 세 칸 건너로
     expect(store.event.rooms[0].slot, 0); // 301 은 제자리
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('자리 옮기기를 끄면 드래그 위젯이 사라진다', (tester) async {
     await pump(tester, const AssignScreen());
@@ -370,7 +362,17 @@ void main() {
     await tester.tap(find.text('자리 옮기기'));
     await tester.pumpAndSettle();
     expect(find.byType(Draggable<Room>), findsNothing);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('태블릿(iPad)에서는 길게 눌러야 방이 끌린다 (스크롤과 안 겹치게)', (tester) async {
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('자리 옮기기'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(LongPressDraggable<Room>), findsNWidgets(2));
+    expect(find.byType(Draggable<Room>), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('옮겨 놓은 자리는 현황 화면에서도 그대로다', (tester) async {
     tester.view.physicalSize = const Size(1400, 900);

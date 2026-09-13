@@ -1,5 +1,4 @@
 // 집회·신청 모델, 이미지 줄이기, 신청 → 참석자 가져오기.
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -64,12 +63,9 @@ Registration reg(String id, RegStatus status, List<Person> people) =>
       createdAt: DateTime(2026, 9, 10),
     );
 
-Store tmpStore() {
-  final dir = Directory.systemTemp.createTempSync('gathering_test');
-  addTearDown(() => dir.deleteSync(recursive: true));
-  return Store(fileOverride: File('${dir.path}/event.json'))
-    ..event = Event(name: 'x', startDate: start, endDate: end);
-}
+/// 집회를 열지 않은 Store — 서버에 저장하지 않는다.
+Store tmpStore() =>
+    Store()..event = Event(name: 'x', startDate: start, endDate: end);
 
 void main() {
   group('모델', () {
@@ -385,15 +381,13 @@ void main() {
       expect(GroupField.builtins, contains(GroupField.family));
     });
 
-    test('registrationId 는 방배정 파일에 저장된다', () async {
+    test('registrationId 는 방배정 문서(JSON)에 남는다', () {
       final s = tmpStore();
       s.syncRegistrations(g, [
         reg('r1', RegStatus.confirmed, [person('아빠', 1985)]),
       ]);
-      await s.pendingWrites;
-      final back = Store(fileOverride: s.fileOverride);
-      await back.load();
-      expect(back.event.attendees.single.registrationId, 'r1');
+      final back = Event.fromJson(s.event.toJson());
+      expect(back.attendees.single.registrationId, 'r1');
     });
   });
 }

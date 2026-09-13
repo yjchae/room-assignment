@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart';
@@ -314,17 +315,29 @@ class RoomBoard extends StatelessWidget {
     );
     if (room == null) return target;
 
-    return Draggable<Room>(
-      data: room,
-      dragAnchorStrategy: pointerDragAnchorStrategy,
-      feedback: _DragGhost(room: room, width: w),
-      childWhenDragging: SizedBox(
-        width: w,
-        height: _tileHeight,
-        child: const _EmptySlot(hint: false),
-      ),
-      child: target,
+    final ghost = _DragGhost(room: room, width: w);
+    final gap = SizedBox(
+      width: w,
+      height: _tileHeight,
+      child: const _EmptySlot(hint: false),
     );
+    // 태블릿은 길게 눌러야 끌린다 — 바로 끌리면 보드를 스크롤하려던 손가락이 방을 옮긴다.
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.iOS || TargetPlatform.android => LongPressDraggable<Room>(
+        data: room,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: ghost,
+        childWhenDragging: gap,
+        child: target,
+      ),
+      _ => Draggable<Room>(
+        data: room,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: ghost,
+        childWhenDragging: gap,
+        child: target,
+      ),
+    };
   }
 }
 

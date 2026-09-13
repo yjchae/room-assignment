@@ -1,22 +1,16 @@
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'gathering.dart';
 import 'models.dart';
+import 'remote.dart';
 
-/// 앱 전체 상태. 집회 하나의 방배정 파일(JSON 1개)을 통째로 읽고 쓴다.
-/// ponytail: 저장은 매 변경마다 전체 파일 재작성. 참석자 수천 명까지는 무의미하게 빠름.
+/// 앱 전체 상태. 집회 하나의 방배정(방·참석자·배정)을 서버 문서 하나로 통째로 읽고 쓴다.
+/// 여러 PC·태블릿이 같은 문서를 연다. 동시에 고치면 버전으로 막는다 (schema.sql save_room_plan).
+/// ponytail: 변경마다 문서 전체를 올린다. 참석자 수천 명(1MB 미만)까지는 문제없다.
 class Store extends ChangeNotifier {
-  Store({this.fileOverride});
-
-  /// 테스트에서 임시 파일을 주입하기 위한 훅.
-  final File? fileOverride;
-
-  /// 열어 둔 집회 id. 파일은 `events/<id>.json`. null 이면 예전 버전의 `event.json`.
+  /// 열어 둔 집회 id. null 이면 아무것도 안 연 상태 — 저장하지 않는다 (테스트도 이 상태).
   String? gatheringId;
 
   Event event = Event(
@@ -25,136 +19,102 @@ class Store extends ChangeNotifier {
     endDate: dateOnly(DateTime.now()).add(const Duration(days: 3)),
   );
 
+  /// 마지막으로 읽거나 저장한 서버 문서의 버전. 0 = 서버에 아직 없음.
+  int version = 0;
+
   bool loaded = false;
-  File? _file;
 
-  Future<File> _resolveFile() async {
-    if (fileOverride != null) return fileOverride!;
-    final dir = await getApplicationSupportDirectory();
-    return gatheringId == null
-        ? File('${dir.path}/event.json')
-        : File('${dir.path}/events/$gatheringId.json');
-  }
+  /// 불러오기 실패 이유. 이때는 저장하지 않는다 — 빈 화면으로 서버 내용을 덮어쓰면 안 된다.
+  String? loadError;
 
-  /// 집회 하나의 방배정 파일을 연다. 파일이 없으면 [fallback] 으로 시작한다.
+  /// 마지막 저장이 실패했거나 충돌했으면 그 이유. 화면 위 경고 줄에 뜬다.
+  String? saveError;
+
+  /// 집회 하나의 방배정을 연다. 서버에 아직 없으면 [fallback] 으로 시작한다.
   Future<void> open(String gatheringId, Event fallback) async {
-    await _writes;
+    await pendingWrites;
     this.gatheringId = gatheringId;
-    _file = null;
     event = fallback;
+    version = 0;
     loadError = null;
     saveError = null;
     loaded = false;
     await load();
   }
 
-  /// 이 PC 에 방배정 파일이 있는 집회들 (집회 id → 파일 속 Event).
-  /// 서버에 못 붙을 때 집회 목록 대신 쓴다.
-  static Future<Map<String, Event>> localEvents() async {
-    final dir = Directory(
-      '${(await getApplicationSupportDirectory()).path}/events',
-    );
-    if (!await dir.exists()) return {};
-    final out = <String, Event>{};
-    await for (final f in dir.list()) {
-      final name = f.uri.pathSegments.last;
-      if (f is! File || !name.endsWith('.json')) continue;
-      try {
-        out[name.substring(0, name.length - 5)] = Event.fromJson(
-          jsonDecode(await f.readAsString()) as Map<String, dynamic>,
-        );
-      } catch (_) {
-        // 깨진 파일은 목록에서만 뺀다. 열면 load() 가 .corrupt 로 치운다.
-      }
-    }
-    return out;
-  }
-
-  /// 집회 목록이 생기기 전 버전의 방배정 파일 내용. 없거나 비었으면 null.
-  static Future<Event?> legacyEvent() async {
-    final f = File(
-      '${(await getApplicationSupportDirectory()).path}/event.json',
-    );
-    try {
-      if (!await f.exists()) return null;
-      return Event.fromJson(
-        jsonDecode(await f.readAsString()) as Map<String, dynamic>,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 예전 `event.json` 을 [gatheringId] 집회의 파일로 옮긴다.
-  static Future<void> adoptLegacy(String gatheringId) async {
-    final dir = (await getApplicationSupportDirectory()).path;
-    await Directory('$dir/events').create(recursive: true);
-    await File('$dir/event.json').rename('$dir/events/$gatheringId.json');
-  }
-
-  /// 파일이 깨져 있으면 옆으로 치우고 빈 집회로 시작한다.
-  /// 여기서 예외가 나면 runApp 전에 죽어서 앱을 아예 못 켜게 된다.
-  String? loadError;
-
+  /// 서버에서 다시 읽는다.
   Future<void> load() async {
-    _file = await _resolveFile();
     try {
-      if (await _file!.exists()) {
-        final text = await _file!.readAsString();
-        if (text.trim().isNotEmpty) {
-          event = Event.fromJson(jsonDecode(text) as Map<String, dynamic>);
-        }
+      final p = await remote.roomPlan(gatheringId!);
+      if (p != null) {
+        event = Event.fromJson(p.data);
+        version = p.version;
       }
+      loadError = null;
     } catch (e) {
-      final bak = '${_file!.path}.corrupt';
-      try {
-        await _file!.rename(bak);
-      } catch (_) {}
-      loadError = '저장 파일을 읽지 못해 새 집회로 시작합니다. 원본: $bak\n$e';
+      loadError =
+          '방배정을 불러오지 못했습니다. 인터넷 연결을 확인하고 집회를 다시 여세요. '
+          '그동안 고친 내용은 저장되지 않습니다.\n${errorText(e)}';
     }
     loaded = true;
     notifyListeners();
   }
 
-  /// 임시 파일에 쓰고 rename. 도중에 죽어도 반쪽짜리 JSON 이 남지 않는다.
-  Future<void> save() async {
-    _file ??= await _resolveFile();
-    await _file!.parent.create(recursive: true);
-    final tmp = File('${_file!.path}.tmp');
-    await tmp.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(event.toJson()),
-      flush: true,
-    );
-    await tmp.rename(_file!.path);
-  }
-
-  /// 마지막 저장이 실패했으면 그 이유. UI 에서 보여줄 수 있다.
-  String? saveError;
-  Future<void> _writes = Future.value();
+  bool _dirty = false;
+  Future<void>? _saving;
 
   /// 변경 후 저장 + 알림. UI는 이것만 부르면 된다.
-  /// 저장은 순서대로 하나씩 — 두 개가 겹치면 파일이 반쯤 덮여 쓰인다.
+  /// 저장은 한 번에 하나 — 올리는 중에 또 바뀌면 끝난 뒤 최신 상태로 한 번 더 올린다.
   void commit() {
     notifyListeners();
-    _writes = _writes.then((_) => save()).catchError((Object e) {
-      saveError = '$e';
-      debugPrint('저장 실패: $e');
-    });
+    _dirty = true;
+    _saving ??= _flush().whenComplete(() => _saving = null);
   }
 
-  /// 테스트/종료 시 저장이 끝날 때까지 기다린다.
-  Future<void> get pendingWrites => _writes;
+  /// 테스트/집회 전환 때 저장이 끝날 때까지 기다린다.
+  Future<void> get pendingWrites => _saving ?? Future.value();
+
+  Future<void> _flush() async {
+    while (_dirty && gatheringId != null && loadError == null) {
+      _dirty = false;
+      try {
+        version = await remote.saveRoomPlan(
+          gatheringId!,
+          event.toJson(),
+          version,
+        );
+        saveError = null;
+      } catch (e) {
+        if (isConflict(e)) {
+          // 다른 기기가 먼저 저장했다. 덮어쓰지 않고 그쪽 내용으로 바꾼다.
+          await load();
+          saveError = '다른 기기에서 먼저 저장해 최신 내용을 다시 불러왔습니다. 방금 한 변경은 다시 해주세요.';
+        } else {
+          _dirty = true; // 다음 변경 때 문서 전체를 다시 올린다
+          saveError =
+              '저장하지 못했습니다. 인터넷이 돌아오면 다음 변경 때 다시 저장합니다. '
+              '불안하면 [백업]으로 내려받아 두세요.\n${errorText(e)}';
+          break;
+        }
+      }
+    }
+    notifyListeners();
+  }
 
   // --- 집회 설정 · 신청 → 방배정 ---
 
-  /// 집회 설정(서버)을 이 PC 의 방배정 파일에 반영한다. 방배정 쪽 코드는 [Event] 만 본다.
+  /// 집회 설정(서버)을 방배정에 반영한다. 방배정 쪽 코드는 [Event] 만 본다.
+  /// 바뀐 게 없으면 저장하지 않는다 — 여는 것만으로 버전이 오르면 다른 기기와 괜히 충돌한다.
   void applyGathering(Gathering g) {
     final s = dateOnly(g.start), e = dateOnly(g.end);
-    event.name = g.name;
-    event.startDate = s;
-    event.endDate = e.isAfter(s) ? e : s.add(const Duration(days: 1));
-    _addFields(g.formFields);
-    commit();
+    final end = e.isAfter(s) ? e : s.add(const Duration(days: 1));
+    final changed =
+        event.name != g.name || event.startDate != s || event.endDate != end;
+    event
+      ..name = g.name
+      ..startDate = s
+      ..endDate = end;
+    if (_addFields(g.formFields) > 0 || changed) commit();
   }
 
   /// 확정된 신청의 사람들 (사람 id → 참석자). 당일(0박) 참석자는 방이 필요 없어 뺀다.
