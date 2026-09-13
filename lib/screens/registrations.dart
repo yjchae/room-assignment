@@ -81,20 +81,30 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     if (r.status != RegStatus.pending) checked.remove(r.id);
   });
 
+  /// 서버에 저장이 되면 [then] 을 부르고(참석자 반영 등), 그 결과 문장을 [done] 뒤에 붙여 알린다.
   Future<void> _patch(
     Registration r,
     Map<String, dynamic> fields,
-    String done,
-  ) async {
+    String done, {
+    String Function()? then,
+  }) async {
     setState(() => busy = true);
     try {
       _replace(await remote.patchRegistration(r.id, fields));
-      _snack(done);
+      _snack('$done${then?.call() ?? ''}');
     } catch (e) {
       _snack(errorText(e));
     } finally {
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  /// 입금 확인된 신청의 사람을 참석자로 올린다 (추가·수정만, 빼지는 않는다). 새로 올린 사람 수.
+  /// 당일 참석자는 방이 필요 없어 올리지 않는다.
+  int _syncConfirmed() {
+    final g = current.value;
+    if (g == null || regs == null) return 0;
+    return store.syncRegistrations(g, regs!, remove: false).added;
   }
 
   bool _matches(Registration r) {
@@ -375,12 +385,20 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       ),
     );
     if (ok != true) return;
-    await _patch(r, {
-      'status': 'confirmed',
-      'paid': int.parse(digitsOnly(amount.text)),
-      'paid_at': ymd(date),
-      'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
-    }, '${r.applicant} 입금 확인했습니다.');
+    await _patch(
+      r,
+      {
+        'status': 'confirmed',
+        'paid': int.parse(digitsOnly(amount.text)),
+        'paid_at': ymd(date),
+        'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
+      },
+      '${r.applicant} 입금 확인했습니다.',
+      then: () {
+        final n = _syncConfirmed();
+        return n > 0 ? ' 참석자 $n명을 등록했습니다.' : '';
+      },
+    );
   }
 
   Future<void> _bulkConfirm(Map<String, Quote> quotes) async {
@@ -411,17 +429,23 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         fail++;
       }
     }
+    final added = _syncConfirmed();
     if (!mounted) return;
     setState(() => busy = false);
     _snack(
-      fail == 0
-          ? '${targets.length}건 입금 확인했습니다.'
-          : '${targets.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.',
+      (fail == 0
+              ? '${targets.length}건 입금 확인했습니다.'
+              : '${targets.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.') +
+          (added > 0 ? ' 참석자 $added명을 등록했습니다.' : ''),
     );
   }
 
   Future<void> _cancel(Registration r) async {
     final memo = TextEditingController(text: r.adminMemo ?? '');
+    // 취소하면 이 신청의 참석자도 빠진다. 방이 배정된 사람이 있으면 미리 알려준다.
+    final inRooms = store.event.attendees
+        .where((a) => a.registrationId == r.id && a.roomId != null)
+        .toList();
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -437,6 +461,15 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                     ? '입금이 확인된 신청입니다. 환불 여부를 메모해 두세요.'
                     : '신청을 취소합니다. 신청자가 조회하면 "취소"로 보입니다.',
               ),
+              if (inRooms.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '방이 배정된 ${inRooms.length}명'
+                  '(${inRooms.take(3).map((a) => a.name).join(', ')}'
+                  '${inRooms.length > 3 ? ' 외' : ''})도 참석자에서 빠지고 방 배정이 풀립니다.',
+                  style: const TextStyle(color: AppColors.danger),
+                ),
+              ],
               const SizedBox(height: 12),
               TextField(
                 controller: memo,
@@ -462,10 +495,18 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       ),
     );
     if (ok != true) return;
-    await _patch(r, {
-      'status': 'cancelled',
-      'admin_memo': memo.text.trim().isEmpty ? null : memo.text.trim(),
-    }, '${r.applicant} 신청을 취소했습니다.');
+    await _patch(
+      r,
+      {
+        'status': 'cancelled',
+        'admin_memo': memo.text.trim().isEmpty ? null : memo.text.trim(),
+      },
+      '${r.applicant} 신청을 취소했습니다.',
+      then: () {
+        final n = store.removeRegistration(r.id);
+        return n > 0 ? ' 참석자 $n명을 뺐습니다.' : '';
+      },
+    );
   }
 
   Future<void> _resetPin(Registration r) async {

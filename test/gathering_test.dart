@@ -272,6 +272,19 @@ void main() {
       expect(s.event.attendees, hasLength(1));
     });
 
+    test('remove: false 면 추가·수정만 하고 빼지는 않는다 (입금 확인 때 자동 등록)', () {
+      final s = tmpStore();
+      final r1 = reg('r1', RegStatus.confirmed, [person('아빠', 1985)]);
+      s.syncRegistrations(g, [r1]);
+      s.event.attendees.single.roomId = 'room301';
+      r1.status = RegStatus.cancelled;
+      final r2 = reg('r2', RegStatus.confirmed, [person('새가족', 1990)]);
+      final res = s.syncRegistrations(g, [r1, r2], remove: false);
+      expect((res.added, res.removed), (1, 0));
+      expect(s.event.attendees.map((a) => a.name), ['아빠', '새가족']);
+      expect(s.event.attendees.first.roomId, 'room301'); // 방 배정이 말없이 풀리지 않는다
+    });
+
     test('바뀐 내용은 덮어쓰되 배정된 방·기타는 그대로', () {
       final s = tmpStore();
       final p = person('아빠', 1985);

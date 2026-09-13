@@ -165,11 +165,14 @@ class Store extends ChangeNotifier {
   /// - 신청에서 온 항목(이름·성별·나이·전화·셀·존·사용자 항목·일정)만 덮어쓰고
   ///   배정된 방(roomId)·기타(note)는 그대로 둔다.
   /// - 신청에서 왔는데 이제 확정 목록에 없는 사람(취소·되돌림·동반자 삭제)은 지운다.
+  ///   [remove] 가 false 면 지우지 않는다 — 입금 확인 때 자동으로 부를 때. 방 배정이
+  ///   말없이 풀리면 안 되므로, 지우는 건 경고를 보여주는 [신청에서 가져오기]에서만 한다.
   /// - 붙여넣기·직접 추가한 사람(registrationId == null)은 건드리지 않는다.
   ({int added, int updated, int removed, int dayOnly}) syncRegistrations(
     Gathering g,
-    List<Registration> regs,
-  ) {
+    List<Registration> regs, {
+    bool remove = true,
+  }) {
     final want = _wanted(g, regs);
     final confirmedPeople = regs
         .where((r) => r.status == RegStatus.confirmed)
@@ -197,9 +200,11 @@ class Store extends ChangeNotifier {
       }
     }
     final before = event.attendees.length;
-    event.attendees.removeWhere(
-      (a) => a.registrationId != null && !want.containsKey(a.id),
-    );
+    if (remove) {
+      event.attendees.removeWhere(
+        (a) => a.registrationId != null && !want.containsKey(a.id),
+      );
+    }
     final removed = before - event.attendees.length;
     final newFields = _addFields(want.values.expand((a) => a.extra.keys));
     if (added + updated + removed + newFields > 0) commit();
@@ -209,6 +214,16 @@ class Store extends ChangeNotifier {
       removed: removed,
       dayOnly: confirmedPeople - want.length,
     );
+  }
+
+  /// 신청 [registrationId] 에서 온 참석자를 뺀다 (신청 취소 때). 뺀 사람 수.
+  /// 붙여넣기·직접 추가한 사람은 신청 id 가 없으니 건드리지 않는다.
+  int removeRegistration(String registrationId) {
+    final before = event.attendees.length;
+    event.attendees.removeWhere((a) => a.registrationId == registrationId);
+    final n = before - event.attendees.length;
+    if (n > 0) commit();
+    return n;
   }
 
   bool _sameSource(Attendee a, Attendee b) =>

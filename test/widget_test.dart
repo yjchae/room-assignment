@@ -318,6 +318,91 @@ void main() {
     expect(preview.onPressed, isNull);
   });
 
+  testWidgets('배정하면 배정된 사람의 체크가 풀리고, 자리가 없어 못 들어간 사람은 체크된 채 남는다', (
+    tester,
+  ) async {
+    const names = ['가철수', '나영희', '다민수'];
+    store.event.attendees.addAll([
+      for (final n in names)
+        Attendee(
+          id: n,
+          name: n,
+          gender: 'F',
+          age: 30,
+          checkIn: DateTime(2026, 1, 1),
+          checkOut: DateTime(2026, 1, 4),
+        ),
+    ]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    for (final n in names) {
+      await tester.tap(find.textContaining(n).first);
+      await tester.pump();
+    }
+    expect(find.text('선택 3명'), findsOneWidget);
+
+    await tester.tap(tile('302')); // 정원 2
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3명 → 1개 방 배정'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('들어가는 만큼만'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '배정'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    expect(
+      store.event.attendees.where((a) => a.roomId == 'r302'),
+      hasLength(2),
+    );
+    expect(find.text('선택 1명'), findsOneWidget); // 못 들어간 1명만 남는다
+    final leftover = store.event.attendees.singleWhere((a) => a.roomId == null);
+    final row = find.ancestor(
+      of: find.textContaining(leftover.name).first,
+      matching: find.byType(InkWell),
+    );
+    final box = tester.widget<Checkbox>(
+      find.descendant(of: row.first, matching: find.byType(Checkbox)),
+    );
+    expect(box.value, isTrue);
+  });
+
+  testWidgets('수동 배정은 [초과해서 전부 배정]으로 정원을 넘겨서도 넣을 수 있다', (tester) async {
+    const names = ['가철수', '나영희', '다민수'];
+    store.event.attendees.addAll([
+      for (final n in names)
+        Attendee(
+          id: n,
+          name: n,
+          gender: 'F',
+          age: 30,
+          checkIn: DateTime(2026, 1, 1),
+          checkOut: DateTime(2026, 1, 4),
+        ),
+    ]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    for (final n in names) {
+      await tester.tap(find.textContaining(n).first);
+      await tester.pump();
+    }
+    await tester.tap(tile('302')); // 정원 2
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3명 → 1개 방 배정'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('초과해서 전부 배정'));
+    await tester.pumpAndSettle();
+    expect(find.text('정원을 넘겨 배정합니다.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '배정'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      store.event.attendees.where((a) => a.roomId == 'r302'),
+      hasLength(3),
+    );
+    expect(store.peakOccupancy(store.event.rooms[1]), 3); // 3/2 초과로 보인다
+  });
+
   testWidgets('Shift+클릭하면 두 호실 사이의 방이 전부 선택된다', (tester) async {
     store.event.rooms
       ..clear()

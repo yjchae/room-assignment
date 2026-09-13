@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/gathering.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/main_public.dart';
+import 'package:room_assignment/models.dart';
 import 'package:room_assignment/remote.dart';
 import 'package:room_assignment/screens/gathering_settings.dart';
 import 'package:room_assignment/screens/gatherings.dart';
@@ -187,6 +188,11 @@ void main() {
     fake = FakeRemote()..gs.add(sample());
     remote = fake;
     current.value = null;
+    store.event = Event(
+      name: 'x',
+      startDate: DateTime(2026, 10, 9),
+      endDate: DateTime(2026, 10, 11),
+    );
   });
 
   group('신청 웹 (휴대폰 폭 400px)', () {
@@ -461,6 +467,49 @@ void main() {
       expect(fake.patches.single['status'], 'confirmed');
       expect(fake.patches.single['paid'], 280000);
       expect(find.text('입금확인 1'), findsOneWidget);
+      // 확정한 신청의 사람은 참석자로 바로 올라간다
+      expect(store.event.attendees.map((a) => a.name), ['홍길동', '홍딸']);
+      expect(find.textContaining('참석자 2명을 등록했습니다'), findsOneWidget);
+    });
+
+    testWidgets('신청·입금: 취소하면 그 신청의 참석자가 빠진다 (방 배정된 사람은 미리 경고)', (tester) async {
+      fake.regs.add(
+        pendingReg()
+          ..status = RegStatus.confirmed
+          ..paid = 280000,
+      );
+      current.value = sample();
+      Attendee att(String id, String name, {String? reg, String? room}) =>
+          Attendee(
+            id: id,
+            name: name,
+            gender: 'M',
+            age: 30,
+            roomId: room,
+            registrationId: reg,
+            checkIn: DateTime(2026, 10, 9),
+            checkOut: DateTime(2026, 10, 11),
+          );
+      store.event.attendees.addAll([
+        att('a', '홍길동', reg: 'r1', room: 'r301'),
+        att('b', '홍딸', reg: 'r1'),
+        att('p', '현장등록'), // 붙여넣기로 넣은 사람
+      ]);
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+
+      await tester.tap(find.text('홍길동').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, '신청 취소'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('방이 배정된 1명(홍길동)'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '신청 취소'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      expect(fake.regs.single.status, RegStatus.cancelled);
+      expect(store.event.attendees.map((a) => a.name), ['현장등록']);
+      expect(find.textContaining('참석자 2명을 뺐습니다'), findsOneWidget);
     });
 
     testWidgets('신청·입금: 신청 때 금액과 다르면 경고, 일괄 확정', (tester) async {
@@ -494,6 +543,7 @@ void main() {
       expect(fake.regs.every((r) => r.status == RegStatus.confirmed), isTrue);
       // 입금액은 신청 때 값이 아니라 지금 계산한 금액
       expect(fake.regs.map((r) => r.paid), [280000, 160000]);
+      expect(store.event.attendees, hasLength(3)); // 두 신청의 3명 모두 참석자로
     });
 
     testWidgets('집회 설정: 고친 회비가 서버로 가고, 틀린 값은 막는다', (tester) async {

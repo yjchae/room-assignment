@@ -790,7 +790,13 @@ class _AssignScreenState extends State<AssignScreen> {
 
     applyAssignments(plan.assignments);
     store.commit();
-    if (mounted) setState(() {});
+    // 배정된 사람은 체크를 푼다. 자리가 모자라 못 들어간 사람은 체크된 채로 남겨
+    // 다른 방을 골라 바로 이어서 배정할 수 있게 한다.
+    if (mounted) {
+      setState(
+        () => selected.removeAll(plan.assignments.map((x) => x.attendee.id)),
+      );
+    }
   }
 
   Future<void> _setStay(List<Attendee> chosen) async {
