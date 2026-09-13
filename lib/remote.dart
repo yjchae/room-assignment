@@ -11,6 +11,9 @@ import 'gathering.dart';
 /// 화면은 이 전역만 부른다. 테스트는 [Remote] 를 상속한 가짜로 바꿔 끼운다.
 Remote remote = Remote();
 
+/// 비밀번호 재설정 메일의 링크로 들어왔다. 첫 화면이 새 비밀번호 입력으로 바뀐다.
+final passwordRecovery = ValueNotifier(false);
+
 class Remote {
   /// [init] 이 끝났는가. 테스트나 서버 준비에 실패했을 때 false — 이때 서버 호출은 [RemoteError].
   static bool ready = false;
@@ -18,6 +21,15 @@ class Remote {
   static Future<void> init() async {
     await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
     ready = true;
+    // 지난 이벤트도 다시 흘려주는 스트림이라, initialize 중에 링크를 처리했어도 여기서 받는다.
+    Supabase.instance.client.auth.onAuthStateChange.listen(
+      (s) {
+        if (s.event == AuthChangeEvent.passwordRecovery) {
+          passwordRecovery.value = true;
+        }
+      },
+      onError: (Object e) => debugPrint('인증 링크 처리 실패: $e'), // 만료된 링크 등
+    );
   }
 
   SupabaseClient get _db {
@@ -41,11 +53,71 @@ class Remote {
     await _db.auth.signInWithPassword(email: email.trim(), password: password);
     if (await _db.rpc('is_admin') != true) {
       await _db.auth.signOut();
-      throw const RemoteError('운영자로 등록된 계정이 아닙니다. 담당자에게 문의하세요.');
+      throw const RemoteError('아직 승인되지 않은 계정입니다. 기존 운영자에게 승인을 요청하세요.');
     }
   }
 
+  /// 운영자 가입 신청. 계정만 만들고 바로 로그아웃 — 기존 운영자가 승인해야 쓸 수 있다.
+  /// 대시보드에서 메일 확인을 켜 두었으면 확인 메일의 링크도 눌러야 로그인된다.
+  Future<void> signUp(String name, String email, String password) async {
+    await _db.auth.signUp(
+      email: email.trim(),
+      password: password,
+      data: {'name': name.trim()},
+      emailRedirectTo: adminSiteUrl,
+    );
+    await _db.auth.signOut();
+  }
+
+  /// 승인을 기다리는 가입 신청. 운영자만.
+  Future<List<AdminRequest>> adminRequests() async {
+    final rows = await _db.rpc('admin_requests') as List;
+    return [
+      for (final r in rows)
+        (
+          id: '${r['id']}',
+          email: '${r['email'] ?? ''}',
+          name: '${r['name'] ?? ''}',
+          at: DateTime.parse('${r['created_at']}').toLocal(),
+        ),
+    ];
+  }
+
+  Future<void> approveAdmin(String userId) async {
+    await _db.rpc('approve_admin', params: {'p_user': userId});
+  }
+
+  /// 거절하면 그 계정이 지워진다.
+  Future<void> rejectAdmin(String userId) async {
+    await _db.rpc('reject_admin', params: {'p_user': userId});
+  }
+
   Future<void> signOut() => _db.auth.signOut();
+
+  /// 비밀번호 재설정 메일. 링크를 누르면 운영자 웹이 열리고 새 비밀번호를 정한다.
+  /// 없는 이메일이어도 에러가 안 난다 (계정 유무를 흘리지 않으려는 Supabase 동작).
+  /// 링크는 요청한 그 브라우저에서 열어야 한다 (PKCE — 확인값이 그 브라우저에만 있다).
+  Future<void> sendPasswordReset(String email) =>
+      _db.auth.resetPasswordForEmail(email.trim(), redirectTo: adminSiteUrl);
+
+  /// 비밀번호 변경. [current] 가 있으면 그 비밀번호로 다시 로그인해 본인 확인부터.
+  /// 재설정 메일 링크로 들어왔을 땐 null — 메일 링크가 본인 확인이다.
+  Future<void> changePassword(String? current, String next) async {
+    if (current != null) {
+      try {
+        await _db.auth.signInWithPassword(
+          email: adminEmail ?? '',
+          password: current,
+        );
+      } on AuthException catch (e) {
+        if (e.message.contains('Invalid login credentials')) {
+          throw const RemoteError('지금 비밀번호가 다릅니다.');
+        }
+        rethrow;
+      }
+    }
+    await _db.auth.updateUser(UserAttributes(password: next));
+  }
 
   // --- 집회 ------------------------------------------------------------------
 
@@ -276,6 +348,9 @@ class Remote {
   Registration? _reg(Object? j) => j is Map ? Registration.fromRow(j) : null;
 }
 
+/// 운영자 가입 신청 한 건 ([Remote.adminRequests]).
+typedef AdminRequest = ({String id, String email, String name, DateTime at});
+
 class RemoteError implements Exception {
   const RemoteError(this.message);
   final String message;
@@ -315,6 +390,12 @@ String errorText(Object e) {
     'registrations_active_phone': '같은 번호로 진행 중인 다른 신청이 있어 되돌릴 수 없습니다.',
     'invalid input syntax for type uuid': '잘못된 링크입니다. 받은 링크를 다시 확인하세요.',
     'Invalid login credentials': '이메일 또는 비밀번호가 다릅니다.',
+    'User already registered': '이미 가입된 이메일입니다. 승인을 기다리는 중이면 기존 운영자에게 알리세요.',
+    'Signups not allowed': '지금은 가입을 받지 않습니다. 기존 운영자에게 문의하세요.',
+    'Password should': '비밀번호가 너무 짧거나 쉽습니다. 더 길게 정하세요.',
+    'different from the old password': '지금 쓰는 비밀번호와 다르게 정하세요.',
+    'rate limit': '메일을 너무 자주 요청했습니다. 잠시 후 다시 시도하세요.',
+    'For security purposes': '메일을 너무 자주 요청했습니다. 잠시 후 다시 시도하세요.',
   };
   for (final k in known.entries) {
     if (raw.contains(k.key)) return k.value;

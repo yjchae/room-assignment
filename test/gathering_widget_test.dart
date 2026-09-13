@@ -33,6 +33,41 @@ class FakeRemote extends Remote {
     admin = true;
   }
 
+  String? newPassword;
+
+  @override
+  Future<void> changePassword(String? current, String next) async {
+    if (current != null && current != 'pw') {
+      throw const RemoteError('지금 비밀번호가 다릅니다.');
+    }
+    newPassword = next;
+  }
+
+  final requests = <AdminRequest>[];
+  final approved = <String>[];
+
+  @override
+  Future<void> signUp(String name, String email, String password) async =>
+      requests.add((
+        id: 'u${requests.length + 1}',
+        email: email,
+        name: name,
+        at: DateTime(2026, 9, 1),
+      ));
+
+  @override
+  Future<List<AdminRequest>> adminRequests() async => [...requests];
+
+  @override
+  Future<void> approveAdmin(String userId) async {
+    requests.removeWhere((r) => r.id == userId);
+    approved.add(userId);
+  }
+
+  @override
+  Future<void> rejectAdmin(String userId) async =>
+      requests.removeWhere((r) => r.id == userId);
+
   @override
   Future<List<Gathering>> gatherings() async => [for (final g in gs) g.copy()];
 
@@ -188,6 +223,7 @@ void main() {
     fake = FakeRemote()..gs.add(sample());
     remote = fake;
     current.value = null;
+    passwordRecovery.value = false;
     store.event = Event(
       name: 'x',
       startDate: DateTime(2026, 10, 9),
@@ -426,6 +462,122 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(find.text('신촌하나교회 가족수양회'), findsOneWidget);
+    });
+
+    testWidgets('재설정 메일 링크로 오면 새 비밀번호부터, 두 칸이 다르면 막는다', (tester) async {
+      passwordRecovery.value = true;
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Gate());
+      expect(find.text('신촌하나교회 가족수양회'), findsNothing);
+      expect(find.widgetWithText(TextField, '지금 비밀번호'), findsNothing);
+
+      await tester.enterText(find.widgetWithText(TextField, '새 비밀번호'), 'new1');
+      await tester.enterText(
+        find.widgetWithText(TextField, '새 비밀번호 확인'),
+        'new2',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '비밀번호 바꾸기'));
+      await tester.pumpAndSettle();
+      expect(find.text('새 비밀번호를 똑같이 두 번 입력하세요.'), findsOneWidget);
+      expect(fake.newPassword, isNull);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, '새 비밀번호 확인'),
+        'new1',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '비밀번호 바꾸기'));
+      await tester.pumpAndSettle();
+      expect(fake.newPassword, 'new1');
+      expect(find.text('신촌하나교회 가족수양회'), findsOneWidget);
+    });
+
+    testWidgets('비밀번호 변경: 지금 비밀번호가 틀리면 막고, 맞으면 바뀐다', (tester) async {
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('admin@test'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('비밀번호 변경'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.widgetWithText(TextField, '지금 비밀번호'), 'x');
+      await tester.enterText(find.widgetWithText(TextField, '새 비밀번호'), 'new1');
+      await tester.enterText(
+        find.widgetWithText(TextField, '새 비밀번호 확인'),
+        'new1',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '비밀번호 바꾸기'));
+      await tester.pumpAndSettle();
+      expect(find.text('지금 비밀번호가 다릅니다.'), findsOneWidget);
+      expect(fake.newPassword, isNull);
+
+      await tester.enterText(find.widgetWithText(TextField, '지금 비밀번호'), 'pw');
+      await tester.tap(find.widgetWithText(FilledButton, '비밀번호 바꾸기'));
+      await tester.pumpAndSettle();
+      expect(fake.newPassword, 'new1');
+      expect(find.text('비밀번호를 바꿨습니다.'), findsOneWidget);
+    });
+
+    testWidgets('가입 신청: 칸이 비면 막고, 보내면 승인 대기 안내', (tester) async {
+      fake.admin = false;
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Gate());
+      await tester.tap(find.text('운영자 가입 신청'));
+      await tester.pumpAndSettle();
+
+      Finder box(String label) => find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(TextField, label),
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '가입 신청'));
+      await tester.pumpAndSettle();
+      expect(find.text('이름을 입력하세요.'), findsOneWidget);
+      expect(fake.requests, isEmpty);
+
+      await tester.enterText(box('이름'), '홍길동');
+      await tester.enterText(box('이메일'), 'new@test');
+      await tester.enterText(box('비밀번호'), 'pw1234');
+      await tester.enterText(box('비밀번호 확인'), 'pw1234');
+      await tester.tap(find.widgetWithText(FilledButton, '가입 신청'));
+      await tester.pumpAndSettle();
+      expect(fake.requests.single.email, 'new@test');
+      expect(find.textContaining('기존 운영자가 승인하면'), findsOneWidget);
+    });
+
+    testWidgets('운영자 승인: 승인하면 목록에서 빠지고, 거절은 한 번 더 묻는다', (tester) async {
+      fake
+        ..requests.add((
+          id: 'u1',
+          email: 'a@x',
+          name: '김철수',
+          at: DateTime(2026, 9, 1),
+        ))
+        ..requests.add((
+          id: 'u2',
+          email: 'b@x',
+          name: '',
+          at: DateTime(2026, 9, 2),
+        ));
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('admin@test'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('운영자 승인'));
+      await tester.pumpAndSettle();
+      expect(find.text('김철수'), findsOneWidget);
+      expect(find.text('b@x'), findsOneWidget); // 이름이 없으면 이메일
+
+      await tester.tap(find.widgetWithText(FilledButton, '승인').first);
+      await tester.pumpAndSettle();
+      expect(fake.approved, ['u1']);
+      expect(find.text('김철수'), findsNothing);
+
+      await tester.tap(find.widgetWithText(TextButton, '거절'));
+      await tester.pumpAndSettle();
+      expect(fake.requests, hasLength(1)); // 아직 확인 전
+      await tester.tap(find.widgetWithText(FilledButton, '거절'));
+      await tester.pumpAndSettle();
+      expect(fake.requests, isEmpty);
+      expect(find.text('승인을 기다리는 가입 신청이 없습니다.'), findsOneWidget);
     });
 
     testWidgets('집회 목록: 서버 집회가 카드로 보인다', (tester) async {

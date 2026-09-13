@@ -9,7 +9,9 @@
 --   registrations   신청자는 테이블에 직접 못 닿는다 — 아래 submit/lookup/update/cancel 함수로만.
 --                   운영자는 전부.
 --   room_plans      운영자만. 집회별 방배정(방·참석자·배정) 문서. 저장은 save_room_plan — 버전 검사.
---   운영자 = auth.users 에 있고 public.admins 에도 있는 사람. 공개 회원가입은 대시보드에서 끈다.
+--   운영자 = auth.users 에 있고 public.admins 에도 있는 사람.
+--   가입 신청 = auth.users 에만 있는 사람. 누구나 가입(대시보드에서 가입 켜 둠)할 수 있지만
+--   기존 운영자가 approve_admin 으로 승인하기 전엔 아무 데이터에도 못 닿는다.
 --
 -- 함수가 던지는 에러 메시지(앱이 이 문자열로 안내 문구를 고른다)
 --   CLOSED  INVALID_PHONE  INVALID_PIN  INVALID_PEOPLE  INVALID_TEXT  INVALID_QUOTED
@@ -320,6 +322,37 @@ begin
   return v;
 end $$;
 
+-- 승인을 기다리는 가입 신청. 운영자가 아니면 빈 목록.
+create or replace function public.admin_requests()
+returns table (id uuid, email text, name text, created_at timestamptz)
+language sql stable security definer set search_path = '' as $$
+  select u.id, u.email::text, u.raw_user_meta_data->>'name', u.created_at
+    from auth.users u
+   where public.is_admin()
+     and not exists (select 1 from public.admins a where a.user_id = u.id)
+   order by u.created_at
+$$;
+
+-- 가입 승인 = 운영자로 등록.
+create or replace function public.approve_admin(p_user uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not exists (select 1 from auth.users where id = p_user) then raise exception 'NOT_FOUND'; end if;
+  insert into public.admins (user_id) values (p_user) on conflict do nothing;
+end $$;
+
+-- 가입 거절 = 그 계정을 지운다. 이미 운영자인 계정은 못 지운다.
+create or replace function public.reject_admin(p_user uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  delete from auth.users u
+   where u.id = p_user
+     and not exists (select 1 from public.admins a where a.user_id = u.id);
+  if not found then raise exception 'NOT_FOUND'; end if;
+end $$;
+
 -- 함수 실행 권한도 명시한다 (Postgres 기본값은 "누구나 실행 가능").
 revoke execute on function
   public._touch(),
@@ -327,7 +360,10 @@ revoke execute on function
   public._check_input(jsonb, text, text, int),
   public._verify(uuid, text, text),
   public.reset_pin(uuid, text),
-  public.save_room_plan(uuid, jsonb, int)
+  public.save_room_plan(uuid, jsonb, int),
+  public.admin_requests(),
+  public.approve_admin(uuid),
+  public.reject_admin(uuid)
   from public, anon, authenticated;
 
 grant execute on function
@@ -340,7 +376,10 @@ grant execute on function
 
 grant execute on function
   public.reset_pin(uuid, text),
-  public.save_room_plan(uuid, jsonb, int)
+  public.save_room_plan(uuid, jsonb, int),
+  public.admin_requests(),
+  public.approve_admin(uuid),
+  public.reject_admin(uuid)
   to authenticated;
 
 -- ---------------------------------------------------------------------------

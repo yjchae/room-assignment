@@ -199,50 +199,68 @@ class _Warning extends StatelessWidget {
 
 /// 첫 화면. 운영자로 로그인돼 있으면 집회 목록, 아니면 로그인.
 /// 로그인은 이 기기(앱·브라우저)에 남아서 다음부터는 바로 목록이 뜬다.
+/// 비밀번호 재설정 메일 링크로 들어왔으면 새 비밀번호부터 정한다.
 class Gate extends StatelessWidget {
   const Gate({super.key});
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: signInCount,
-    builder: (context, _, _) => remote.signedIn
-        ? const GatheringsScreen()
-        : Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 340,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: AppColors.brand,
-                          borderRadius: BorderRadius.circular(16),
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([signInCount, passwordRecovery]),
+    builder: (context, _) {
+      final reset = passwordRecovery.value && remote.signedIn;
+      return remote.signedIn && !reset
+          ? const GatheringsScreen()
+          : Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 340,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: AppColors.brand,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(Icons.hotel, color: Colors.white),
                         ),
-                        child: const Icon(Icons.hotel, color: Colors.white),
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      '집회관리',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.text,
+                      const SizedBox(height: 14),
+                      const Text(
+                        '집회관리',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.text,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    LoginForm(onDone: () => signInCount.value++),
-                  ],
+                      const SizedBox(height: 20),
+                      if (reset) ...[
+                        const Text(
+                          '새 비밀번호를 정하세요.',
+                          style: TextStyle(color: AppColors.textMuted),
+                        ),
+                        const SizedBox(height: 8),
+                        PasswordForm(
+                          askCurrent: false,
+                          onDone: () {
+                            passwordRecovery.value = false;
+                            signInCount.value++;
+                          },
+                        ),
+                      ] else
+                        LoginForm(onDone: () => signInCount.value++),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+    },
   );
 }
 

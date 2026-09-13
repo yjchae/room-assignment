@@ -13,7 +13,10 @@ create role anon nologin;
 create role authenticated nologin;
 
 create schema auth;
-create table auth.users (id uuid primary key);
+create table auth.users (
+  id uuid primary key, email varchar(255),
+  raw_user_meta_data jsonb, created_at timestamptz default now()
+);
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 grant usage on schema auth to anon, authenticated;
@@ -62,11 +65,12 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 데이터: 운영자 a, 그냥 로그인한 사람 b, 집회 3개(열림 / 닫힘 / 마감 지남)
+-- 데이터: 운영자 a, 가입 신청만 한 b·c, 집회 3개(열림 / 닫힘 / 마감 지남)
 -- ---------------------------------------------------------------------------
-insert into auth.users values
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'a@x', null),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'b@x', '{"name":"비"}'),
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'c@x', null);
 insert into public.admins values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 insert into public.gatherings (id, name, start_date, end_date, open, deadline) values
   ('00000000-0000-0000-0000-000000000001', '열린 집회', '2026-10-09', '2026-10-11', true, null),
@@ -116,6 +120,8 @@ select t.err($q$select public.reset_pin(gen_random_uuid(), '0000')$q$, 'permissi
 select t.err($q$insert into public.admins values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
 select t.err('select * from public.room_plans', 'permission denied');
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'permission denied');
+select t.err('select * from public.admin_requests()', 'permission denied');
+select t.err($q$select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
 
 -- 조회
 select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000001', '010-1234-5678', '1234') ->> 'status' = 'pending',
@@ -170,6 +176,9 @@ do $$ begin
   update public.registrations set status = 'confirmed';
   perform t.ok(not found, '운영자가 아니면 신청을 못 고친다');
 end $$;
+select t.ok((select count(*) from public.admin_requests()) = 0, '운영자가 아니면 가입 신청 목록이 비어 있다');
+select t.err($q$select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'FORBIDDEN');
+select t.err($q$select public.reject_admin('cccccccc-cccc-cccc-cccc-cccccccccccc')$q$, 'FORBIDDEN');
 
 -- ===========================================================================
 -- 운영자
@@ -192,6 +201,20 @@ select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001', '{"roo
   '읽은 버전으로 저장하면 버전이 오른다');
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 1)$q$, 'CONFLICT');
 select t.ok((select data from public.room_plans) = '{"rooms":[1]}', '늦게 온 저장은 덮어쓰지 않는다');
+
+-- 가입 승인·거절
+select t.ok((select array_agg(email order by email) from public.admin_requests()) = array['b@x', 'c@x'],
+  '운영자는 가입 신청(운영자 아닌 계정)만 본다');
+select t.ok((select name from public.admin_requests() where email = 'b@x') = '비', '가입 때 넣은 이름이 보인다');
+select public.reject_admin('cccccccc-cccc-cccc-cccc-cccccccccccc');
+select t.ok(not exists (select 1 from auth.users where email = 'c@x'), '거절하면 계정이 지워진다');
+select t.err($q$select public.reject_admin('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')$q$, 'NOT_FOUND');
+select t.err($q$select public.approve_admin(gen_random_uuid())$q$, 'NOT_FOUND');
+select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select t.ok((select count(*) from public.admin_requests()) = 0, '승인하면 목록에서 빠진다');
+set request.jwt.claim.sub = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+select t.ok(public.is_admin(), '승인된 b 는 운영자다');
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
 -- ===========================================================================
 -- 다시 신청자: 확정 후엔 못 고치고, 운영자가 PIN 을 바꾸면 잠금이 풀린다

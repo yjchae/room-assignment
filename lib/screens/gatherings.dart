@@ -55,7 +55,7 @@ class LoginForm extends StatefulWidget {
 class _LoginFormState extends State<LoginForm> {
   final email = TextEditingController();
   final pw = TextEditingController();
-  String? err;
+  String? err, info;
   bool busy = false;
 
   @override
@@ -65,24 +65,33 @@ class _LoginFormState extends State<LoginForm> {
     super.dispose();
   }
 
-  Future<void> _go() async {
+  /// [f] 를 돌리는 동안 버튼을 막고, 실패하면 에러 문구를 띄운다.
+  Future<void> _run(Future<void> Function() f) async {
     if (busy) return;
     setState(() {
       busy = true;
-      err = null;
+      err = info = null;
     });
     try {
-      await remote.signIn(email.text, pw.text);
-      widget.onDone();
+      await f();
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          busy = false;
-          err = errorText(e);
-        });
-      }
+      if (mounted) setState(() => err = errorText(e));
     }
+    if (mounted) setState(() => busy = false);
   }
+
+  Future<void> _go() => _run(() async {
+    await remote.signIn(email.text, pw.text);
+    widget.onDone();
+  });
+
+  Future<void> _forgot() => _run(() async {
+    if (!email.text.contains('@')) throw const RemoteError('이메일을 먼저 입력하세요.');
+    await remote.sendPasswordReset(email.text);
+    info =
+        '비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 이 브라우저에서 열어 새 비밀번호를 정하세요. '
+        '메일이 안 오면 스팸함을 확인하세요.';
+  });
 
   @override
   Widget build(BuildContext context) => AutofillGroup(
@@ -114,8 +123,375 @@ class _LoginFormState extends State<LoginForm> {
           onPressed: busy ? null : _go,
           child: Text(busy ? '확인 중…' : '로그인'),
         ),
+        Wrap(
+          alignment: WrapAlignment.center,
+          children: [
+            TextButton(
+              onPressed: busy ? null : _forgot,
+              child: const Text('비밀번호를 잊었어요', style: TextStyle(fontSize: 12)),
+            ),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () => showDialog<void>(
+                      context: context,
+                      builder: (_) => const _SignUpDialog(),
+                    ),
+              child: const Text('운영자 가입 신청', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        if (info != null)
+          Text(
+            info!,
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
       ],
     ),
+  );
+}
+
+/// 새 비밀번호 입력. [askCurrent] 면 지금 비밀번호부터 확인한다.
+/// 재설정 메일 링크로 들어왔을 땐(첫 화면) 안 묻는다.
+class PasswordForm extends StatefulWidget {
+  const PasswordForm({
+    super.key,
+    required this.askCurrent,
+    required this.onDone,
+  });
+  final bool askCurrent;
+  final VoidCallback onDone;
+
+  @override
+  State<PasswordForm> createState() => _PasswordFormState();
+}
+
+class _PasswordFormState extends State<PasswordForm> {
+  final cur = TextEditingController();
+  final next = TextEditingController();
+  final again = TextEditingController();
+  String? err;
+  bool busy = false;
+
+  @override
+  void dispose() {
+    cur.dispose();
+    next.dispose();
+    again.dispose();
+    super.dispose();
+  }
+
+  Future<void> _go() async {
+    if (busy) return;
+    if (next.text.isEmpty || next.text != again.text) {
+      setState(() => err = '새 비밀번호를 똑같이 두 번 입력하세요.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      err = null;
+    });
+    try {
+      await remote.changePassword(
+        widget.askCurrent ? cur.text : null,
+        next.text,
+      );
+      widget.onDone();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          busy = false;
+          err = errorText(e);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AutofillGroup(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.askCurrent) ...[
+          TextField(
+            controller: cur,
+            autofocus: true,
+            obscureText: true,
+            autofillHints: const [AutofillHints.password],
+            decoration: const InputDecoration(labelText: '지금 비밀번호'),
+          ),
+          const SizedBox(height: 8),
+        ],
+        TextField(
+          controller: next,
+          autofocus: !widget.askCurrent,
+          obscureText: true,
+          autofillHints: const [AutofillHints.newPassword],
+          decoration: const InputDecoration(labelText: '새 비밀번호'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: again,
+          obscureText: true,
+          autofillHints: const [AutofillHints.newPassword],
+          decoration: InputDecoration(
+            labelText: '새 비밀번호 확인',
+            errorText: err,
+            errorMaxLines: 3,
+          ),
+          onSubmitted: (_) => _go(),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: busy ? null : _go,
+          child: Text(busy ? '바꾸는 중…' : '비밀번호 바꾸기'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _changePasswordDialog(BuildContext context) {
+  final messenger = ScaffoldMessenger.of(context);
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('비밀번호 변경'),
+      content: SizedBox(
+        width: 340,
+        child: PasswordForm(
+          askCurrent: true,
+          onDone: () {
+            Navigator.pop(context);
+            messenger.showSnackBar(
+              const SnackBar(content: Text('비밀번호를 바꿨습니다.')),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// 운영자 가입 신청. 기존 운영자가 [운영자 승인]에서 승인해야 로그인할 수 있다.
+class _SignUpDialog extends StatefulWidget {
+  const _SignUpDialog();
+
+  @override
+  State<_SignUpDialog> createState() => _SignUpDialogState();
+}
+
+class _SignUpDialogState extends State<_SignUpDialog> {
+  final name = TextEditingController();
+  final email = TextEditingController();
+  final pw = TextEditingController();
+  final again = TextEditingController();
+  String? err;
+  bool busy = false, done = false;
+
+  @override
+  void dispose() {
+    name.dispose();
+    email.dispose();
+    pw.dispose();
+    again.dispose();
+    super.dispose();
+  }
+
+  Future<void> _go() async {
+    if (busy) return;
+    final bad = name.text.trim().isEmpty
+        ? '이름을 입력하세요.'
+        : !email.text.contains('@')
+        ? '이메일을 확인하세요.'
+        : pw.text.isEmpty || pw.text != again.text
+        ? '비밀번호를 똑같이 두 번 입력하세요.'
+        : null;
+    setState(() {
+      err = bad;
+      busy = bad == null;
+    });
+    if (bad != null) return;
+    try {
+      await remote.signUp(name.text, email.text, pw.text);
+      if (mounted) setState(() => done = true);
+    } catch (e) {
+      if (mounted) setState(() => err = errorText(e));
+    }
+    if (mounted) setState(() => busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('운영자 가입 신청'),
+    content: SizedBox(
+      width: 340,
+      child: done
+          ? const Text(
+              '가입 신청을 보냈습니다.\n'
+              '기존 운영자가 승인하면 로그인할 수 있습니다. '
+              '확인 메일이 오면 메일의 링크도 눌러 주세요.',
+            )
+          : AutofillGroup(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: name,
+                    autofocus: true,
+                    autofillHints: const [AutofillHints.name],
+                    decoration: const InputDecoration(labelText: '이름'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: email,
+                    keyboardType: TextInputType.emailAddress,
+                    autofillHints: const [AutofillHints.email],
+                    decoration: const InputDecoration(labelText: '이메일'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: pw,
+                    obscureText: true,
+                    autofillHints: const [AutofillHints.newPassword],
+                    decoration: const InputDecoration(labelText: '비밀번호'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: again,
+                    obscureText: true,
+                    autofillHints: const [AutofillHints.newPassword],
+                    decoration: InputDecoration(
+                      labelText: '비밀번호 확인',
+                      errorText: err,
+                      errorMaxLines: 3,
+                    ),
+                    onSubmitted: (_) => _go(),
+                  ),
+                ],
+              ),
+            ),
+    ),
+    actions: done
+        ? [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ]
+        : [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: busy ? null : _go,
+              child: Text(busy ? '보내는 중…' : '가입 신청'),
+            ),
+          ],
+  );
+}
+
+/// 가입 신청 목록. 승인하면 운영자가 되고, 거절하면 그 계정이 지워진다.
+class _AdminRequestsDialog extends StatefulWidget {
+  const _AdminRequestsDialog();
+
+  @override
+  State<_AdminRequestsDialog> createState() => _AdminRequestsDialogState();
+}
+
+class _AdminRequestsDialogState extends State<_AdminRequestsDialog> {
+  late Future<List<AdminRequest>> list = remote.adminRequests();
+  String? err;
+
+  Future<void> _act(Future<void> Function() f) async {
+    setState(() => err = null);
+    try {
+      await f();
+    } catch (e) {
+      if (mounted) setState(() => err = errorText(e));
+    }
+    if (mounted) {
+      setState(() {
+        list = remote.adminRequests();
+      });
+    }
+  }
+
+  Future<void> _reject(AdminRequest r) async {
+    final ok = await confirmDialog(
+      context,
+      title: '가입 거절',
+      body: '${r.email} 계정을 지웁니다. 다시 쓰려면 가입 신청부터 다시 해야 합니다.',
+      action: '거절',
+      danger: true,
+    );
+    if (ok) await _act(() => remote.rejectAdmin(r.id));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('운영자 승인'),
+    scrollable: true,
+    content: SizedBox(
+      width: 460,
+      child: FutureBuilder(
+        future: list,
+        builder: (context, s) {
+          if (s.hasError) return Text(errorText(s.error!));
+          final rs = s.data;
+          if (rs == null) {
+            return const SizedBox(
+              height: 80,
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (err != null)
+                Text(err!, style: const TextStyle(color: AppColors.danger)),
+              if (rs.isEmpty) const Text('승인을 기다리는 가입 신청이 없습니다.'),
+              for (final r in rs)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(r.name.isEmpty ? r.email : r.name),
+                  subtitle: Text('${r.email} · ${ymd(r.at)} 신청'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton(
+                        onPressed: () => _reject(r),
+                        child: const Text('거절'),
+                      ),
+                      const SizedBox(width: 4),
+                      FilledButton(
+                        onPressed: () => _act(() => remote.approveAdmin(r.id)),
+                        child: const Text('승인'),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('닫기'),
+      ),
+    ],
   );
 }
 
@@ -137,7 +513,14 @@ class AdminButton extends StatelessWidget {
       }
       return PopupMenuButton<String>(
         tooltip: '운영자 계정',
-        onSelected: (_) async {
+        onSelected: (v) async {
+          if (v == 'pw') return _changePasswordDialog(context);
+          if (v == 'approve') {
+            return showDialog<void>(
+              context: context,
+              builder: (_) => const _AdminRequestsDialog(),
+            );
+          }
           await remote.signOut();
           signInCount.value++;
           // 집회 탭 화면에서 로그아웃해도 첫 화면(로그인)으로 돌아간다.
@@ -146,6 +529,8 @@ class AdminButton extends StatelessWidget {
           }
         },
         itemBuilder: (_) => const [
+          PopupMenuItem(value: 'approve', child: Text('운영자 승인')),
+          PopupMenuItem(value: 'pw', child: Text('비밀번호 변경')),
           PopupMenuItem(value: 'out', child: Text('로그아웃')),
         ],
         child: Padding(
