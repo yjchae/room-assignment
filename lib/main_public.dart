@@ -241,6 +241,7 @@ class _FeeTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final f = g.fee;
     final n = g.nights;
+    final byAge = g.asks('birthYear');
     // 시작 나이가 높은 구분부터. 한 구분의 끝 나이 = 바로 위 구분의 시작 나이 − 1.
     final order = [...f.minAge.entries]
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -291,7 +292,8 @@ class _FeeTable extends StatelessWidget {
                 cell('당일', head: true),
               ],
             ),
-            for (final ag in AgeGroup.values)
+            // 출생연도를 안 받으면 모두 성인 금액이라 성인 줄만.
+            for (final ag in byAge ? AgeGroup.values : [AgeGroup.adult])
               TableRow(
                 children: [
                   Padding(
@@ -306,13 +308,14 @@ class _FeeTable extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        Text(
-                          ages(ag),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textMuted,
+                        if (byAge)
+                          Text(
+                            ages(ag),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textMuted,
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -325,7 +328,7 @@ class _FeeTable extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         for (final line in [
-          '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
+          if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
           if (f.fullDiscountPct > 0)
             '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
           '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
@@ -400,8 +403,9 @@ class _PersonForm {
   }
 
   /// 금액 계산·제출용. 출생연도가 아직 없으면 null.
-  Person? toPerson({String? phone}) {
-    final y = birthYear;
+  /// [askBirth] 가 false(운영자가 출생연도 칸을 뺌)면 0 = 모름.
+  Person? toPerson({String? phone, bool askBirth = true}) {
+    final y = askBirth ? birthYear : 0;
     if (y == null) return null;
     String? t(TextEditingController c) =>
         c.text.trim().isEmpty ? null : c.text.trim();
@@ -484,7 +488,9 @@ class _ApplyPageState extends State<ApplyPage> {
 
   void _changed() => setState(() {});
 
-  List<Person> get _people => [for (final f in forms) ?f.toPerson()];
+  List<Person> get _people => [
+    for (final f in forms) ?f.toPerson(askBirth: g.asks('birthYear')),
+  ];
 
   void _addCompanion() => setState(
     () => forms.add(
@@ -618,20 +624,23 @@ class _ApplyPageState extends State<ApplyPage> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: f.birth,
-                keyboardType: TextInputType.number,
-                maxLength: 4,
-                decoration: const InputDecoration(
-                  labelText: '출생연도 *',
-                  hintText: '1985',
-                  counterText: '',
+            if (g.asks('birthYear')) ...[
+              Expanded(
+                child: TextFormField(
+                  controller: f.birth,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  decoration: const InputDecoration(
+                    labelText: '출생연도 *',
+                    hintText: '1985',
+                    counterText: '',
+                  ),
+                  validator: (_) =>
+                      f.birthYear == null ? '4자리 연도로 입력하세요' : null,
                 ),
-                validator: (_) => f.birthYear == null ? '4자리 연도로 입력하세요' : null,
               ),
-            ),
-            const SizedBox(width: 12),
+              const SizedBox(width: 12),
+            ],
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -671,24 +680,28 @@ class _ApplyPageState extends State<ApplyPage> {
             onChanged: (v) => f.relation = v ?? '기타',
           ),
         ],
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: f.cell,
-                decoration: const InputDecoration(labelText: '셀'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextFormField(
-                controller: f.zone,
-                decoration: const InputDecoration(labelText: '존'),
-              ),
-            ),
-          ],
-        ),
+        if (g.asks('cell') || g.asks('zone')) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              if (g.asks('cell'))
+                Expanded(
+                  child: TextFormField(
+                    controller: f.cell,
+                    decoration: const InputDecoration(labelText: '셀'),
+                  ),
+                ),
+              if (g.asks('cell') && g.asks('zone')) const SizedBox(width: 12),
+              if (g.asks('zone'))
+                Expanded(
+                  child: TextFormField(
+                    controller: f.zone,
+                    decoration: const InputDecoration(labelText: '존'),
+                  ),
+                ),
+            ],
+          ),
+        ],
         for (final field in g.formFields)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -805,7 +818,10 @@ class _ApplyPageState extends State<ApplyPage> {
     }
     final people = [
       for (final (i, f) in forms.indexed)
-        f.toPerson(phone: i == 0 && !editing ? digitsOnly(phone.text) : null)!,
+        f.toPerson(
+          phone: i == 0 && !editing ? digitsOnly(phone.text) : null,
+          askBirth: g.asks('birthYear'),
+        )!,
     ];
     final q = g.quoteFor(people, appliedAt);
     final ok = await showDialog<bool>(

@@ -134,7 +134,7 @@ class Store extends ChangeNotifier {
       id: p.id,
       name: p.name,
       gender: p.gender,
-      age: g.start.year - p.birthYear,
+      age: p.birthYear == 0 ? 0 : g.start.year - p.birthYear, // 0 = 모름
       phone: fmtPhone(p.phone ?? r.phone),
       cell: p.cell,
       zone: p.zone,

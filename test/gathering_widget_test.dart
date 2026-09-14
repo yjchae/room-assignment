@@ -248,6 +248,16 @@ void main() {
       expect(apply.onPressed, isNotNull);
     });
 
+    testWidgets('출생연도를 안 받으면 회비표는 성인 줄만', (tester) async {
+      fake.gs.first.hiddenFields = ['birthYear'];
+      setView(tester, const Size(400, 1400));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(find.text('성인'), findsOneWidget);
+      expect(find.text('중고등'), findsNothing);
+      expect(find.textContaining('출생연도로 계산'), findsNothing);
+    });
+
     testWidgets('신청을 받지 않으면 [신청하기]가 꺼진다', (tester) async {
       fake.gs.first.open = false;
       setView(tester, const Size(400, 1400));
@@ -330,6 +340,20 @@ void main() {
       // 셀·존은 신청자 것을 따라가지 않고 빈칸으로 시작한다.
       expect((people.first.cell, people.first.zone), ('1셀', 'A존'));
       expect((people.last.cell, people.last.zone), (null, null));
+    });
+
+    testWidgets('운영자가 끈 출생연도·셀·존은 신청서에 없고, 금액은 성인으로', (tester) async {
+      setView(tester, const Size(400, 2400));
+      final g = sample()..hiddenFields = ['birthYear', 'cell', 'zone'];
+      await pumpPage(tester, ApplyPage(gathering: g));
+      for (final label in ['출생연도 *', '셀', '존']) {
+        expect(find.widgetWithText(TextFormField, label), findsNothing);
+      }
+      expect(find.textContaining('성인 · 전체'), findsOneWidget);
+      expect(
+        Gathering.fromRow({...g.toRow(), 'id': g.id}).hiddenFields,
+        g.hiddenFields,
+      );
     });
 
     testWidgets('부분 참석으로 바꾸면 1박 금액이 된다', (tester) async {

@@ -257,12 +257,14 @@ class Gathering {
     FeeRule? fee,
     Bank? bank,
     List<String>? formFields,
+    List<String>? hiddenFields,
     this.open = false,
     this.deadline,
   }) : themes = themes ?? [],
        fee = fee ?? FeeRule(),
        bank = bank ?? Bank(),
-       formFields = formFields ?? [];
+       formFields = formFields ?? [],
+       hiddenFields = hiddenFields ?? [];
 
   /// '' = 아직 서버에 저장 안 됨.
   String id;
@@ -275,6 +277,13 @@ class Gathering {
 
   /// 신청서에 나오는 사용자 정의 항목. 관리자 앱의 참석자 항목과 같은 이름.
   List<String> formFields;
+
+  /// 운영자가 신청서에서 뺀 기본 항목: 'birthYear' · 'cell' · 'zone'.
+  /// 출생연도를 빼면 모두 성인 금액으로 계산한다.
+  List<String> hiddenFields;
+
+  /// 신청서에 [field] 칸이 나오는가.
+  bool asks(String field) => !hiddenFields.contains(field);
   bool open;
 
   /// 이 날까지 신청 받는다.
@@ -311,6 +320,7 @@ class Gathering {
     'fee': fee.toJson(),
     'bank': bank.toJson(),
     'form_fields': formFields,
+    'hidden_fields': hiddenFields,
     'open': open,
     'deadline': deadline == null ? null : ymd(deadline!),
   };
@@ -329,6 +339,7 @@ class Gathering {
     fee: FeeRule.fromJson(r['fee']),
     bank: Bank.fromJson(r['bank']),
     formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
+    hiddenFields: [for (final f in (r['hidden_fields'] as List? ?? [])) '$f'],
     open: r['open'] == true,
     deadline: _date(r['deadline']),
   );

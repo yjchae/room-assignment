@@ -670,6 +670,36 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                   const SizedBox(height: 16),
                   const Text(
+                    '신청서 기본 항목',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  const Text(
+                    '끄면 신청서에 그 칸이 나오지 않습니다. 출생연도를 끄면 모두 성인 금액으로 계산합니다.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final (key, label) in const [
+                        ('birthYear', '출생연도'),
+                        ('cell', '셀'),
+                        ('zone', '존'),
+                      ])
+                        FilterChip(
+                          label: Text(label),
+                          selected: x.asks(key),
+                          onSelected: (on) => setState(
+                            () => on
+                                ? x.hiddenFields.remove(key)
+                                : x.hiddenFields.add(key),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
                     '신청서 추가 항목',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
