@@ -1,7 +1,8 @@
 /// 신청 웹 (휴대폰 브라우저). 빌드: flutter build web -t lib/main_public.dart
 /// 링크: <신청 웹 주소>?g=<집회id>
 ///
-/// dart:io 를 쓰는 store.dart / auth.dart 는 import 하지 않는다 (웹 빌드가 깨짐).
+/// 운영자 쪽 코드(store.dart, screens/)는 가져오지 않는다 — 신청 웹 번들에 들어갈 이유가 없다.
+/// 여기서 가져오는 파일(gathering · remote · theme · quote_table)은 dart:io 금지 (웹 빌드가 깨짐).
 library;
 
 import 'dart:ui' show ImageFilter;

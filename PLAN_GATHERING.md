@@ -28,7 +28,7 @@
 ## 1. 구조
 
 ### 1.1 왜 서버가 필요해졌나
-지금은 **운영자 PC 한 대 + 로컬 JSON 파일**이다. 새 요구사항 중 두 가지가 이걸 넘는다.
+처음 방배정 앱은 **운영자 PC 한 대 + 로컬 JSON 파일**이었다. 새 요구사항 중 두 가지가 이걸 넘는다.
 
 - 신청자가 **자기 휴대폰에서** 신청서를 낸다.
 - 신청자가 **나중에 다시 조회**한다.
@@ -60,16 +60,18 @@ Supabase 클라이언트는 순수 Dart 라 macOS·Windows·웹에서 똑같이 
 
 | | 누가 | 어디서 | 데이터 |
 |---|---|---|---|
-| **관리자 앱** (지금 앱) | 운영자 | **macOS / Windows** | 집회·신청·이미지 = Supabase / **방·참석자·배정 = 지금처럼 로컬 JSON** |
+| **관리자 앱** (`lib/main.dart`) | 운영자 | **macOS / Windows / 운영자 웹** | 집회·신청·이미지·방배정 전부 Supabase |
 | **신청 웹** (새 진입점 `lib/main_public.dart`) | 신청자 | 휴대폰 브라우저 (카톡 링크) | Supabase |
 
 - 같은 Flutter 프로젝트에서 웹으로 빌드한다. **회비 계산 코드를 신청 웹과 관리자 앱이 같이 쓰기 위해서**다 (따로 짜면 금액이 어긋난다).
 - 신청 웹은 **GitHub Pages**(무료, 월 100GB)에 올린다. 무료 계정은 공개 저장소만 Pages 를 쓸 수 있으므로 **저장소를 공개로 바꾼다.**
-  배포 = `main` 에 push 하면 `.github/workflows/deploy-web.yml` 이 `flutter build web -t lib/main_public.dart --base-href /room-assignment/` 로 빌드해 올린다.
-  링크: `https://yjchae.github.io/room-assignment/?g=<집회id>`
-- 방배정 데이터는 로컬에 그대로 둔다 → **수련회 장소에 인터넷이 안 돼도 방배정은 계속 된다.** 서버는 집회설정/신청·입금 탭에서만 필요하다.
+  배포 = `main` 에 push 하면 `.github/workflows/deploy-web.yml` 이 테스트를 돌린 뒤 신청 웹(`lib/main_public.dart`)과 운영자 웹(`lib/main.dart`, `admin/` 아래)을 같이 빌드해 올린다.
+  링크: 신청 `https://yjchae.github.io/room-assignment/?g=<집회id>` / 운영자 `https://yjchae.github.io/room-assignment/admin/`
+- 방배정(방·참석자·배정)도 서버에 둔다. 집회마다 `room_plans` 행 하나에 `Event` JSON 문서를 통째로 저장한다 → **여러 PC·태블릿이 같은 방배정을 연다.**
+  동시에 고치면 버전으로 막는다(`save_room_plan` 이 `CONFLICT` → 덮어쓰지 않고 최신 문서를 다시 읽는다).
+  대신 **인터넷이 없으면 방배정도 저장되지 않는다.** 저장이 실패하면 화면 위에 경고 줄이 뜨고 다음 변경 때 다시 올린다. 수련회 장소 인터넷이 불안하면 앱바 [백업]으로 JSON 을 내려받아 둔다.
 
-> `ponytail:` 방배정 데이터까지 서버로 옮기면 여러 PC 동시 작업이 되지만 요구사항에 없다. 필요해지면 `Store.save()` 가 파일 대신 DB 행 하나에 JSON 을 쓰도록 바꾸면 된다.
+> `ponytail:` 변경마다 문서 전체를 올린다. 참석자 수천 명(1MB 미만)까지는 문제없다. 느려지면 방·참석자를 행으로 쪼갠다.
 
 ### 1.5 일시정지 방지
 1. **자동 깨우기**: `.github/workflows/keepalive.yml` — GitHub Actions 가 3일마다 `gatherings` 를 1행 조회한다.
@@ -80,7 +82,7 @@ Supabase 클라이언트는 순수 Dart 라 macOS·Windows·웹에서 똑같이 
 ### 1.6 키 관리
 - 앱에 넣는 건 **공개용(anon/publishable) 키**뿐이다. 이 키는 원래 공개돼도 되는 키고, 실제 권한은 §6 의 보안 규칙(RLS)이 막는다.
 - **service_role 키는 앱·저장소 어디에도 넣지 않는다** (모든 규칙을 무시하는 키).
-- 저장소가 공개이므로 **커밋 금지**: service_role 키, DB 비밀번호, 실제 참석자 데이터(`event.json` 은 앱 데이터 폴더에 저장돼 저장소 밖이라 지금도 안전), 실명·실제 전화번호가 든 테스트 데이터.
+- 저장소가 공개이므로 **커밋 금지**: service_role 키, DB 비밀번호, 실제 참석자 데이터([백업]으로 내려받은 JSON·CSV 를 저장소 폴더에 두지 말 것), 실명·실제 전화번호가 든 테스트 데이터.
 
 ---
 
@@ -105,17 +107,18 @@ Supabase 클라이언트는 순수 Dart 라 macOS·Windows·웹에서 똑같이 
 | 신청 | 신청 받기 켜기/끄기, 마감일(선택) | |
 | | 추가 입력 항목 | 기존 "사용자 정의 항목"(교회, 직분 …) 그대로 신청서에 나온다 |
 
-- 저장하면 로컬 `Event` 의 이름/시작일/종료일/사용자 정의 항목도 같이 갱신 → **방배정 쪽 코드는 아무것도 몰라도 된다.**
+- 저장하면 방배정 `Event` 의 이름/시작일/종료일/사용자 정의 항목도 같이 갱신 (`Store.applyGathering`) → **방배정 쪽 코드는 아무것도 몰라도 된다.**
 - [신청 링크 복사] 버튼 (카톡 공지용).
 
 ### 2.2 집회 목록 (새 첫 화면)
 
-지금은 앱 = 집회 1개. 앞으로는 잠금 해제 후 **집회 목록**(배경 이미지 카드, 일정, 신청 n건 · 확정 m건) → 하나 고르면 지금의 탭 화면으로 들어간다.
+처음 앱은 집회 1개였다. 지금은 운영자 로그인 후 **집회 목록**(배경 이미지 카드, 일정, 신청 n건 · 확정 m건) → 하나 고르면 지금의 탭 화면으로 들어간다.
 
 탭: **집회 설정 · 신청·입금** · 방 관리 · 참석자 · 방배정 · 자동배정 · 현황 (앞의 2개가 새것, 뒤 5개는 기존 그대로)
 
-- 로컬 파일은 집회별로 `events/<집회id>.json`. 기존 `event.json` 은 첫 실행 때 첫 번째 집회로 옮긴다.
-- 서버에 연결이 안 되면 목록은 이 PC 에 파일이 있는 집회만 보여준다 (방배정은 계속 가능).
+- 방배정은 집회마다 서버 `room_plans` 에 문서 하나 (§1.4).
+- 서버에 연결이 안 되면 목록이 뜨지 않는다 — 연결되면 [새로고침]. 방배정을 못 불러온 채로 열면 경고 줄이 뜨고
+  그동안 고친 내용은 저장하지 않는다 (빈 화면으로 서버 내용을 덮어쓰지 않게).
 
 ### 2.3 이미지 — 올리기 전에 앱이 줄인다
 
@@ -247,7 +250,7 @@ Supabase 클라이언트는 순수 Dart 라 macOS·Windows·웹에서 똑같이 
 - [PIN 재설정].
 
 ### 5.3 참석자로 가져오기 (방배정과 연결)
-참석자 탭에 **[신청에서 가져오기]** 버튼 하나. 서버에서 **확정된 신청**을 읽어 로컬 참석자와 맞춘다:
+참석자 탭에 **[신청에서 가져오기]** 버튼 하나. 서버에서 **확정된 신청**을 읽어 방배정 참석자와 맞춘다 (`Store.syncRegistrations`):
 
 | 신청 쪽 | 참석자 쪽 동작 |
 |---|---|
@@ -314,9 +317,11 @@ create table lookup_failures (phone text not null, at timestamptz not null defau
 | `gatherings` | 읽기 | 읽기·쓰기 |
 | `registrations`, `lookup_failures` | **직접 접근 불가** — 아래 함수로만 | 읽기·쓰기 |
 | 스토리지 `gathering-images` | 읽기(공개 버킷) | 올리기·지우기 |
+| `room_plans` (방배정) | 접근 불가 | 읽기·쓰기 — 저장은 `save_room_plan` (버전 검사) |
 
-- 운영자 계정은 Supabase 대시보드에서 직접 만들고 `admins` 에 한 줄 넣는다. **공개 회원가입은 끈다.**
-  (가입을 실수로 켜 둬도 `admins` 에 없으면 운영자가 아니다 — 이중 잠금)
+- 운영자 가입: 누구나 [가입 신청]할 수 있지만(대시보드에서 가입 켜 둠) `admins` 에 없으면 아무 데이터에도 못 닿는다.
+  기존 운영자가 관리자 앱 [운영자 승인]에서 승인(`approve_admin`)하거나 거절(`reject_admin` = 계정 삭제)한다.
+  첫 운영자만 대시보드에서 `admins` 에 직접 한 줄 넣는다.
 
 신청 웹이 부르는 함수 (전부 `security definer`, 함수 안에서 검사):
 
@@ -367,7 +372,7 @@ Quote quote(FeeRule fee, {required DateTime start, required DateTime end,
 
 ```
 lib/
-  main.dart                     (수정) 잠금 → 집회 목록 → 탭 7개
+  main.dart                     (수정) 운영자 로그인 → 집회 목록 → 탭 7개
   main_public.dart              (신규) 신청 웹 진입점: 집회 페이지 / 신청서 / 조회
   gathering.dart                (신규) Gathering·FeeRule·Person·Registration + quote()
   config.dart                   (신규) 서버 주소·공개용 키·신청 링크
@@ -377,21 +382,21 @@ lib/
   screens/gathering_settings.dart (신규) 집회 설정
   screens/registrations.dart    (신규) 신청·입금 관리
   models.dart                   (수정) Attendee.registrationId
-  store.dart                    (수정) 집회별 파일 경로 + applyGathering() + syncRegistrations()
+  store.dart                    (수정) 방배정을 서버 문서로 읽고 쓰기(버전 검사) + applyGathering() + syncRegistrations()
   auto_assign.dart              (수정) GroupField '가족'
 supabase/schema.sql             (신규) 테이블 + RLS + 함수 + 스토리지 버킷 권한
 .github/workflows/keepalive.yml (신규) 3일마다 DB 1행 조회
-.github/workflows/deploy-web.yml (신규) main push → 신청 웹 빌드 → GitHub Pages
+.github/workflows/deploy-web.yml (신규) main push → 테스트 → 신청 웹·운영자 웹 빌드 → GitHub Pages
 test/fee_test.dart              (신규) 회비 계산 — §3.3 예시 + 경계(부분>전체 상한, 할인 겹침, 영유아 0원)
 supabase/test.sql               (신규) 로컬 Postgres 에서 권한·함수 거부 시나리오 검증
 test/gathering_test.dart        (신규) 모델 JSON · 이미지 줄이기 · 신청 → 참석자 가져오기 · '가족' 기준
 test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 화면 — 가짜 서버로
 ```
 
-- `main_public.dart` 는 `dart:io` 를 쓰는 `store.dart`/`auth.dart` 를 import 하지 않는다 (웹 빌드가 깨짐).
+- 신청 웹에 들어가는 파일(`main_public.dart`, `gathering.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`)은 `dart:io` 를 import 하지 않는다 (웹 빌드가 깨짐). `main_public.dart` 는 운영자 쪽(`store.dart`, `screens/`)을 가져오지 않는다.
 - 새 의존성: `supabase_flutter`(서버·로그인·스토리지), `file_picker`(이미지 고르기), `image`(줄이기, 순수 Dart).
   macOS 는 entitlements 에 `com.apple.security.network.client` 와 사용자 선택 파일 읽기 권한 추가.
-- 기존 로컬 비밀번호 잠금(auth.dart)은 그대로 둔다 — 오프라인에서도 앱은 열려야 한다. Supabase 로그인은 집회설정/신청·입금 탭에 처음 들어갈 때 한 번 (세션 저장).
+- 로컬 비밀번호 잠금(auth.dart)은 없앴다. 관리자 앱은 첫 화면부터 Supabase 운영자 로그인이고, 로그인은 기기에 남는다 (`main.dart` 의 `Gate`).
 
 ---
 
@@ -399,7 +404,7 @@ test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 �
 
 1. **`gathering.dart` + `quote()` + `fee_test.dart`** — 돈 계산이 먼저 맞아야 나머지가 의미 있다
 2. Supabase 프로젝트 생성 + `schema.sql` 적용, 운영자 계정 1개, 권한 거부 시나리오 확인, `keepalive.yml`
-3. 집회 목록 + 집회 설정 화면 (이미지 줄이기+업로드, `image_test.dart`), Store 집회별 파일 + 기존 event.json 이전
+3. 집회 목록 + 집회 설정 화면 (이미지 줄이기+업로드, `image_test.dart`), Store 집회별 파일 + 기존 event.json 이전 (나중에 서버 문서로 바뀜 — §10)
 4. 신청 웹: 집회 페이지 → 신청서 → 완료, 저장소 공개 전환 + GitHub Pages 자동 배포
 5. 신청 조회 + 수정/취소
 6. 신청·입금 관리 (확인·일괄 확정·취소·PIN 재설정)
@@ -415,7 +420,6 @@ test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 �
 - 온라인 결제(카드/간편결제) — PG 계약 필요
 - 정원 제한·대기자 — 요청 오면 `gatherings.capacity` 한 칸
 - 식사 인원 집계, 차량/셔틀 신청 — 사용자 정의 항목으로 먼저 받아보고 부족하면
-- 방배정 데이터 서버 이전(여러 PC 동시 작업)
 - 신청 링크 QR 코드
 - HEIC(아이폰 원본) 이미지 읽기 — 운영자가 불편해하면
 - 자동 백업 — Pro 요금제($25/월) 또는 GitHub Actions 로 주 1회 `pg_dump`
@@ -425,9 +429,16 @@ test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 �
 
 ---
 
-## 10. 구현 현황 (2026-09-13)
+## 10. 구현 현황 (2026-09-14)
 
-1~8단계 구현 완료. 기획과 달라진 점:
+1~8단계 구현 완료. 기획과 달라진 점 (위 본문은 달라진 대로 고쳐 두었다):
+
+- **방배정도 서버로 옮겼다** (§1.4). 여러 PC·태블릿이 같은 방배정을 쓰도록. 로컬 `event.json`·`events/<id>.json` 은 더 이상 쓰지 않는다 —
+  예전 PC 의 파일은 앱바 [백업 → JSON 파일로 되살리기]로 올릴 수 있다.
+- **로컬 비밀번호 잠금(auth.dart)을 없앴다.** 관리자 앱은 첫 화면부터 운영자 로그인이다 (`main.dart` 의 `Gate`).
+- **운영자 웹** (`/admin/`) 을 신청 웹과 같이 배포한다.
+- **운영자 가입 신청 + 승인** (§6). 공개 가입을 끄는 대신 승인 전엔 아무 데이터에도 못 닿게 했다.
+- 앱바 [백업]: 방배정 JSON 내려받기·되살리기, 참석자 CSV(엑셀) 내려받기.
 
 - **당일(0박) 참석자는 [신청에서 가져오기]에서 빠진다.** 방이 필요 없고, 방배정 쪽 정원 계산은
   "하룻밤도 안 겹치는 사람 = 모든 밤 차지"로 세기 때문에 넣으면 정원이 틀어진다. 가져오기 결과에 "당일 N명 제외"로 표시.
@@ -438,6 +449,5 @@ test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 �
 운영자가 할 일 (코드 밖):
 
 1. 저장소 공개 전환 → Settings → Pages → Source: **GitHub Actions**
-2. `feature/gathering` 을 `main` 에 합치기 → deploy-web(신청 웹 배포)·keepalive 가 main 에서 돌기 시작
-3. **Windows PC 에서 관리자 앱 한 바퀴** (로그인 → 이미지 업로드 → 입금 확인 → 가져오기 → 방배정) — macOS 에서는
+2. **Windows PC 에서 관리자 앱 한 바퀴** (로그인 → 이미지 업로드 → 입금 확인 → 가져오기 → 방배정) — macOS 에서는
    Windows 빌드를 할 수 없어 아직 못 해봤다.

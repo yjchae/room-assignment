@@ -1,4 +1,5 @@
-/// 데이터 모델. JSON 파일 1개에 통째로 직렬화된다.
+/// 방배정 데이터 모델. 집회 하나의 [Event] 가 JSON 문서 하나로 통째로 직렬화돼
+/// 서버 `room_plans` 에 저장된다 (store.dart).
 library;
 
 class Event {
