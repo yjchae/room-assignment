@@ -126,12 +126,10 @@ class Store extends ChangeNotifier {
   };
 
   Attendee _attendeeOf(Gathering g, Registration r, Person p) {
-    final s = dateOnly(g.start), e = dateOnly(g.end);
-    DateTime clamp(DateTime d) {
-      final x = dateOnly(d);
-      return x.isBefore(s) ? s : (x.isAfter(e) ? e : x);
-    }
-
+    // [_wanted] 가 1박 이상인 사람만 부르므로 비어 있지 않다.
+    final nights = nightsOf(p.daysIn(g.start, g.end));
+    final last = nights.last;
+    final gap = nightsOf(nights).length != nights.length - 1;
     return Attendee(
       id: p.id,
       name: p.name,
@@ -140,8 +138,9 @@ class Store extends ChangeNotifier {
       phone: fmtPhone(p.phone ?? r.phone),
       cell: p.cell,
       zone: p.zone,
-      checkIn: clamp(p.checkIn ?? s),
-      checkOut: clamp(p.checkOut ?? e),
+      checkIn: nights.first,
+      checkOut: DateTime(last.year, last.month, last.day + 1),
+      stayNights: gap ? nights : null,
       extra: {...p.extra},
       registrationId: r.id,
     );
@@ -224,6 +223,7 @@ class Store extends ChangeNotifier {
           ..zone = w.zone
           ..checkIn = w.checkIn
           ..checkOut = w.checkOut
+          ..stayNights = w.stayNights
           ..extra = w.extra
           ..registrationId = w.registrationId
           ..editedByAdmin = false;
@@ -266,6 +266,7 @@ class Store extends ChangeNotifier {
       a.zone == b.zone &&
       a.checkIn == b.checkIn &&
       a.checkOut == b.checkOut &&
+      listEquals(a.stayNights, b.stayNights) &&
       a.registrationId == b.registrationId &&
       mapEquals(a.extra, b.extra);
 
@@ -477,6 +478,7 @@ class Store extends ChangeNotifier {
     for (final a in people) {
       a.checkIn = checkIn;
       a.checkOut = checkOut;
+      a.stayNights = null;
     }
     commit();
   }

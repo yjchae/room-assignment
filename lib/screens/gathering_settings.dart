@@ -172,7 +172,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
     );
-    if (x.open && x.bank.isEmpty) errs.add('신청을 받으려면 입금 계좌를 입력하세요.');
+    if (x.open && x.bank.isEmpty && !x.fee.isFree) {
+      errs.add('신청을 받으려면 입금 계좌를 입력하세요.');
+    }
     return errs;
   }
 

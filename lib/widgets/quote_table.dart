@@ -88,8 +88,11 @@ class _Row extends StatelessWidget {
 }
 
 class RegStatusBadge extends StatelessWidget {
-  const RegStatusBadge(this.status, {super.key});
+  const RegStatusBadge(this.status, {super.key, this.free = false});
   final RegStatus status;
+
+  /// 무료 집회 — '대기' / '확정'으로 보인다.
+  final bool free;
 
   @override
   Widget build(BuildContext context) {
@@ -105,7 +108,7 @@ class RegStatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        status.label,
+        status.labelFor(free: free),
         style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: ink),
       ),
     );

@@ -374,6 +374,26 @@ void main() {
       expect(s.event.attendees.single.id, 'paste1');
     });
 
+    test('날짜를 띄엄띄엄 고르면 묵는 밤만 정원에 센다', () {
+      final s = tmpStore();
+      final g4 = sample()
+        ..fee = FeeRule()
+        ..end = DateTime(2026, 10, 13);
+      final d = [9, 10, 12, 13].map((x) => DateTime(2026, 10, x)).toList();
+      s.syncRegistrations(g4, [
+        reg('r1', RegStatus.confirmed, [
+          Person(id: 'p1', name: '띄엄', gender: 'M', birthYear: 1990, days: d),
+        ]),
+      ]);
+      final a = s.event.attendees.single;
+      expect((a.checkIn, a.checkOut), (d[0], d[3]));
+      expect(a.staysOn(DateTime(2026, 10, 9)), isTrue);
+      expect(a.staysOn(DateTime(2026, 10, 11)), isFalse); // 빠진 밤
+      expect(a.staysOn(DateTime(2026, 10, 12)), isTrue);
+      final back = Attendee.fromJson(a.toJson());
+      expect(back.stayNights, a.stayNights);
+    });
+
     test('당일 참석자는 방이 필요 없어 뺀다', () {
       final s = tmpStore();
       final day = DateTime(2026, 10, 10);

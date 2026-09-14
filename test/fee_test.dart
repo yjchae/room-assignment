@@ -141,6 +141,55 @@ void main() {
     expect(r.lines.single.amount, 30000);
   });
 
+  test('날짜 체크: 이어진 날 사이는 1박, 혼자 떨어진 날은 당일', () {
+    // 10-09 ~ 10-12 (3박). 금·토 + 월 = 1박 70,000 + 당일 30,000
+    final r = q(
+      planRule(early: []),
+      [
+        Person(
+          name: '띄엄',
+          gender: 'M',
+          birthYear: 1990,
+          days: [
+            DateTime(2026, 10, 12),
+            DateTime(2026, 10, 9),
+            DateTime(2026, 10, 10),
+          ],
+        ),
+      ],
+      from: DateTime(2026, 10, 9),
+      to: DateTime(2026, 10, 12),
+    );
+    expect(r.lines.single.nights, 1);
+    expect(r.lines.single.stay, '1박 + 당일');
+    expect(r.lines.single.amount, 100000);
+  });
+
+  test('모든 날을 체크하면 전체 참석', () {
+    final r = q(planRule(early: []), [
+      Person(
+        name: 'a',
+        gender: 'M',
+        birthYear: 1990,
+        days: [start, DateTime(2026, 10, 10), end],
+      ),
+    ]);
+    expect(r.lines.single.full, isTrue);
+    expect(r.lines.single.amount, 150000);
+  });
+
+  test('모든 금액이 0이면 무료', () {
+    expect(FeeRule().isFree, isTrue);
+    expect(FeeRule(full: {AgeGroup.adult: 0}).isFree, isTrue);
+    expect(FeeRule(perRegistration: 1000).isFree, isFalse);
+    expect(planRule().isFree, isFalse);
+    expect(
+      [for (final s in RegStatus.values) s.labelFor(free: true)],
+      ['대기', '확정', '취소'],
+    );
+    expect(RegStatus.pending.labelFor(free: false), '입금대기');
+  });
+
   test('부분 참석 금액은 전체 참석 금액을 넘지 않는다', () {
     // 3박 집회, 1박 80,000 × 2박 = 160,000 > 전체 150,000 → 150,000
     final f = planRule(early: [])..perNight[AgeGroup.adult] = 80000;

@@ -137,6 +137,10 @@ class Attendee {
   DateTime checkIn;
   DateTime checkOut;
 
+  /// 신청에서 날짜를 띄엄띄엄 골라 중간에 빠진 밤이 있을 때만: 묵는 밤들.
+  /// 있으면 [checkIn]~[checkOut] 대신 이것으로 정원을 센다. 운영자가 일정을 고치면 지운다.
+  List<DateTime>? stayNights;
+
   /// 사용자 정의 항목 값. 키는 [Event.customFields] 의 이름. 빈 값은 담지 않는다.
   Map<String, String> extra;
 
@@ -159,13 +163,16 @@ class Attendee {
     this.roomId,
     required this.checkIn,
     required this.checkOut,
+    this.stayNights,
     Map<String, String>? extra,
     this.registrationId,
   }) : extra = extra ?? {};
 
   /// 하룻밤 [night] 에 이 방에 묵는가.
   bool staysOn(DateTime night) =>
-      !night.isBefore(dateOnly(checkIn)) && night.isBefore(dateOnly(checkOut));
+      stayNights?.contains(dateOnly(night)) ??
+      (!night.isBefore(dateOnly(checkIn)) &&
+          night.isBefore(dateOnly(checkOut)));
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -179,6 +186,8 @@ class Attendee {
     'roomId': roomId,
     'checkIn': checkIn.toIso8601String(),
     'checkOut': checkOut.toIso8601String(),
+    if (stayNights != null)
+      'stayNights': [for (final d in stayNights!) d.toIso8601String()],
     'extra': extra,
     'registrationId': registrationId,
     if (editedByAdmin) 'edited': true,
@@ -196,6 +205,9 @@ class Attendee {
     roomId: j['roomId'] as String?,
     checkIn: DateTime.parse(j['checkIn'] as String),
     checkOut: DateTime.parse(j['checkOut'] as String),
+    stayNights: (j['stayNights'] as List?)
+        ?.map((e) => dateOnly(DateTime.parse('$e')))
+        .toList(),
     extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
     registrationId: j['registrationId'] as String?,
   )..editedByAdmin = j['edited'] == true;

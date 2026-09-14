@@ -82,6 +82,14 @@ class FeeRule {
         .fold(0, (m, e) => math.max(m, e.pct));
   }
 
+  /// 받는 돈이 하나도 없다 (모든 금액이 0 이거나 비어 있음). 신청 웹에서 회비·계좌를 숨긴다.
+  bool get isFree => [
+    ...full.values,
+    ...perNight.values,
+    ...dayOnly.values,
+    perRegistration,
+  ].every((v) => v == 0);
+
   Map<String, dynamic> toJson() => {
     'full': _groupsOut(full),
     'perNight': _groupsOut(perNight),
@@ -117,7 +125,7 @@ class FeeRule {
   }
 }
 
-/// 신청서의 참석자 한 명. 일정이 null 이면 집회 시작일/종료일.
+/// 신청서의 참석자 한 명. 일정은 [daysIn] 으로 읽는다.
 class Person {
   Person({
     String? id,
@@ -125,6 +133,7 @@ class Person {
     required this.gender,
     required this.birthYear,
     this.relation = '본인',
+    this.days,
     this.checkIn,
     this.checkOut,
     this.phone,
@@ -140,11 +149,40 @@ class Person {
   String gender; // 'M' | 'F'
   int birthYear;
   String relation;
+
+  /// 참석하는 날 (신청 웹의 날짜 체크). null = 전체 참석.
+  List<DateTime>? days;
+
+  /// 예전 신청서 형식(도착일~출발일). [days] 가 없을 때만 본다. null 이면 집회 시작일/종료일.
   DateTime? checkIn, checkOut;
   String? phone, cell, zone;
 
   /// 사용자 정의 항목(교회·직분 등) 값.
   Map<String, String> extra;
+
+  /// 집회 [start]~[end] 중 참석하는 날 (정렬, 기간 밖은 버린다).
+  List<DateTime> daysIn(DateTime start, DateTime end) {
+    final s = _day(start), e = _day(end);
+    Iterable<DateTime> picked;
+    if (days != null) {
+      picked = days!.map(_day);
+    } else {
+      var from = _day(checkIn ?? s), to = _day(checkOut ?? e);
+      if (from.isBefore(s)) from = s;
+      if (from.isAfter(e)) from = e;
+      if (to.isAfter(e)) to = e;
+      if (to.isBefore(from)) to = from;
+      picked = [
+        for (var i = 0; i <= _nights(from, to); i++)
+          from.add(Duration(days: i)),
+      ];
+    }
+    final out = {
+      for (final d in picked)
+        if (!d.isBefore(s) && !d.isAfter(e)) d,
+    }.toList()..sort();
+    return [for (final d in out) DateTime(d.year, d.month, d.day)];
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -152,6 +190,7 @@ class Person {
     'gender': gender,
     'birthYear': birthYear,
     'relation': relation,
+    'days': days?.map(ymd).toList(),
     'checkIn': checkIn == null ? null : ymd(checkIn!),
     'checkOut': checkOut == null ? null : ymd(checkOut!),
     'phone': phone,
@@ -166,6 +205,9 @@ class Person {
     gender: j['gender'] == 'F' ? 'F' : 'M',
     birthYear: _int(j['birthYear']),
     relation: '${j['relation'] ?? '본인'}',
+    days: j['days'] is List
+        ? [for (final d in j['days'] as List) ?_date(d)]
+        : null,
     checkIn: _date(j['checkIn']),
     checkOut: _date(j['checkOut']),
     phone: _str(j['phone']),
@@ -300,6 +342,13 @@ enum RegStatus {
   const RegStatus(this.label);
   final String label;
 
+  /// 무료 집회는 입금이 없으니 '대기' / '확정'.
+  String labelFor({required bool free}) => switch (this) {
+    pending when free => '대기',
+    confirmed when free => '확정',
+    _ => label,
+  };
+
   static RegStatus parse(Object? s) => values.asNameMap()['$s'] ?? pending;
 }
 
@@ -362,21 +411,43 @@ class Registration {
 // ---------------------------------------------------------------------------
 
 class QuoteLine {
-  const QuoteLine(this.person, this.group, this.nights, this.full, this.amount);
+  const QuoteLine(this.person, this.group, this.days, this.full, this.amount);
   final Person person;
   final AgeGroup group;
 
-  /// 이 사람이 묵는 박수. 0 = 당일.
-  final int nights;
+  /// 참석하는 날 (집회 기간 안, 정렬).
+  final List<DateTime> days;
   final bool full;
   final int amount;
 
-  /// "전체" / "1박" / "당일"
-  String get stay => full
-      ? '전체'
-      : nights == 0
-      ? '당일'
-      : '$nights박';
+  /// 이 사람이 묵는 박수. 0 = 당일만.
+  int get nights => nightsOf(days).length;
+
+  /// "전체" / "1박" / "당일" / "1박 + 당일"
+  String get stay {
+    if (full) return '전체';
+    final visits = dayVisits(days);
+    return [
+      if (nights > 0) '$nights박',
+      if (visits > 0) visits == 1 ? '당일' : '당일 $visits일',
+    ].join(' + ');
+  }
+}
+
+/// 고른 날 중 다음 날도 고른 날 = 그 밤을 묵는다.
+List<DateTime> nightsOf(List<DateTime> days) {
+  final set = days.map(_day).toSet();
+  return [
+    for (final d in days)
+      if (set.contains(_day(d).add(const Duration(days: 1)))) d,
+  ];
+}
+
+/// 앞뒤 날을 모두 안 고른 날 = 당일로만 오는 날의 수.
+int dayVisits(List<DateTime> days) {
+  final set = days.map(_day).toSet();
+  bool has(DateTime d, int off) => set.contains(d.add(Duration(days: off)));
+  return set.where((d) => !has(d, -1) && !has(d, 1)).length;
 }
 
 class Quote {
@@ -408,7 +479,8 @@ class Quote {
 /// 신청 합계와 내역. 신청 웹·조회·관리자 화면 전부 이것 하나를 부른다.
 /// [appliedAt] = 신청일 (사전등록 할인 기준).
 ///
-/// - 일정이 집회 기간 전체면 전체 참석(정액), 아니면 부분 참석(1박당 × 박수, 0박이면 당일).
+/// - 모든 날에 참석하면 전체 참석(정액), 아니면 부분 참석
+///   (1박당 × 이어진 날 사이 박수 + 당일 × 앞뒤 없이 혼자 고른 날 수).
 /// - 일정은 집회 기간 안으로 잘라서 본다.
 /// - 부분 참석 금액은 전체 참석자가 내는 금액을 넘지 않는다.
 /// - 참석자가 없으면 그룹당 금액도 붙지 않는다 (빈 신청서에 금액이 뜨지 않게).
@@ -426,23 +498,21 @@ Quote quote(
 
   QuoteLine line(Person p) {
     final g = fee.groupOf(s.year - p.birthYear);
-    var from = _day(p.checkIn ?? s), to = _day(p.checkOut ?? e);
-    if (from.isBefore(s)) from = s;
-    if (from.isAfter(e)) from = e;
-    if (to.isAfter(e)) to = e;
-    if (to.isBefore(from)) to = from;
+    final days = p.daysIn(s, e);
 
     final nightly = fee.perNight[g] ?? 0;
     final day = fee.dayOnly[g] ?? 0;
     final fullBase = fee.full[g] ?? (allNights > 0 ? nightly * allNights : day);
     final fullPrice = fullBase * (100 - fullPct) ~/ 100;
 
-    final n = _nights(from, to);
-    final isFull = from == s && to == e;
+    final isFull = days.length == allNights + 1;
     final amount = isFull
         ? fullPrice
-        : math.min(n > 0 ? nightly * n : day, fullPrice);
-    return QuoteLine(p, g, n, isFull, amount);
+        : math.min(
+            nightly * nightsOf(days).length + day * dayVisits(days),
+            fullPrice,
+          );
+    return QuoteLine(p, g, days, isFull, amount);
   }
 
   final lines = people.map(line).toList();

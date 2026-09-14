@@ -339,7 +339,10 @@ void main() {
       await tester.tap(find.widgetWithText(SwitchListTile, '전체 참석'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      // 기본값: 첫날 도착, 다음 날 출발 = 1박 70,000 + 가족당 10,000
+      // 금·토 체크 = 1박 70,000 + 가족당 10,000
+      await tester.tap(find.widgetWithText(CheckboxListTile, '10-09(금)'));
+      await tester.tap(find.widgetWithText(CheckboxListTile, '10-10(토)'));
+      await tester.pumpAndSettle();
       expect(find.text('80,000원'), findsOneWidget);
       expect(find.textContaining('성인 · 1박'), findsOneWidget);
     });

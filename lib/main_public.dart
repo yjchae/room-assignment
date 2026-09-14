@@ -186,8 +186,9 @@ class _GatheringView extends StatelessWidget {
                       ),
                   ],
                 ),
-                _Section(title: '회비', children: [_FeeTable(g)]),
-                if (!g.bank.isEmpty)
+                if (!g.fee.isFree)
+                  _Section(title: '회비', children: [_FeeTable(g)]),
+                if (!g.fee.isFree && !g.bank.isEmpty)
                   _Section(title: '입금 계좌', children: [_BankBox(g.bank)]),
                 _Section(
                   children: [
@@ -364,9 +365,7 @@ class _PersonForm {
       cell = TextEditingController(text: p?.cell ?? ''),
       zone = TextEditingController(text: p?.zone ?? ''),
       gender = p?.gender,
-      relation = p?.relation ?? (applicant ? '본인' : '자녀'),
-      checkIn = p?.checkIn,
-      checkOut = p?.checkOut {
+      relation = p?.relation ?? (applicant ? '본인' : '자녀') {
     if (p != null) {
       for (final e in p.extra.entries) {
         extras[e.key] = TextEditingController(text: e.value);
@@ -387,10 +386,10 @@ class _PersonForm {
   String? gender;
   String relation;
 
-  /// 둘 다 null = 전체 참석.
-  DateTime? checkIn, checkOut;
+  /// 참석하는 날. null = 전체 참석.
+  Set<DateTime>? days;
 
-  bool get full => checkIn == null && checkOut == null;
+  bool get full => days == null;
 
   TextEditingController extra(String field) =>
       extras.putIfAbsent(field, TextEditingController.new);
@@ -412,8 +411,7 @@ class _PersonForm {
       gender: gender ?? 'M', // 성별은 금액과 무관. 제출 전에 따로 검사한다.
       birthYear: y,
       relation: relation,
-      checkIn: checkIn,
-      checkOut: checkOut,
+      days: days == null ? null : ([...days!]..sort()),
       phone: phone ?? this.phone,
       cell: t(cell),
       zone: t(zone),
@@ -455,6 +453,7 @@ class _ApplyPageState extends State<ApplyPage> {
 
   Gathering get g => widget.gathering;
   bool get editing => widget.editing != null;
+  bool get free => g.fee.isFree;
 
   /// 수정할 때도 처음 신청한 날 기준으로 계산한다 (얼리버드 유지).
   DateTime get appliedAt => widget.editing?.createdAt ?? DateTime.now();
@@ -469,18 +468,15 @@ class _ApplyPageState extends State<ApplyPage> {
             for (final (i, p) in r.people.indexed)
               _PersonForm(p: p, applicant: i == 0),
           ];
-    // 드롭다운에 없는 날짜(기간이 바뀐 경우)가 있으면 첫날로 맞춘다.
-    final days = g.days;
     for (final f in forms) {
-      if (f.checkIn != null && !days.contains(f.checkIn)) {
-        f.checkIn = days.first;
-      }
-      if (f.checkOut != null && !days.contains(f.checkOut)) {
-        f.checkOut = days.last;
-      }
       f.birth.addListener(_changed);
     }
     if (r != null) {
+      // 예전 형식(도착·출발일)이나 기간이 바뀐 신청도 날짜 체크로 옮긴다. 모든 날이면 전체 참석.
+      for (final (i, p) in r.people.indexed) {
+        final d = p.daysIn(g.start, g.end);
+        if (d.length < g.days.length) forms[i].days = d.toSet();
+      }
       depositor.text = r.depositor ?? '';
       memo.text = r.memo ?? '';
     }
@@ -526,7 +522,7 @@ class _ApplyPageState extends State<ApplyPage> {
             ),
             const SizedBox(height: 12),
             _Section(
-              title: '연락처 · 입금',
+              title: free ? '연락처' : '연락처 · 입금',
               children: [
                 if (!editing) ...[
                   TextFormField(
@@ -555,15 +551,16 @@ class _ApplyPageState extends State<ApplyPage> {
                   ),
                   const SizedBox(height: 4),
                 ],
-                TextFormField(
-                  controller: depositor,
-                  maxLength: 50,
-                  decoration: const InputDecoration(
-                    labelText: '입금자명',
-                    hintText: '비워두면 신청자 이름',
-                    helperText: '신청자와 다른 이름으로 입금하면 적어 주세요.',
+                if (!free)
+                  TextFormField(
+                    controller: depositor,
+                    maxLength: 50,
+                    decoration: const InputDecoration(
+                      labelText: '입금자명',
+                      hintText: '비워두면 신청자 이름',
+                      helperText: '신청자와 다른 이름으로 입금하면 적어 주세요.',
+                    ),
                   ),
-                ),
                 TextFormField(
                   controller: memo,
                   maxLength: 1000,
@@ -590,6 +587,7 @@ class _ApplyPageState extends State<ApplyPage> {
       ),
       bottomNavigationBar: _TotalBar(
         q: q,
+        free: free,
         busy: busy,
         label: editing ? '수정 저장' : '신청하기',
         onSubmit: _submit,
@@ -701,7 +699,7 @@ class _ApplyPageState extends State<ApplyPage> {
           ),
         const SizedBox(height: 4),
         _schedule(f),
-        if (line != null)
+        if (line != null && !free)
           Align(
             alignment: Alignment.centerRight,
             child: Text(
@@ -730,53 +728,34 @@ class _ApplyPageState extends State<ApplyPage> {
           value: f.full,
           onChanged: g.nights == 0
               ? null
-              : (v) => setState(() {
-                  if (v) {
-                    f.checkIn = f.checkOut = null;
-                  } else {
-                    f.checkIn = days.first;
-                    f.checkOut = days[1];
-                  }
-                }),
+              : (v) => setState(() => f.days = v ? null : {}),
         ),
-        if (!f.full)
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<DateTime>(
-                  key: ValueKey('in-${f.id}'),
-                  // 휴대폰 반쪽 폭에서 "10-09(금)" + 화살표가 넘치지 않게 글자를 줄인다.
-                  isExpanded: true,
-                  initialValue: f.checkIn,
-                  decoration: const InputDecoration(labelText: '도착일'),
-                  items: [
-                    for (final d in days)
-                      DropdownMenuItem(value: d, child: Text(mdw(d))),
-                  ],
-                  onChanged: (d) => setState(() {
-                    f.checkIn = d;
-                    if (d != null && f.checkOut!.isBefore(d)) f.checkOut = d;
-                  }),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: DropdownButtonFormField<DateTime>(
-                  // 도착일이 바뀌면 고를 수 있는 날이 달라지므로 새로 만든다.
-                  key: ValueKey('out-${f.id}-${f.checkIn}'),
-                  isExpanded: true,
-                  initialValue: f.checkOut,
-                  decoration: const InputDecoration(labelText: '출발일'),
-                  items: [
-                    for (final d in days)
-                      if (!d.isBefore(f.checkIn!))
-                        DropdownMenuItem(value: d, child: Text(mdw(d))),
-                  ],
-                  onChanged: (d) => setState(() => f.checkOut = d),
-                ),
-              ),
-            ],
+        if (!f.full) ...[
+          const Text(
+            '참석하는 날을 모두 고르세요. 이어서 고른 날 사이는 숙박으로 봅니다.',
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
           ),
+          for (final d in days)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(mdw(d)),
+              value: f.days!.contains(d),
+              onChanged: (v) => setState(() {
+                if (v == true) {
+                  f.days!.add(d);
+                } else {
+                  f.days!.remove(d);
+                }
+              }),
+            ),
+          if (tried && f.days!.isEmpty)
+            const Text(
+              '참석하는 날을 하루 이상 고르세요',
+              style: TextStyle(fontSize: 12, color: AppColors.danger),
+            ),
+        ],
       ],
     );
   }
@@ -819,7 +798,8 @@ class _ApplyPageState extends State<ApplyPage> {
     });
     final formOk = formKey.currentState!.validate();
     final genderOk = forms.every((f) => f.gender != null);
-    if (!formOk || !genderOk || (!editing && !consent)) {
+    final daysOk = forms.every((f) => f.full || f.days!.isNotEmpty);
+    if (!formOk || !genderOk || !daysOk || (!editing && !consent)) {
       setState(() => serverError = '빨간 표시된 칸을 확인하세요.');
       return;
     }
@@ -832,10 +812,12 @@ class _ApplyPageState extends State<ApplyPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(editing ? '이대로 수정할까요?' : '이대로 신청할까요?'),
-        content: SizedBox(
-          width: 400,
-          child: SingleChildScrollView(child: QuoteTable(q)),
-        ),
+        content: free
+            ? null
+            : SizedBox(
+                width: 400,
+                child: SingleChildScrollView(child: QuoteTable(q)),
+              ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -901,11 +883,15 @@ class _ApplyPageState extends State<ApplyPage> {
 class _TotalBar extends StatelessWidget {
   const _TotalBar({
     required this.q,
+    required this.free,
     required this.busy,
     required this.label,
     required this.onSubmit,
   });
   final Quote q;
+
+  /// 무료 집회 — 금액 없이 인원 요약만.
+  final bool free;
   final bool busy;
   final String label;
   final VoidCallback onSubmit;
@@ -922,52 +908,61 @@ class _TotalBar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
         child: Row(
           children: [
-            Expanded(
-              child: InkWell(
-                onTap: q.lines.isEmpty
-                    ? null
-                    : () => showModalBottomSheet<void>(
-                        context: context,
-                        builder: (_) => Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-                          child: QuoteTable(q),
-                        ),
-                      ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      q.lines.isEmpty ? '출생연도를 넣으면 금액이 계산됩니다' : q.summary,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          won(q.total),
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            fontFeatures: _tabular,
+            if (free)
+              Expanded(
+                child: Text(
+                  q.summary,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.textMuted),
+                ),
+              )
+            else
+              Expanded(
+                child: InkWell(
+                  onTap: q.lines.isEmpty
+                      ? null
+                      : () => showModalBottomSheet<void>(
+                          context: context,
+                          builder: (_) => Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+                            child: QuoteTable(q),
                           ),
                         ),
-                        if (q.lines.isNotEmpty)
-                          const Icon(
-                            Icons.expand_less,
-                            size: 18,
-                            color: AppColors.textMuted,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        q.lines.isEmpty ? '출생연도를 넣으면 금액이 계산됩니다' : q.summary,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            won(q.total),
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: _tabular,
+                            ),
                           ),
-                      ],
-                    ),
-                  ],
+                          if (q.lines.isNotEmpty)
+                            const Icon(
+                              Icons.expand_less,
+                              size: 18,
+                              color: AppColors.textMuted,
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
             const SizedBox(width: 12),
             FilledButton(
               onPressed: busy ? null : onSubmit,
@@ -996,53 +991,59 @@ class DonePage extends StatelessWidget {
   final String depositor;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('신청 완료'),
-      automaticallyImplyLeading: false,
-      shape: const Border(bottom: BorderSide(color: AppColors.border)),
-    ),
-    body: _Narrow(
-      children: [
-        _Section(
-          children: [
-            const Icon(Icons.check_circle, size: 48, color: AppColors.ok),
-            const SizedBox(height: 8),
-            const Text(
-              '신청이 접수되었습니다',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-            ),
-            const Text(
-              '입금이 확인되면 신청이 확정됩니다.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textMuted),
-            ),
-            const SizedBox(height: 16),
-            QuoteTable(quote),
-          ],
-        ),
-        if (!gathering.bank.isEmpty)
+  Widget build(BuildContext context) {
+    final free = gathering.fee.isFree;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('신청 완료'),
+        automaticallyImplyLeading: false,
+        shape: const Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      body: _Narrow(
+        children: [
           _Section(
-            title: '입금 계좌',
-            children: [_BankBox(gathering.bank, depositor: depositor)],
+            children: [
+              const Icon(Icons.check_circle, size: 48, color: AppColors.ok),
+              const SizedBox(height: 8),
+              const Text(
+                '신청이 접수되었습니다',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              ),
+              Text(
+                free ? '담당자가 확인하면 신청이 확정됩니다.' : '입금이 확인되면 신청이 확정됩니다.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.textMuted),
+              ),
+              if (!free) ...[const SizedBox(height: 16), QuoteTable(quote)],
+            ],
           ),
-        _Section(
-          children: [
-            const Text(
-              '휴대폰번호와 PIN으로 [신청 조회]에서 입금 확인 여부를 볼 수 있습니다.',
-              style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+          if (!free && !gathering.bank.isEmpty)
+            _Section(
+              title: '입금 계좌',
+              children: [_BankBox(gathering.bank, depositor: depositor)],
             ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
-              child: const Text('집회 페이지로'),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
+          _Section(
+            children: [
+              Text(
+                '휴대폰번호와 PIN으로 [신청 조회]에서 ${free ? '확정' : '입금 확인'} 여부를 볼 수 있습니다.',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(context).popUntil((r) => r.isFirst),
+                child: const Text('집회 페이지로'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class LookupPage extends StatefulWidget {
@@ -1172,6 +1173,7 @@ class _LookupPageState extends State<LookupPage> {
     final q = g.quoteFor(r.people, r.createdAt);
     final pending = r.status == RegStatus.pending;
     final canEdit = pending && g.acceptingOn(DateTime.now());
+    final free = g.fee.isFree;
     return [
       _Section(
         children: [
@@ -1186,18 +1188,19 @@ class _LookupPageState extends State<LookupPage> {
                   ),
                 ),
               ),
-              RegStatusBadge(r.status),
+              RegStatusBadge(r.status, free: free),
             ],
           ),
           const SizedBox(height: 6),
           Text(switch (r.status) {
+            RegStatus.pending when free => '담당자 확인을 기다리고 있습니다.',
             RegStatus.pending => '입금을 기다리고 있습니다. 아래 계좌로 입금해 주세요.',
+            RegStatus.confirmed when free => '신청이 확정되었습니다.',
             RegStatus.confirmed => '입금이 확인되어 신청이 확정되었습니다.',
             RegStatus.cancelled => '취소된 신청입니다.',
           }, style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
-          const SizedBox(height: 16),
-          QuoteTable(q),
-          if (r.status == RegStatus.confirmed)
+          if (!free) ...[const SizedBox(height: 16), QuoteTable(q)],
+          if (r.status == RegStatus.confirmed && !free)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
@@ -1210,7 +1213,7 @@ class _LookupPageState extends State<LookupPage> {
             ),
         ],
       ),
-      if (pending && !g.bank.isEmpty)
+      if (pending && !free && !g.bank.isEmpty)
         _Section(
           title: '입금 계좌',
           children: [_BankBox(g.bank, depositor: r.depositorName)],

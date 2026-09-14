@@ -202,7 +202,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
               for (final f in [null, ...RegStatus.values])
                 ChoiceChip(
                   label: Text(
-                    '${f?.label ?? '전체'} ${all.where((r) => f == null || r.status == f).length}',
+                    '${f?.labelFor(free: g.fee.isFree) ?? '전체'} ${all.where((r) => f == null || r.status == f).length}',
                   ),
                   selected: filter == f,
                   onSelected: (_) => setState(() => filter = f),
@@ -710,7 +710,10 @@ class _RegRow extends StatelessWidget {
                 width: _wStatus,
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: RegStatusBadge(r.status),
+                  child: RegStatusBadge(
+                    r.status,
+                    free: current.value?.fee.isFree ?? false,
+                  ),
                 ),
               ),
               SizedBox(
@@ -768,6 +771,11 @@ class _Detail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = r.createdAt;
+    // 부분 참석자의 고른 날짜 (사람 id → "10-09(금) 10-10(토)").
+    final days = {
+      for (final l in q.lines)
+        if (!l.full) l.person.id: l.days.map(mdw).join(' '),
+    };
     Widget kv(String k, String v) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -798,7 +806,7 @@ class _Detail extends StatelessWidget {
                 ),
               ),
             ),
-            RegStatusBadge(r.status),
+            RegStatusBadge(r.status, free: current.value?.fee.isFree ?? false),
             IconButton(
               tooltip: '닫기',
               icon: const Icon(Icons.close),
@@ -838,7 +846,8 @@ class _Detail extends StatelessWidget {
                         '  ${p.relation} · ${genderLabel(p.gender)} · ${p.birthYear}년생'
                         '${(p.cell ?? '').isNotEmpty ? ' · 셀 ${p.cell}' : ''}'
                         '${(p.zone ?? '').isNotEmpty ? ' · 존 ${p.zone}' : ''}'
-                        '${p.extra.entries.map((e) => ' · ${e.key} ${e.value}').join()}',
+                        '${p.extra.entries.map((e) => ' · ${e.key} ${e.value}').join()}'
+                        '${days.containsKey(p.id) ? ' · ${days[p.id]}' : ''}',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w400,
