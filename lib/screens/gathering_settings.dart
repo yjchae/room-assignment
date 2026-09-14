@@ -674,7 +674,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   const Text(
-                    '끄면 신청서에 그 칸이 나오지 않습니다. 출생연도를 끄면 모두 성인 금액으로 계산합니다.',
+                    '끄면 신청서에 그 칸이 나오지 않습니다. 출생연도를 끄면 모두 성인 금액으로 계산하고, '
+                    '성별을 끄면 참석자 성별이 "-"로 들어오니 방배정 전에 참석자 탭에서 채우세요.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 8),
@@ -684,6 +685,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     children: [
                       for (final (key, label) in const [
                         ('birthYear', '출생연도'),
+                        ('gender', '성별'),
                         ('cell', '셀'),
                         ('zone', '존'),
                       ])

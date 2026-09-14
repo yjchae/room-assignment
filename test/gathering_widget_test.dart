@@ -344,8 +344,11 @@ void main() {
 
     testWidgets('운영자가 끈 출생연도·셀·존은 신청서에 없고, 금액은 성인으로', (tester) async {
       setView(tester, const Size(400, 2400));
-      final g = sample()..hiddenFields = ['birthYear', 'cell', 'zone'];
+      final g = sample()
+        ..hiddenFields = ['birthYear', 'gender', 'cell', 'zone'];
       await pumpPage(tester, ApplyPage(gathering: g));
+      expect(find.byType(SegmentedButton<String>), findsNothing);
+      expect(Person.fromJson({'gender': ''}).gender, ''); // 모름은 남자로 바뀌지 않는다
       for (final label in ['출생연도 *', '셀', '존']) {
         expect(find.widgetWithText(TextFormField, label), findsNothing);
       }

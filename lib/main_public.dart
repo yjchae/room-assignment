@@ -412,7 +412,8 @@ class _PersonForm {
     return Person(
       id: id,
       name: name.text.trim(),
-      gender: gender ?? 'M', // 성별은 금액과 무관. 제출 전에 따로 검사한다.
+      // 성별은 금액과 무관. 받는 집회면 제출 전에 따로 검사하고, 안 받으면 '' = 모름.
+      gender: gender ?? '',
       birthYear: y,
       relation: relation,
       days: days == null ? null : ([...days!]..sort()),
@@ -641,30 +642,31 @@ class _ApplyPageState extends State<ApplyPage> {
               ),
               const SizedBox(width: 12),
             ],
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'M', label: Text('남')),
-                    ButtonSegment(value: 'F', label: Text('여')),
-                  ],
-                  selected: {?f.gender},
-                  emptySelectionAllowed: true,
-                  showSelectedIcon: false,
-                  onSelectionChanged: (s) =>
-                      setState(() => f.gender = s.firstOrNull),
-                ),
-                if (tried && f.gender == null)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4, left: 4),
-                    child: Text(
-                      '성별을 고르세요',
-                      style: TextStyle(fontSize: 12, color: AppColors.danger),
-                    ),
+            if (g.asks('gender'))
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'M', label: Text('남')),
+                      ButtonSegment(value: 'F', label: Text('여')),
+                    ],
+                    selected: {?f.gender},
+                    emptySelectionAllowed: true,
+                    showSelectedIcon: false,
+                    onSelectionChanged: (s) =>
+                        setState(() => f.gender = s.firstOrNull),
                   ),
-              ],
-            ),
+                  if (tried && f.gender == null)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4, left: 4),
+                      child: Text(
+                        '성별을 고르세요',
+                        style: TextStyle(fontSize: 12, color: AppColors.danger),
+                      ),
+                    ),
+                ],
+              ),
           ],
         ),
         if (!f.applicant) ...[
@@ -810,7 +812,7 @@ class _ApplyPageState extends State<ApplyPage> {
       serverError = null;
     });
     final formOk = formKey.currentState!.validate();
-    final genderOk = forms.every((f) => f.gender != null);
+    final genderOk = !g.asks('gender') || forms.every((f) => f.gender != null);
     final daysOk = forms.every((f) => f.full || f.days!.isNotEmpty);
     if (!formOk || !genderOk || !daysOk || (!editing && !consent)) {
       setState(() => serverError = '빨간 표시된 칸을 확인하세요.');

@@ -146,7 +146,7 @@ class Person {
   /// 신청 웹에서 만들어져 관리자 앱의 참석자 id 로 그대로 이어진다.
   String id;
   String name;
-  String gender; // 'M' | 'F'
+  String gender; // 'M' | 'F' | '' (운영자가 성별 칸을 뺌)
   int birthYear;
   String relation;
 
@@ -202,7 +202,11 @@ class Person {
   factory Person.fromJson(Map j) => Person(
     id: j['id'] == null ? null : '${j['id']}',
     name: '${j['name'] ?? ''}',
-    gender: j['gender'] == 'F' ? 'F' : 'M',
+    gender: switch (j['gender']) {
+      'F' => 'F',
+      '' => '',
+      _ => 'M',
+    },
     birthYear: _int(j['birthYear']),
     relation: '${j['relation'] ?? '본인'}',
     days: j['days'] is List
@@ -278,7 +282,7 @@ class Gathering {
   /// 신청서에 나오는 사용자 정의 항목. 관리자 앱의 참석자 항목과 같은 이름.
   List<String> formFields;
 
-  /// 운영자가 신청서에서 뺀 기본 항목: 'birthYear' · 'cell' · 'zone'.
+  /// 운영자가 신청서에서 뺀 기본 항목: 'birthYear' · 'gender' · 'cell' · 'zone'.
   /// 출생연도를 빼면 모두 성인 금액으로 계산한다.
   List<String> hiddenFields;
 

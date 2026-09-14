@@ -98,10 +98,18 @@ String statusText({required int used, required int capacity}) =>
       RoomStatus.over => '${used - capacity}명 초과',
     };
 
-String genderLabel(String g) => g == 'M' ? '남' : '여';
+/// '' = 성별을 안 받은 신청.
+String genderLabel(String g) => switch (g) {
+  'M' => '남',
+  'F' => '여',
+  _ => '-',
+};
 
-Color genderColor(String g) =>
-    g == 'M' ? const Color(0xFF3563C9) : const Color(0xFFC8407A);
+Color genderColor(String g) => switch (g) {
+  'M' => const Color(0xFF3563C9),
+  'F' => const Color(0xFFC8407A),
+  _ => AppColors.textMuted,
+};
 
 OutlineInputBorder _inputBorder(Color c, [double w = 1]) => OutlineInputBorder(
   borderRadius: BorderRadius.circular(Radii.control),

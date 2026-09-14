@@ -843,7 +843,8 @@ class _Detail extends StatelessWidget {
                 children: [
                   TextSpan(
                     text:
-                        '  ${p.relation} · ${genderLabel(p.gender)}'
+                        '  ${p.relation}'
+                        '${p.gender.isEmpty ? '' : ' · ${genderLabel(p.gender)}'}'
                         '${p.birthYear == 0 ? '' : ' · ${p.birthYear}년생'}'
                         '${(p.cell ?? '').isNotEmpty ? ' · 셀 ${p.cell}' : ''}'
                         '${(p.zone ?? '').isNotEmpty ? ' · 존 ${p.zone}' : ''}'
