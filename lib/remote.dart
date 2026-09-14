@@ -231,6 +231,13 @@ class Remote {
     return Registration.fromRow(r);
   }
 
+  /// 신청을 입금 내역째 지운다. 되돌릴 수 없다.
+  Future<void> deleteRegistration(String id) async {
+    final rows = await _db.from('registrations').delete().eq('id', id).select();
+    // 운영자가 아니면 RLS 가 에러 없이 0건만 지운다.
+    if (rows.isEmpty) throw const RemoteError('삭제하지 못했습니다. 운영자로 다시 로그인해 보세요.');
+  }
+
   Future<void> resetPin(String registrationId, String pin) async {
     await _db.rpc(
       'reset_pin',

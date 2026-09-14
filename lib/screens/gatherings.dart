@@ -638,82 +638,176 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
     var start = dateOnly(DateTime.now()).add(const Duration(days: 30));
     var end = start.add(const Duration(days: 2));
     String? err;
+    // 과거 집회에서 가져오기. null = 새로 시작.
+    Gathering? src;
+    var copySettings = true, copyRooms = true, copyPeople = false;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: const Text('새 집회'),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: '집회 이름 *',
-                    hintText: '예: 신촌하나교회 가족수양회',
-                    errorText: err,
+        builder: (context, setLocal) {
+          Widget pick(String label, bool v, void Function(bool) set) =>
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(label),
+                value: v,
+                onChanged: (x) => setLocal(() => set(x == true)),
+              );
+          return AlertDialog(
+            title: const Text('새 집회'),
+            content: SizedBox(
+              width: 380,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (list.isNotEmpty) ...[
+                    DropdownButtonFormField<Gathering?>(
+                      initialValue: src,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: '과거 집회에서 가져오기',
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('가져오지 않음 (새로 시작)'),
+                        ),
+                        for (final x in list)
+                          DropdownMenuItem(
+                            value: x,
+                            child: Text(
+                              '${x.name} (${x.start.year}-${mdw(x.start)})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (x) => setLocal(() {
+                        src = x;
+                        if (x == null) return;
+                        if (name.text.trim().isEmpty) name.text = x.name;
+                        end = DateTime(
+                          start.year,
+                          start.month,
+                          start.day + x.nights,
+                        );
+                      }),
+                    ),
+                    if (src != null) ...[
+                      pick(
+                        '집회 설정 (장소·안내·회비·계좌·신청서 항목)',
+                        copySettings,
+                        (v) => copySettings = v,
+                      ),
+                      pick('방 (호수·정원·성별)', copyRooms, (v) => copyRooms = v),
+                      pick(
+                        '참석자 (방 배정은 풀고 새로 시작)',
+                        copyPeople,
+                        (v) => copyPeople = v,
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                  ],
+                  TextField(
+                    controller: name,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: '집회 이름 *',
+                      hintText: '예: 신촌하나교회 가족수양회',
+                      errorText: err,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('시작일'),
-                  trailing: Text('${start.year}-${mdw(start)}'),
-                  onTap: () async {
-                    final d = await pickDate(context, start);
-                    if (d == null) return;
-                    setLocal(() {
-                      start = d;
-                      if (end.isBefore(start)) end = start;
-                    });
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('종료일'),
-                  trailing: Text('${end.year}-${mdw(end)}'),
-                  onTap: () async {
-                    final d = await pickDate(context, end);
-                    if (d != null && !d.isBefore(start)) {
-                      setLocal(() => end = d);
-                    }
-                  },
-                ),
-                const Text(
-                  '장소·회비·계좌 등은 만든 뒤 [집회 설정]에서 입력합니다.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('시작일'),
+                    trailing: Text('${start.year}-${mdw(start)}'),
+                    onTap: () async {
+                      final d = await pickDate(context, start);
+                      if (d == null) return;
+                      setLocal(() {
+                        start = d;
+                        if (end.isBefore(start)) end = start;
+                      });
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('종료일'),
+                    trailing: Text('${end.year}-${mdw(end)}'),
+                    onTap: () async {
+                      final d = await pickDate(context, end);
+                      if (d != null && !d.isBefore(start)) {
+                        setLocal(() => end = d);
+                      }
+                    },
+                  ),
+                  Text(
+                    src != null && copySettings
+                        ? '포스터·배경 이미지와 신청 받기·마감일은 복사하지 않습니다. 만든 뒤 [집회 설정]에서 확인하세요.'
+                        : '장소·회비·계좌 등은 만든 뒤 [집회 설정]에서 입력합니다.',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (name.text.trim().isEmpty) {
-                  setLocal(() => err = '이름을 입력하세요');
-                  return;
-                }
-                Navigator.pop(context, true);
-              },
-              child: const Text('만들기'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (name.text.trim().isEmpty) {
+                    setLocal(() => err = '이름을 입력하세요');
+                    return;
+                  }
+                  Navigator.pop(context, true);
+                },
+                child: const Text('만들기'),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (ok != true) return;
+    final n = name.text.trim();
+    final from = src;
     try {
+      // 이미지는 원본 집회를 지우거나 바꿀 때 같이 지워지므로 복사하지 않는다.
+      final base = from != null && copySettings
+          ? (from.copy()
+              ..id = ''
+              ..open = false
+              ..deadline = null
+              ..posterUrl = null
+              ..backgroundUrl = null)
+          : Gathering(name: n, start: start, end: end);
       final g = await remote.saveGathering(
-        Gathering(name: name.text.trim(), start: start, end: end),
+        base
+          ..name = n
+          ..start = start
+          ..end = end,
       );
+      if (from != null && (copyRooms || copyPeople)) {
+        final plan = await remote.roomPlan(from.id);
+        if (plan != null) {
+          final e = copyEvent(
+            Event.fromJson(plan.data),
+            name: n,
+            start: start,
+            end: end,
+            rooms: copyRooms,
+            attendees: copyPeople,
+          );
+          await remote.saveRoomPlan(g.id, e.toJson(), 0);
+        }
+      }
       if (mounted) await _open(g);
     } catch (e) {
       _snack(errorText(e));

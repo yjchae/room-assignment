@@ -394,6 +394,78 @@ void main() {
       expect(back.stayNights, a.stayNights);
     });
 
+    test('과거 집회 복사: 고른 것만, 배정·신청 연결은 풀고 나이는 해가 바뀐 만큼', () {
+      final src = Event(
+        name: '작년',
+        startDate: DateTime(2025, 10, 9),
+        endDate: DateTime(2025, 10, 11),
+        rooms: [Room(id: 'r1', roomNo: '301', capacity: 4)],
+        attendees: [
+          Attendee(
+            id: 'a',
+            name: '홍',
+            gender: 'M',
+            age: 40,
+            roomId: 'r1',
+            registrationId: 'x',
+            checkIn: DateTime(2025, 10, 10),
+            checkOut: DateTime(2025, 10, 11),
+          ),
+        ],
+        customFields: ['교회'],
+      );
+      final e = copyEvent(
+        src,
+        name: '올해',
+        start: start,
+        end: end,
+        rooms: true,
+        attendees: true,
+      );
+      expect(e.rooms.single.roomNo, '301');
+      final a = e.attendees.single;
+      expect((a.roomId, a.registrationId, a.age), (null, null, 41));
+      expect((a.checkIn, a.checkOut), (start, end));
+      expect(e.customFields, ['교회']);
+      final roomsOnly = copyEvent(
+        src,
+        name: 'x',
+        start: start,
+        end: end,
+        rooms: true,
+      );
+      expect(roomsOnly.attendees, isEmpty);
+      expect(src.attendees.single.roomId, 'r1'); // 원본은 그대로
+    });
+
+    test('참석자 CSV: 방·일정이 들어가고, 쉼표·따옴표는 감싸고, 수식은 막는다', () {
+      final e = Event(
+        name: 'x',
+        startDate: start,
+        endDate: end,
+        rooms: [Room(id: 'r1', roomNo: '301', building: '반석관', capacity: 4)],
+        attendees: [
+          Attendee(
+            id: 'a',
+            name: '홍, "길동"',
+            gender: 'F',
+            age: 30,
+            roomId: 'r1',
+            checkIn: start,
+            checkOut: end,
+            extra: {'교회': '=1+1'},
+          ),
+        ],
+        customFields: ['교회'],
+      );
+      final lines = attendeesCsv(e).split('\r\n');
+      expect(lines[0], '이름,성별,나이,전화,셀,존,기타,교회,방,체크인,체크아웃');
+      expect(
+        lines[1],
+        '"홍, ""길동""",여,30,,,,,\'=1+1,반석관 301,2026-10-09,2026-10-11',
+      );
+    });
+
     test('당일 참석자는 방이 필요 없어 뺀다', () {
       final s = tmpStore();
       final day = DateTime(2026, 10, 10);

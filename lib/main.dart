@@ -311,13 +311,17 @@ class BackupButton extends StatelessWidget {
   const BackupButton({super.key});
 
   @override
-  Widget build(BuildContext context) => PopupMenuButton<bool>(
+  Widget build(BuildContext context) => PopupMenuButton<String>(
     tooltip: '방배정 백업',
-    onSelected: (restore) =>
-        restore ? _restoreBackup(context) : _downloadBackup(context),
+    onSelected: (v) => switch (v) {
+      'csv' => _downloadCsv(context),
+      'restore' => _restoreBackup(context),
+      _ => _downloadBackup(context),
+    },
     itemBuilder: (_) => const [
-      PopupMenuItem(value: false, child: Text('JSON으로 내려받기')),
-      PopupMenuItem(value: true, child: Text('JSON 파일로 되살리기')),
+      PopupMenuItem(value: 'json', child: Text('JSON으로 내려받기')),
+      PopupMenuItem(value: 'csv', child: Text('참석자 CSV로 내려받기 (엑셀)')),
+      PopupMenuItem(value: 'restore', child: Text('JSON 파일로 되살리기')),
     ],
     child: const Padding(
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -354,6 +358,27 @@ Future<void> _downloadBackup(BuildContext context) async {
     }
   } catch (e) {
     messenger.showSnackBar(SnackBar(content: Text('백업 파일을 저장하지 못했습니다. $e')));
+  }
+}
+
+/// 참석자 목록(방·일정 포함)을 CSV 로 내려받는다. 되살리기는 JSON 으로만 된다.
+Future<void> _downloadCsv(BuildContext context) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final name = store.event.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  try {
+    final saved = await FilePicker.saveFile(
+      fileName: '${name}_참석자_${ymd(DateTime.now())}.csv',
+      // BOM 이 있어야 엑셀이 한글을 UTF-8 로 읽는다.
+      bytes: utf8.encode('﻿${attendeesCsv(store.event)}'),
+      mimeType: 'text/csv',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+    if (saved != null) {
+      messenger.showSnackBar(const SnackBar(content: Text('CSV 파일을 저장했습니다.')));
+    }
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('CSV 파일을 저장하지 못했습니다. $e')));
   }
 }
 

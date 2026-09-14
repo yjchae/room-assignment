@@ -296,6 +296,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                     }, '입금대기로 되돌렸습니다.'),
                     onCancel: () => _cancel(selected),
                     onResetPin: () => _resetPin(selected),
+                    onDelete: () => _delete(selected),
                   ),
                 ),
               ],
@@ -438,6 +439,39 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
               : '${targets.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.') +
           (added > 0 ? ' 참석자 $added명을 등록했습니다.' : ''),
     );
+  }
+
+  /// 신청을 서버에서 지운다 (입금 내역 포함). 이 신청으로 들어온 참석자도 뺀다.
+  Future<void> _delete(Registration r) async {
+    final people = store.event.attendees
+        .where((a) => a.registrationId == r.id)
+        .length;
+    final ok = await confirmDialog(
+      context,
+      title: '${r.applicant} 신청 삭제',
+      body:
+          '신청과 입금 내역이 서버에서 완전히 지워지고 되돌릴 수 없습니다. '
+          '신청자가 조회해도 나오지 않습니다.'
+          '${people > 0 ? '\n이 신청으로 들어온 참석자 $people명도 방배정에서 빠집니다.' : ''}',
+      action: '삭제',
+      danger: true,
+    );
+    if (!ok) return;
+    setState(() => busy = true);
+    try {
+      await remote.deleteRegistration(r.id);
+      store.removeRegistration(r.id);
+      setState(() {
+        regs!.removeWhere((x) => x.id == r.id);
+        checked.remove(r.id);
+        selectedId = null;
+      });
+      _snack('신청을 삭제했습니다.');
+    } catch (e) {
+      _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   Future<void> _cancel(Registration r) async {
@@ -762,11 +796,13 @@ class _Detail extends StatelessWidget {
     required this.onRevert,
     required this.onCancel,
     required this.onResetPin,
+    required this.onDelete,
   });
   final Registration r;
   final Quote q;
   final bool busy;
   final VoidCallback onClose, onConfirm, onRevert, onCancel, onResetPin;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -897,6 +933,11 @@ class _Detail extends StatelessWidget {
             TextButton(
               onPressed: busy ? null : onResetPin,
               child: const Text('PIN 재설정'),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+              onPressed: busy ? null : onDelete,
+              child: const Text('신청 삭제'),
             ),
           ],
         ),

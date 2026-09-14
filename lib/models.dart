@@ -215,6 +215,42 @@ class Attendee {
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
+/// 과거 집회의 방배정에서 [rooms]·[attendees] 를 골라 새 집회([start]~[end])용으로 옮긴다.
+/// 참석자는 방 배정·일정·신청 연결을 푼다 (새 집회엔 그 신청이 없어 [신청에서 가져오기] 때
+/// 지워지면 안 된다). 나이는 해가 바뀐 만큼 더한다. 원본은 건드리지 않는다.
+Event copyEvent(
+  Event src, {
+  required String name,
+  required DateTime start,
+  required DateTime end,
+  bool rooms = false,
+  bool attendees = false,
+}) {
+  final years = start.year - src.startDate.year;
+  final e = Event(
+    name: name,
+    startDate: dateOnly(start),
+    endDate: dateOnly(end),
+    customFields: attendees ? [...src.customFields] : [],
+  );
+  if (rooms) e.rooms = [for (final r in src.rooms) Room.fromJson(r.toJson())];
+  if (attendees) {
+    e.attendees = [
+      for (final a in src.attendees)
+        Attendee.fromJson({
+          ...a.toJson(),
+          'roomId': null,
+          'registrationId': null,
+          'edited': false,
+          'age': a.age == 0 ? 0 : a.age + years, // 0 = 모름
+          'checkIn': e.startDate.toIso8601String(),
+          'checkOut': e.endDate.toIso8601String(),
+        })..stayNights = null,
+    ];
+  }
+  return e;
+}
+
 /// 건물 이름 순(건물 없는 방이 먼저) → 호수 오름차순. 숫자가 아닌 호수는 문자열로 비교한다.
 /// 화면과 배정 엔진이 같은 순서를 봐야 해서 모델 쪽에 둔다.
 int byRoomNo(Room a, Room b) {

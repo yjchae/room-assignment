@@ -516,6 +516,48 @@ List<String> parseRoomRange(String input) {
   return out;
 }
 
+// --- CSV 내려받기 ----------------------------------------------------------
+
+/// 참석자 목록 CSV (엑셀용, 줄바꿈 CRLF). 머리글은 붙여넣기 등록과 같은 이름이라
+/// 엑셀에서 복사해 [붙여넣기 등록]으로 되돌려 넣을 수 있다.
+String attendeesCsv(Event e) {
+  final rooms = {for (final r in e.rooms) r.id: r.label};
+  String cell(Object? v) {
+    var s = '${v ?? ''}';
+    // 신청 웹에서 들어온 값이 엑셀에서 수식으로 실행되지 않게 (CSV injection).
+    if (RegExp(r'^[=+\-@\t\r]').hasMatch(s)) s = "'$s";
+    return RegExp(r'[",\r\n]').hasMatch(s) ? '"${s.replaceAll('"', '""')}"' : s;
+  }
+
+  return [
+    [
+      for (final k in defaultColumns) builtinFieldLabels[k]!,
+      ...e.customFields,
+      '방',
+      '체크인',
+      '체크아웃',
+    ],
+    for (final a in e.attendees)
+      [
+        a.name,
+        switch (a.gender) {
+          'M' => '남',
+          'F' => '여',
+          _ => '',
+        },
+        a.age == 0 ? '' : a.age,
+        a.phone,
+        a.cell,
+        a.zone,
+        a.note,
+        for (final f in e.customFields) a.extra[f],
+        rooms[a.roomId],
+        ymd(a.checkIn),
+        ymd(a.checkOut),
+      ],
+  ].map((row) => row.map(cell).join(',')).join('\r\n');
+}
+
 // --- 붙여넣기 파싱 ---------------------------------------------------------
 
 /// 앱이 기본으로 갖고 있는 참석자 항목. 키 -> 화면에 보이는 이름.

@@ -108,6 +108,31 @@ class FakeRemote extends Remote {
   }
 
   @override
+  Future<void> deleteRegistration(String id) async =>
+      regs.removeWhere((r) => r.id == id);
+
+  /// 집회 id → 방배정 문서.
+  final plans = <String, Map<String, dynamic>>{};
+
+  @override
+  Future<({Map<String, dynamic> data, int version})?> roomPlan(
+    String gatheringId,
+  ) async {
+    final p = plans[gatheringId];
+    return p == null ? null : (data: p, version: 1);
+  }
+
+  @override
+  Future<int> saveRoomPlan(
+    String gatheringId,
+    Map<String, dynamic> data,
+    int version,
+  ) async {
+    plans[gatheringId] = data;
+    return version + 1;
+  }
+
+  @override
   Future<String> submit(
     String gatheringId, {
     required String phone,
@@ -624,6 +649,46 @@ void main() {
       expect(find.text('admin@test'), findsOneWidget);
     });
 
+    testWidgets('새 집회: 과거 집회에서 설정·방·참석자를 골라 복사한다', (tester) async {
+      fake.plans['g1'] = Event(
+        name: 'x',
+        startDate: DateTime(2026, 10, 9),
+        endDate: DateTime(2026, 10, 11),
+        rooms: [Room(id: 'r1', roomNo: '301', capacity: 4)],
+        attendees: [
+          Attendee(
+            id: 'a',
+            name: '홍길동',
+            gender: 'M',
+            age: 40,
+            roomId: 'r1',
+            checkIn: DateTime(2026, 10, 9),
+            checkOut: DateTime(2026, 10, 11),
+          ),
+        ],
+      ).toJson();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('새 집회'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<Gathering?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('신촌하나교회 가족수양회 (').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('참석자 (방 배정은 풀고 새로 시작)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('만들기'));
+      await tester.pumpAndSettle();
+
+      final g2 = fake.gs.firstWhere((g) => g.id != 'g1');
+      expect(g2.name, '신촌하나교회 가족수양회'); // 이름이 비어 있으면 원본 이름
+      expect(g2.bank.account, '000-00-0000'); // 설정 복사
+      expect((g2.open, g2.posterUrl), (false, null));
+      final e = Event.fromJson(fake.plans[g2.id]!);
+      expect(e.rooms.single.roomNo, '301');
+      expect(e.attendees.single.roomId, isNull);
+    });
+
     testWidgets('신청·입금: 로그인 전엔 로그인 안내', (tester) async {
       fake.admin = false;
       current.value = sample();
@@ -731,6 +796,33 @@ void main() {
       // 입금액은 신청 때 값이 아니라 지금 계산한 금액
       expect(fake.regs.map((r) => r.paid), [280000, 160000]);
       expect(store.event.attendees, hasLength(3)); // 두 신청의 3명 모두 참석자로
+    });
+
+    testWidgets('신청 삭제: 확인하면 서버에서 지우고 그 신청의 참석자도 뺀다', (tester) async {
+      fake.regs.add(pendingReg());
+      current.value = sample();
+      store.event.attendees.add(
+        Attendee(
+          id: 'a',
+          name: '홍길동',
+          gender: 'M',
+          age: 30,
+          registrationId: fake.regs.single.id,
+          checkIn: DateTime(2026, 10, 9),
+          checkOut: DateTime(2026, 10, 11),
+        ),
+      );
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+
+      await tester.tap(find.text(fake.regs.single.applicant).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, '신청 삭제'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('삭제'));
+      await tester.pumpAndSettle();
+      expect(fake.regs, isEmpty);
+      expect(store.event.attendees, isEmpty);
     });
 
     testWidgets('집회 설정: 고친 회비가 서버로 가고, 틀린 값은 막는다', (tester) async {
