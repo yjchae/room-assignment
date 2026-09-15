@@ -445,3 +445,28 @@ create policy "집회 이미지: 운영자 관리" on storage.objects
   for all to authenticated
   using (bucket_id = 'gathering-images' and public.is_admin())
   with check (bucket_id = 'gathering-images' and public.is_admin());
+
+-- ---------------------------------------------------------------------------
+-- 존은 대문자로 통일 ('a존' → 'A존'). 앱은 이제 대문자로만 저장하고, 이건 예전 데이터 정리용.
+-- 바꿀 게 없는 행은 건드리지 않아 여러 번 돌려도 된다. 함수는 이 세션에만 있는 임시 함수다.
+-- room_plans 는 version 을 올리지 않는다 — 올리면 열어 둔 기기의 다음 저장이 충돌로 버려진다.
+-- ---------------------------------------------------------------------------
+
+create or replace function pg_temp.upper_zones(arr jsonb) returns jsonb
+language sql immutable as $$
+  select coalesce(jsonb_agg(
+           case when jsonb_typeof(e->'zone') = 'string'
+                then jsonb_set(e, '{zone}', to_jsonb(upper(e->>'zone')))
+                else e end
+           order by i), '[]'::jsonb)
+  from jsonb_array_elements(arr) with ordinality as t(e, i)
+$$;
+
+update public.registrations
+   set people = pg_temp.upper_zones(people)
+ where people <> pg_temp.upper_zones(people);
+
+update public.room_plans
+   set data = jsonb_set(data, '{attendees}', pg_temp.upper_zones(data->'attendees'))
+ where jsonb_typeof(data->'attendees') = 'array'
+   and data->'attendees' <> pg_temp.upper_zones(data->'attendees');

@@ -133,7 +133,12 @@ class Attendee {
   String name;
   String gender; // 'M' | 'F'
   int age;
-  String? phone, cell, zone, note;
+  String? phone, cell, note;
+
+  /// 존. 'a존'·'A존'이 따로 세지 않게 항상 대문자로 담는다 (붙여넣기·수정·신청 가져오기 모두).
+  String? get zone => _zone;
+  set zone(String? v) => _zone = v?.toUpperCase();
+  String? _zone;
   String? roomId;
   DateTime checkIn;
   DateTime checkOut;
@@ -159,7 +164,7 @@ class Attendee {
     required this.age,
     this.phone,
     this.cell,
-    this.zone,
+    String? zone,
     this.note,
     this.roomId,
     required this.checkIn,
@@ -167,7 +172,8 @@ class Attendee {
     this.stayNights,
     Map<String, String>? extra,
     this.registrationId,
-  }) : extra = extra ?? {};
+  }) : extra = extra ?? {},
+       _zone = zone?.toUpperCase();
 
   /// 하룻밤 [night] 에 이 방에 묵는가.
   bool staysOn(DateTime night) =>

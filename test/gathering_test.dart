@@ -556,4 +556,25 @@ void main() {
       expect(back.attendees.single.registrationId, 'r1');
     });
   });
+
+  test('존은 소문자로 넣어도 대문자로 담긴다 (신청서·참석자·저장된 JSON)', () {
+    expect(
+      Person(name: 'x', gender: 'M', birthYear: 1990, zone: 'a존').zone,
+      'A존',
+    );
+    expect(Person.fromJson({'name': 'x', 'zone': 'b'}).zone, 'B');
+    final a = Attendee.fromJson({
+      'id': '1',
+      'name': 'x',
+      'gender': 'M',
+      'age': 30,
+      'zone': 'c존',
+      'checkIn': '2026-01-01T00:00:00.000',
+      'checkOut': '2026-01-02T00:00:00.000',
+    });
+    expect(a.zone, 'C존');
+    a.zone = 'd';
+    expect(a.zone, 'D');
+    expect(a.toJson()['zone'], 'D');
+  });
 }

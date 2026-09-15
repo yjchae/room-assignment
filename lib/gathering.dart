@@ -138,12 +138,13 @@ class Person {
     this.checkOut,
     this.phone,
     this.cell,
-    this.zone,
+    String? zone,
     this.minister = false,
     this.church,
     Map<String, String>? extra,
   }) : id = id ?? newPersonId(),
-       extra = extra ?? {};
+       extra = extra ?? {},
+       _zone = zone?.toUpperCase();
 
   /// 신청 웹에서 만들어져 관리자 앱의 참석자 id 로 그대로 이어진다.
   String id;
@@ -157,7 +158,12 @@ class Person {
 
   /// 예전 신청서 형식(도착일~출발일). [days] 가 없을 때만 본다. null 이면 집회 시작일/종료일.
   DateTime? checkIn, checkOut;
-  String? phone, cell, zone;
+  String? phone, cell;
+
+  /// 존. 신청 웹에서 'a존'으로 써도 'A존'으로 저장·표시한다 (예전에 소문자로 들어온 신청도 읽을 때).
+  String? get zone => _zone;
+  set zone(String? v) => _zone = v?.toUpperCase();
+  String? _zone;
 
   /// 신청서의 "사역자" 체크.
   bool minister;
