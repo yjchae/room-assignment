@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../gathering.dart';
@@ -7,6 +9,7 @@ import '../models.dart';
 import '../remote.dart';
 import '../theme.dart';
 import '../widgets/quote_table.dart';
+import 'attendees.dart' show pasteDialog;
 import 'gatherings.dart';
 
 const _tabular = [FontFeature.tabularFigures()];
@@ -241,6 +244,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                 icon: const Icon(Icons.person_add_alt, size: 18),
                 label: const Text('신청 추가'),
               ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : () => _paste(g),
+                icon: const Icon(Icons.content_paste, size: 18),
+                label: const Text('붙여넣기 추가'),
+              ),
               FilledButton.icon(
                 onPressed: checked.isEmpty || busy
                     ? null
@@ -343,6 +351,65 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     if (!mounted) return;
     setState(() => selectedId = id);
     _snack('신청을 추가했습니다. 입금이 확인되면 [입금 확인]을 누르세요.');
+  }
+
+  /// 엑셀 명단을 붙여넣어 신청 여러 건을 한 번에 넣는다. 전화번호가 같은 사람은 한 신청(가족)으로
+  /// 묶는다 — 서버가 집회당 전화번호 하나에 신청 하나만 받아서. 모두 전체 참석·입금대기로 들어가고,
+  /// PIN 은 무작위라 신청자가 조회하려면 [PIN 재설정]으로 알려 준다.
+  Future<void> _paste(Gathering g) async {
+    final rows = await pasteDialog(
+      context,
+      title: '붙여넣기로 신청 추가',
+      help: '전화번호가 같은 사람은 한 신청(가족)으로 묶습니다. 모두 입금대기로 들어갑니다.',
+      requirePhone: true,
+    );
+    if (rows == null || !mounted) return;
+    final byPhone = <String, List<Attendee>>{};
+    for (final a in rows) {
+      byPhone.putIfAbsent(digitsOnly(a.phone!), () => []).add(a);
+    }
+    setState(() => busy = true);
+    var added = 0;
+    final failed = <String>[];
+    for (final MapEntry(key: phone, value: list) in byPhone.entries) {
+      final people = [
+        for (final a in list)
+          Person(
+            name: a.name,
+            gender: a.gender,
+            birthYear: g.start.year - a.age,
+            phone: phone,
+            cell: a.cell,
+            zone: a.zone,
+            extra: a.extra,
+          ),
+      ];
+      final notes = [for (final a in list) ?a.note].join(', ');
+      try {
+        await remote.adminSubmit(
+          g.id,
+          phone: phone,
+          pin: '${math.Random.secure().nextInt(10000)}'.padLeft(4, '0'),
+          people: people,
+          memo: notes.isEmpty ? null : notes,
+          quoted: g.quoteFor(people, DateTime.now()).beforeDiscount,
+        );
+        added++;
+      } catch (e) {
+        failed.add('${people.first.name}(${fmtPhone(phone)}): ${errorText(e)}');
+      }
+    }
+    if (!mounted) return;
+    setState(() => busy = false);
+    await _load();
+    if (!mounted) return;
+    _snack(
+      [
+        '신청 $added건을 입금대기로 추가했습니다.',
+        if (failed.isNotEmpty) '못 넣은 신청 ${failed.length}건:',
+        ...failed,
+      ].join('\n'),
+    );
   }
 
   Future<void> _confirm(Registration r, Quote q) async {

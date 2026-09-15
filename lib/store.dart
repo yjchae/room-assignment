@@ -619,12 +619,15 @@ String? normalizeGender(String raw) {
 
 /// 엑셀에서 복사한 TSV(탭 구분) 텍스트를 참석자로 파싱한다.
 /// 탭이 없는 줄은 쉼표로도 나눠본다. 헤더로 보이는 첫 줄은 건너뛴다.
+/// 나이 칸에 출생연도(4자리)가 오면 [checkIn] 연도 기준 연 나이로 바꾼다.
+/// [requirePhone] = 신청으로 넣을 때. 서버가 휴대폰번호로 신청을 구분해서 꼭 있어야 한다.
 List<ParsedRow> parseAttendeeText(
   String text, {
   required List<String> columns,
   required DateTime checkIn,
   required DateTime checkOut,
   required String Function() newId,
+  bool requirePhone = false,
 }) {
   final rows = <ParsedRow>[];
   final lines = text.split('\n');
@@ -652,7 +655,9 @@ List<ParsedRow> parseAttendeeText(
     final genderRaw = at('gender');
     final ageRaw = at('age');
     final gender = genderRaw == null ? null : normalizeGender(genderRaw);
-    final age = ageRaw == null ? null : int.tryParse(ageRaw);
+    var age = ageRaw == null ? null : int.tryParse(ageRaw);
+    if (age != null && age >= 1900) age = checkIn.year - age;
+    final phone = at('phone');
 
     final problems = [
       if (name == null) '이름 없음',
@@ -664,6 +669,11 @@ List<ParsedRow> parseAttendeeText(
         '나이 없음'
       else if (age == null || age < 0 || age > 130)
         '나이 오류($ageRaw)',
+      if (requirePhone)
+        if (phone == null)
+          '전화 없음'
+        else if (!validPhone(phone))
+          '전화 오류($phone)',
     ];
     if (problems.isNotEmpty) {
       rows.add(ParsedRow(i + 1, cells, error: problems.join(', ')));
@@ -688,7 +698,7 @@ List<ParsedRow> parseAttendeeText(
           name: name!,
           gender: gender!,
           age: age!,
-          phone: at('phone'),
+          phone: phone,
           cell: at('cell'),
           zone: at('zone'),
           note: at('note'),

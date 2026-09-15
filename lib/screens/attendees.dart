@@ -26,7 +26,16 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
       // 한 명씩 추가는 [신청·입금]의 [신청 추가]로 한다 — 입금 확인까지 거쳐야 해서.
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'paste',
-        onPressed: () => _pasteDialog(context),
+        onPressed: () async {
+          final messenger = ScaffoldMessenger.of(context);
+          final added = await pasteDialog(context);
+          if (added == null) return;
+          store.event.attendees.addAll(added);
+          store.commit();
+          messenger.showSnackBar(
+            SnackBar(content: Text('${added.length}명 등록됨')),
+          );
+        },
         icon: const Icon(Icons.content_paste),
         label: const Text('붙여넣기 등록'),
       ),
@@ -526,11 +535,17 @@ Future<bool> removeCustomFieldDialog(BuildContext context, String name) async {
   return true;
 }
 
-Future<void> _pasteDialog(BuildContext context) async {
+/// 엑셀에서 복사한 명단을 붙여넣어 참석자로 읽는다. 저장을 누르면 정상 행, 취소면 null.
+/// 참석자 화면과 [신청·입금]의 [붙여넣기 추가]가 같이 쓴다.
+Future<List<Attendee>?> pasteDialog(
+  BuildContext context, {
+  String title = '붙여넣기로 참석자 등록',
+  String? help,
+  bool requirePhone = false,
+}) async {
   final text = TextEditingController();
   var columns = [...defaultColumns];
   List<ParsedRow> preview = const [];
-  final messenger = ScaffoldMessenger.of(context);
 
   final ok = await showDialog<bool>(
     context: context,
@@ -543,12 +558,13 @@ Future<void> _pasteDialog(BuildContext context) async {
             checkIn: store.event.startDate,
             checkOut: store.event.endDate,
             newId: store.newId,
+            requirePhone: requirePhone,
           );
         });
         final good = preview.where((r) => r.ok).length;
         final bad = preview.length - good;
         return AlertDialog(
-          title: const Text('붙여넣기로 참석자 등록'),
+          title: Text(title),
           content: SizedBox(
             width: 820,
             height: 560,
@@ -558,6 +574,7 @@ Future<void> _pasteDialog(BuildContext context) async {
                 const Text(
                   '엑셀에서 셀 범위를 복사해 그대로 붙여넣으세요 (탭 구분). 컬럼 순서를 아래에서 맞춥니다.',
                 ),
+                if (help != null) Text(help),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -680,9 +697,6 @@ Future<void> _pasteDialog(BuildContext context) async {
     ),
   );
 
-  if (ok != true) return;
-  final added = preview.where((r) => r.ok).map((r) => r.attendee!).toList();
-  store.event.attendees.addAll(added);
-  store.commit();
-  messenger.showSnackBar(SnackBar(content: Text('${added.length}명 등록됨')));
+  if (ok != true) return null;
+  return [for (final r in preview) ?r.attendee];
 }

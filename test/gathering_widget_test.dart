@@ -836,6 +836,36 @@ void main() {
       expect(store.event.attendees.map((a) => a.name), ['김현장']);
     });
 
+    testWidgets('신청·입금: 엑셀 붙여넣기로 신청 여러 건을 넣는다 (같은 전화 = 한 신청)', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 2400));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      await tester.tap(find.text('붙여넣기 추가'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        '이름\t성별\t나이\t전화\n'
+        '김아빠\t남\t1985\t010-1111-2222\n' // 나이 칸에 출생연도
+        '김아들\t남\t10\t01011112222\n'
+        '이혼자\t여\t30\t010-3333-4444\n'
+        '번호없음\t여\t30\n',
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('정상 3행 · 오류 1행'), findsOneWidget);
+      await tester.tap(find.text('3명 저장'));
+      await tester.pumpAndSettle();
+
+      expect(fake.regs, hasLength(2));
+      final family = fake.regs.firstWhere((r) => r.phone == '01011112222');
+      expect(family.people.map((p) => p.name), ['김아빠', '김아들']);
+      expect(family.people.first.birthYear, 1985);
+      expect(family.quoted, 150000 + 100000 + 10000); // 성인 + 초등 + 그룹당
+      expect(find.text('입금대기 2'), findsOneWidget);
+    });
+
     testWidgets('신청·입금: 취소하면 그 신청의 참석자가 빠진다 (방 배정된 사람은 미리 경고)', (tester) async {
       fake.regs.add(
         pendingReg()
@@ -859,7 +889,7 @@ void main() {
         att('b', '홍딸', reg: 'r1'),
         att('p', '현장등록'), // 붙여넣기로 넣은 사람
       ]);
-      setView(tester, const Size(1400, 900));
+      setView(tester, const Size(1400, 2400));
       await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
 
       await tester.tap(find.text('홍길동').first);
@@ -958,7 +988,7 @@ void main() {
           checkOut: DateTime(2026, 10, 11),
         ),
       );
-      setView(tester, const Size(1400, 900));
+      setView(tester, const Size(1400, 2400));
       await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
 
       await tester.tap(find.text(fake.regs.single.applicant).first);
