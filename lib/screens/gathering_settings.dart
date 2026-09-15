@@ -8,7 +8,7 @@ import '../main.dart';
 import '../models.dart';
 import '../remote.dart';
 import '../theme.dart';
-import 'attendees.dart' show addCustomFieldDialog;
+import 'attendees.dart' show addCustomFieldDialog, removeCustomFieldDialog;
 import 'gatherings.dart';
 
 /// 집회 설정 (서버). 저장하면 이 PC 의 방배정 파일 이름·날짜·항목도 같이 바뀐다.
@@ -738,7 +738,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   const Text(
-                    '참석자 탭의 사용자 정의 항목이 신청서에 그대로 나옵니다. [저장]해야 반영됩니다.',
+                    '참석자 탭의 사용자 정의 항목이 신청서에 그대로 나옵니다. '
+                    '추가·삭제한 뒤 [저장]해야 신청서에 반영됩니다. 삭제하면 참석자들의 그 항목 값도 지워집니다.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 8),
@@ -747,7 +748,17 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     runSpacing: 8,
                     children: [
                       for (final f in store.event.customFields)
-                        Chip(label: Text(f)),
+                        Chip(
+                          label: Text(f),
+                          deleteButtonTooltipMessage: "'$f' 항목 삭제",
+                          onDeleted: () async {
+                            final ok = await removeCustomFieldDialog(
+                              context,
+                              f,
+                            );
+                            if (ok && mounted) setState(() {});
+                          },
+                        ),
                       ActionChip(
                         avatar: const Icon(Icons.add, size: 16),
                         label: const Text('항목 추가'),

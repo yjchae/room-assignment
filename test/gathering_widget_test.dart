@@ -875,6 +875,23 @@ void main() {
       expect(store.event.name, '신촌하나교회 가족수양회');
     });
 
+    testWidgets('집회 설정: 추가 항목을 지우고 저장하면 신청서에서 빠진다', (tester) async {
+      current.value = sample()..formFields = ['교회'];
+      store.event.customFields.add('교회');
+      setView(tester, const Size(1400, 2400));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      await tester.tap(find.byTooltip("'교회' 항목 삭제"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '삭제'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(Chip, '교회'), findsNothing);
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(fake.gs.single.formFields, isEmpty);
+      expect(store.event.customFields, isEmpty);
+    });
+
     testWidgets('집회 설정: 계좌 없이 신청을 받으려 하면 막는다', (tester) async {
       current.value = sample()..bank = Bank();
       setView(tester, const Size(1400, 2400));
