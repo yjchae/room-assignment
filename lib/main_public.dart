@@ -26,19 +26,23 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('서버 준비 실패: $e');
   }
-  runApp(PublicApp(gatheringId: Uri.base.queryParameters['g']));
+  final q = Uri.base.queryParameters;
+  runApp(PublicApp(gatheringId: q['g'], noticeId: q['n']));
 }
 
 class PublicApp extends StatelessWidget {
-  const PublicApp({super.key, this.gatheringId});
+  const PublicApp({super.key, this.gatheringId, this.noticeId});
   final String? gatheringId;
+
+  /// 공지 링크(`?g=<집회id>&n=<공지id>`)로 들어왔을 때 먼저 펼쳐 보여줄 공지.
+  final String? noticeId;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: '집회 신청',
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme().copyWith(visualDensity: VisualDensity.standard),
-    home: GatheringPage(id: gatheringId),
+    home: GatheringPage(id: gatheringId, noticeId: noticeId),
   );
 }
 
@@ -47,8 +51,9 @@ class PublicApp extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class GatheringPage extends StatefulWidget {
-  const GatheringPage({super.key, this.id});
+  const GatheringPage({super.key, this.id, this.noticeId});
   final String? id;
+  final String? noticeId;
 
   @override
   State<GatheringPage> createState() => _GatheringPageState();
@@ -99,15 +104,22 @@ class _GatheringPageState extends State<GatheringPage> {
       if (!snap.hasData) {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
-      return _GatheringView(snap.data!.gathering, snap.data!.notices);
+      return _GatheringView(
+        snap.data!.gathering,
+        snap.data!.notices,
+        widget.noticeId,
+      );
     },
   );
 }
 
 class _GatheringView extends StatelessWidget {
-  const _GatheringView(this.g, this.notices);
+  const _GatheringView(this.g, this.notices, this.openNoticeId);
   final Gathering g;
   final List<Notice> notices;
+
+  /// 공지 링크로 들어왔으면 그 공지 id.
+  final String? openNoticeId;
 
   @override
   Widget build(BuildContext context) {
@@ -200,7 +212,10 @@ class _GatheringView extends StatelessWidget {
                   ],
                 ),
                 if (notices.isNotEmpty)
-                  _Section(title: '공지', children: [_NoticeList(notices)]),
+                  _Section(
+                    title: '공지',
+                    children: [_NoticeList(notices, openNoticeId)],
+                  ),
                 if (!g.fee.isFree)
                   _Section(title: '회비', children: [_FeeTable(g)]),
                 if (!g.fee.isFree && !g.bank.isEmpty)
@@ -1314,8 +1329,11 @@ class _LookupPageState extends State<LookupPage> {
 /// 집회 페이지의 공지 목록. 고정 공지가 먼저, 그다음 최신순([sortedNotices]).
 /// 처음엔 [_head]건만 펼쳐 두고, 긴 글은 접어서 누르면 펼친다 — 휴대폰에서 스크롤이 길어지지 않게.
 class _NoticeList extends StatefulWidget {
-  const _NoticeList(this.notices);
+  const _NoticeList(this.notices, this.openId);
   final List<Notice> notices;
+
+  /// 공지 링크로 들어왔으면 그 공지. 맨 위로 올리고 펼쳐 둔다.
+  final String? openId;
 
   @override
   State<_NoticeList> createState() => _NoticeListState();
@@ -1328,11 +1346,19 @@ class _NoticeListState extends State<_NoticeList> {
   static const _fold = 160;
 
   bool showAll = false;
-  final opened = <String>{};
+  late final opened = {?widget.openId};
 
   @override
   Widget build(BuildContext context) {
-    final all = widget.notices;
+    // 링크로 찾아온 공지가 먼저. 없는 id 면(지워진 공지) 그냥 평소 순서다.
+    final all = widget.openId == null
+        ? widget.notices
+        : [
+            for (final n in widget.notices)
+              if (n.id == widget.openId) n,
+            for (final n in widget.notices)
+              if (n.id != widget.openId) n,
+          ];
     final shown = showAll ? all : all.take(_head).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -98,10 +98,6 @@ class FakeRemote extends Remote {
   /// 공지 id → 돌린 기록 (최근 것이 앞).
   final sends = <String, List<NoticeSend>>{};
 
-  /// 값이 있으면 알림톡 호출이 그 코드로 실패한다. null 이면 성공.
-  String? alimtalkError = 'NOT_CONFIGURED';
-  Map<String, dynamic>? lastAlimtalk;
-
   @override
   Future<List<Notice>> notices(String gatheringId) async => sortedNotices([
     // 서버 RLS 와 같은 규칙 — 로그인 안 한 사람에겐 공개한 공지만 간다.
@@ -145,19 +141,6 @@ class FakeRemote extends Remote {
     );
     (sends[noticeId] ??= []).insert(0, s);
     return s;
-  }
-
-  @override
-  Future<int> sendNoticeKakao({
-    required Notice notice,
-    required NoticeTarget target,
-    required List<String> phones,
-    required String message,
-  }) async {
-    lastAlimtalk = {'phones': phones, 'message': message};
-    if (alimtalkError != null) throw RemoteError(alimtalkError!);
-    await logNoticeSend(notice.id, NoticeChannel.alimtalk, target, phones.length);
-    return phones.length;
   }
 
   @override
@@ -391,6 +374,39 @@ void main() {
       // 고정 공지가 최신 공지보다 위에 온다.
       final pinned = tester.getTopLeft(find.text('준비물 안내')).dy;
       expect(pinned, lessThan(tester.getTopLeft(find.text('식사 안내')).dy));
+    });
+
+    testWidgets('공지 링크로 들어오면 그 공지가 맨 위에 펼쳐진다', (tester) async {
+      fake.ns.addAll([
+        Notice(
+          id: 'n1',
+          gatheringId: 'g1',
+          title: '식사 안내',
+          body: '첫 끼는 저녁입니다.',
+          createdAt: DateTime(2026, 9, 14),
+        ),
+        Notice(
+          id: 'n2',
+          gatheringId: 'g1',
+          title: '준비물 안내',
+          body: '세면도구를 챙겨 오세요. ${'자세한 내용은 아래를 보세요. ' * 12}',
+          createdAt: DateTime(2026, 9, 10),
+        ),
+      ]);
+      setView(tester, const Size(400, 2000));
+      await tester.pumpWidget(
+        const PublicApp(gatheringId: 'g1', noticeId: 'n2'),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // 최신순이라면 '식사 안내'가 위인데, 링크로 찾아온 공지가 먼저 온다.
+      expect(
+        tester.getTopLeft(find.text('준비물 안내')).dy,
+        lessThan(tester.getTopLeft(find.text('식사 안내')).dy),
+      );
+      // 긴 글이지만 접히지 않고 펼쳐져 있다.
+      expect(find.text('접기'), findsOneWidget);
+      expect(find.text('더 보기'), findsNothing);
     });
 
     testWidgets('공지가 없으면 공지 카드가 아예 안 나온다', (tester) async {
@@ -1168,7 +1184,7 @@ void main() {
       expect(find.textContaining('메시지 복사 · 전체 2명'), findsOneWidget);
     });
 
-    testWidgets('번호 복사는 대상자 번호만, 알림톡은 설정 전이면 안내로 끝난다', (tester) async {
+    testWidgets('번호 복사는 대상자 번호만, 링크 복사는 그 공지 주소', (tester) async {
       fake.ns.add(
         Notice(
           id: 'n1',
@@ -1188,14 +1204,11 @@ void main() {
       expect(find.text('휴대폰 번호 1개를 복사했습니다.'), findsOneWidget);
       expect(copied, '010-9999-8888'); // 사람이 보는 목록은 하이픈을 넣어 준다
 
-      await tester.tap(find.widgetWithText(OutlinedButton, '알림톡으로 보내기'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, '보내기'));
+      await tester.tap(find.widgetWithText(OutlinedButton, '공지 링크 복사'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      // 서버·대행사로는 숫자만 간다.
-      expect(fake.lastAlimtalk!['phones'], ['01099998888']);
-      expect(find.textContaining('알림톡이 아직 설정되지 않았습니다'), findsOneWidget);
+      expect(copied, contains('?g=g1&n=n1'));
+      expect(fake.sends['n1']!.first.channel, NoticeChannel.link);
     });
 
     testWidgets('비공개 공지는 목록에 표시가 붙는다', (tester) async {

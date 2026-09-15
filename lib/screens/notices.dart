@@ -11,7 +11,8 @@ import 'gatherings.dart';
 ///
 /// 왼쪽 목록에서 공지를 고르고 오른쪽에서 고친다. 저장한 공지는 그 아래 [보내기] 카드에서
 /// 대상을 골라 메시지로 만든다. **실제 전송은 운영자가 카카오톡에 붙여넣어서 한다** —
-/// 전화번호만으로 카카오톡을 보내는 길은 알림톡뿐이고 그건 별도 계약이 필요하다(PLAN_NOTICE.md §1).
+/// 전화번호만으로 카카오톡을 보내는 길은 알림톡뿐인데 계약·건당 요금이 붙어 쓰지 않는다
+/// (PLAN_NOTICE.md §1). 여기서 하는 일은 전부 공짜다.
 class NoticesScreen extends StatefulWidget {
   const NoticesScreen({super.key});
 
@@ -174,49 +175,17 @@ class _NoticesScreenState extends State<NoticesScreen> {
     final d = draft;
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    _snack(
-      channel == NoticeChannel.phones
-          ? '휴대폰 번호 $count개를 복사했습니다.'
-          : '메시지를 복사했습니다. 카카오톡 단톡방에 붙여넣으세요.',
-    );
+    _snack(switch (channel) {
+      NoticeChannel.phones => '휴대폰 번호 $count개를 복사했습니다.',
+      NoticeChannel.link => '공지 링크를 복사했습니다. 카카오톡 단톡방에 붙여넣으세요.',
+      NoticeChannel.copy => '메시지를 복사했습니다. 카카오톡 단톡방에 붙여넣으세요.',
+    });
     if (d == null || d.id.isEmpty) return;
     try {
       final s = await remote.logNoticeSend(d.id, channel, target, count);
       if (mounted && draft?.id == d.id) setState(() => sends = [s, ...sends]);
     } catch (e) {
       debugPrint('보낸 기록을 남기지 못했습니다: $e');
-    }
-  }
-
-  Future<void> _sendAlimtalk(Gathering g, List<String> phones) async {
-    final d = draft;
-    if (d == null || d.id.isEmpty || phones.isEmpty) return;
-    final ok = await confirmDialog(
-      context,
-      title: '알림톡으로 보내기',
-      body:
-          '${target.labelFor(free: g.fee.isFree)} ${phones.length}명에게 알림톡을 보냅니다. '
-          '보낸 알림톡은 취소할 수 없고 건당 요금이 붙습니다.',
-      action: '보내기',
-    );
-    if (!ok) return;
-    setState(() {
-      saving = true;
-      error = null;
-    });
-    try {
-      final sent = await remote.sendNoticeKakao(
-        notice: d,
-        target: target,
-        phones: phones,
-        message: noticeMessage(g, d),
-      );
-      _snack('알림톡 $sent건을 보냈습니다.');
-      await _loadSends(d.id);
-    } catch (e) {
-      setState(() => error = errorText(e));
-    } finally {
-      if (mounted) setState(() => saving = false);
     }
   }
 
@@ -478,18 +447,23 @@ class _NoticesScreenState extends State<NoticesScreen> {
             label: const Text('번호 복사'),
           ),
           OutlinedButton.icon(
-            onPressed: saving || !saved || phones.isEmpty
+            // 긴 공지는 본문 대신 링크만 던진다. 누르면 그 공지가 펼쳐진 채로 열린다.
+            onPressed: !saved
                 ? null
-                : () => _sendAlimtalk(g, phones),
-            icon: const Icon(Icons.send_outlined, size: 18),
-            label: const Text('알림톡으로 보내기'),
+                : () => _copy(
+                    noticeLink(g, d),
+                    NoticeChannel.link,
+                    phones.length,
+                  ),
+            icon: const Icon(Icons.link, size: 18),
+            label: const Text('공지 링크 복사'),
           ),
         ],
       ),
       const SizedBox(height: 10),
       const Text(
-        '카카오톡은 전화번호만으로 보낼 수 없습니다. [메시지 복사] 후 단톡방에 붙여넣는 게 기본이고, '
-        '[알림톡]은 채널·대행사·템플릿 승인을 마친 뒤에만 됩니다.',
+        '카카오톡은 전화번호만으로 보낼 수 없습니다. 복사한 뒤 단톡방에 붙여넣으세요. '
+        '번호 복사는 단톡방 초대에 씁니다.',
         style: TextStyle(fontSize: 12, height: 1.5, color: AppColors.textMuted),
       ),
       if (!saved)

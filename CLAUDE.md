@@ -33,9 +33,9 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 **웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
 
-**공지 → 카카오톡** (`PLAN_NOTICE.md`): 전화번호만으로 카카오톡을 보내는 길은 알림톡뿐이고 그건 채널·대행사·템플릿 승인이 필요하다.
-그래서 기본 경로는 **`noticeMessage()` 가 만든 글을 운영자가 복사해 단톡방에 붙여넣는 것**이고, 알림톡은 Edge Function
-`supabase/functions/send-notice-kakao` 로 빼 두었다(설정 전에는 `NOT_CONFIGURED`). 복사도 `notice_sends` 에 기록한다.
+**공지 → 카카오톡** (`PLAN_NOTICE.md`): 전화번호만으로 카카오톡을 보내는 길은 알림톡뿐인데 계약·건당 요금이 붙어 쓰지 않는다.
+**돈이 드는 통로는 넣지 않는다** — 공지 전달은 전부 복사·붙여넣기다(`메시지`·`번호`·`공지 링크`). 복사도 `notice_sends` 에 기록한다.
+공지 링크(`?g=<집회id>&n=<공지id>`)로 들어오면 신청 웹이 그 공지를 맨 위에 펼쳐 준다. 무료로 더 갈 수 있는 길(브라우저 푸시)은 `PLAN_NOTICE.md` §5 에 검토만 해 두었다.
 공지 메시지를 만드는 곳은 `noticeMessage()` 하나다 — 회비 계산과 같은 이유로 두 군데서 만들면 내용이 어긋난다.
 
 **회비 계산은 `gathering.dart` 의 `quote()` 하나뿐이다.** 신청 웹·조회·관리자 화면·참석자 가져오기가 모두 이 함수를 부른다. 따로 계산하면 금액이 어긋난다.

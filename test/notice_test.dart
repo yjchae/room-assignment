@@ -41,11 +41,11 @@ Registration reg(String id, String phone, RegStatus status, int people) =>
 
 void main() {
   group('공지 메시지', () {
-    test('집회 이름 · 제목 · 본문 · 신청 링크 순서', () {
+    test('집회 이름 · 제목 · 본문 · 공지 링크 순서', () {
       final m = noticeMessage(g(), notice());
       expect(m, startsWith('[가을수련회] 준비물 안내\n'));
       expect(m, contains('세면도구를 챙겨 오세요.'));
-      expect(m, contains('?g=g1'));
+      expect(m, contains('?g=g1&n=n1'));
       // 카카오톡에 그대로 붙여넣는 글이라 꾸밈이 들어가면 안 된다.
       expect(m, isNot(contains('**')));
       expect(m, isNot(contains('|')));
@@ -61,6 +61,17 @@ void main() {
       final m = noticeMessage(g(), notice(title: '  공지  ', body: '  본문  '));
       expect(m, startsWith('[가을수련회] 공지\n'));
       expect(m, contains('\n본문\n'));
+    });
+  });
+
+  group('공지 링크', () {
+    test('저장한 공지는 그 공지가 펼쳐지는 주소', () {
+      expect(noticeLink(g(), notice()), endsWith('?g=g1&n=n1'));
+    });
+
+    test('아직 저장 안 한 공지는 집회 페이지 주소 그대로', () {
+      expect(noticeLink(g(), notice(id: '')), endsWith('?g=g1'));
+      expect(noticeMessage(g(), notice(id: '')), contains('?g=g1'));
     });
   });
 
@@ -142,6 +153,14 @@ void main() {
       });
       expect(s.summary(free: false), '메시지 복사 · 입금확인 32명');
       expect(s.summary(free: true), '메시지 복사 · 확정 32명');
+    });
+
+    test('채널은 셋 다 복사 — 돈이 드는 통로는 없다', () {
+      expect(NoticeChannel.values.map((c) => c.name), [
+        'copy',
+        'phones',
+        'link',
+      ]);
     });
 
     test('모르는 값이 와도 죽지 않는다', () {

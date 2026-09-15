@@ -105,18 +105,23 @@ create table if not exists public.notices (
 );
 create index if not exists notices_gathering on public.notices (gathering_id, pinned desc, created_at desc);
 
--- 공지를 언제 누구에게 돌렸는지. channel 은 '복사'까지 기록한다 — 실제 발송은 사람 손이지만
+-- 공지를 언제 누구에게 돌렸는지. 채널은 전부 '운영자가 복사해 붙여넣는' 방법이다
+-- (돈이 드는 통로는 쓰지 않는다 — PLAN_NOTICE.md §1). 그래도 기록은 남긴다:
 -- "이 공지 돌렸나?"가 운영 중 제일 자주 묻는 것이다. 화면도 '보냄'이 아니라 채널 이름 그대로 적는다.
 create table if not exists public.notice_sends (
   id uuid primary key default gen_random_uuid(),
   notice_id uuid not null references public.notices on delete cascade,
-  channel text not null check (channel in ('copy', 'phones', 'alimtalk')),
+  channel text not null check (channel in ('copy', 'phones', 'link')),
   target text not null check (target in ('all', 'confirmed', 'pending')),
   count int not null default 0 check (count >= 0),
   sent_at timestamptz not null default now(),
   sent_by uuid references auth.users on delete set null
 );
 create index if not exists notice_sends_notice on public.notice_sends (notice_id, sent_at desc);
+-- 이미 만든 DB 의 채널 목록을 새로 맞춘다 (check 는 create table if not exists 로는 안 바뀐다).
+alter table public.notice_sends drop constraint if exists notice_sends_channel_check;
+alter table public.notice_sends add constraint notice_sends_channel_check
+  check (channel in ('copy', 'phones', 'link'));
 
 create or replace function public._touch() returns trigger
 language plpgsql set search_path = '' as $$

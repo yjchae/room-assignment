@@ -548,6 +548,11 @@ List<String> noticePhones(
   for (final r in noticeTargets(regs, target)) digitsOnly(r.phone),
 }.toList();
 
+/// 이 공지가 펼쳐진 채로 열리는 신청 웹 주소. 긴 공지를 단톡방에 통째로 붙여넣는 대신
+/// 링크만 던질 때 쓴다. 아직 저장 안 한 공지는 붙일 id 가 없어 집회 페이지 주소 그대로다.
+String noticeLink(Gathering g, Notice n) =>
+    n.id.isEmpty ? applyLink(g.id) : '${applyLink(g.id)}&n=${n.id}';
+
 /// 카카오톡에 붙여넣을 공지 메시지. 신청 웹·관리자 화면이 모두 이것 하나를 부른다 —
 /// 회비 계산([quote])과 같은 원칙이다. 만드는 곳이 둘이면 내용이 어긋난다.
 ///
@@ -558,17 +563,18 @@ String noticeMessage(Gathering g, Notice n) {
     '[${g.name}] ${n.title.trim()}',
     if (body.isNotEmpty) ...['', body],
     '',
-    '▶ 신청 · 조회: ${applyLink(g.id)}',
+    '▶ 자세히 보기 · 신청: ${noticeLink(g, n)}',
   ].join('\n');
 }
 
 /// 공지를 어떤 방법으로 돌렸는지 (서버 `notice_sends.channel`).
-/// '복사'도 기록한다 — 실제로 보내는 건 사람 손이지만 "이 공지 돌렸나?"를 제일 자주 묻는다.
+/// 셋 다 '운영자가 복사해서 붙여넣는' 방법이다 — 돈이 드는 통로는 쓰지 않는다(PLAN_NOTICE.md §1).
+/// 그래도 기록은 남긴다. 실제로 보내는 건 사람 손이지만 "이 공지 돌렸나?"를 제일 자주 묻는다.
 /// 그래서 화면에도 '보냄'이 아니라 이 이름 그대로 적는다.
 enum NoticeChannel {
   copy('메시지 복사'),
   phones('번호 복사'),
-  alimtalk('알림톡');
+  link('링크 복사');
 
   const NoticeChannel(this.label);
   final String label;
