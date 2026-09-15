@@ -317,8 +317,18 @@ class Gathering {
           .map((d) => DateTime(d.year, d.month, d.day))
           .toList();
 
-  Quote quoteFor(List<Person> people, DateTime appliedAt) =>
-      quote(fee, start: start, end: end, people: people, appliedAt: appliedAt);
+  Quote quoteFor(
+    List<Person> people,
+    DateTime appliedAt, {
+    Discount discount = Discount.none,
+  }) => quote(
+    fee,
+    start: start,
+    end: end,
+    people: people,
+    appliedAt: appliedAt,
+    discount: discount,
+  );
 
   Gathering copy() => Gathering.fromRow({...toRow(), 'id': id});
 
@@ -397,10 +407,14 @@ class Registration {
     this.paid = 0,
     this.paidAt,
     this.adminMemo,
+    this.discount = Discount.none,
     required this.createdAt,
   });
 
   String id, gatheringId, phone;
+
+  /// 운영자가 이 신청(가족·그룹 전체)에 준 지정 할인. 신청자는 못 바꾼다.
+  Discount discount;
   List<Person> people;
   String? depositor, memo, adminMemo;
 
@@ -432,6 +446,11 @@ class Registration {
     paid: _int(r['paid']),
     paidAt: _date(r['paid_at']),
     adminMemo: _str(r['admin_memo']),
+    discount: Discount(
+      pct: _int(r['discount_pct']),
+      amount: _int(r['discount_amount']),
+      note: _str(r['discount_note']),
+    ),
     createdAt: (DateTime.tryParse('${r['created_at']}') ?? DateTime.now())
         .toLocal(),
   );
@@ -481,18 +500,46 @@ int dayVisits(List<DateTime> days) {
   return set.where((d) => !has(d, -1) && !has(d, 1)).length;
 }
 
+/// 지정 할인. 운영자가 신청 1건에 비율([pct]%) 또는 금액([amount]원)으로 준다.
+class Discount {
+  const Discount({this.pct = 0, this.amount = 0, this.note});
+  final int pct, amount;
+
+  /// 사유. 신청자 조회 화면에도 보인다.
+  final String? note;
+
+  static const none = Discount();
+
+  bool get isEmpty => pct <= 0 && amount <= 0;
+}
+
 class Quote {
-  const Quote(this.lines, this.earlyPct, this.perRegistration);
+  const Quote(
+    this.lines,
+    this.earlyPct,
+    this.perRegistration, [
+    this.discount = Discount.none,
+  ]);
   final List<QuoteLine> lines;
   final int earlyPct;
   final int perRegistration;
+  final Discount discount;
 
   int get subtotal => lines.fold(0, (s, l) => s + l.amount);
 
   /// 할인 후 금액의 원 미만을 버리도록 계산한다 (할인액 쪽이 올림).
   int get earlyDiscount => subtotal - subtotal * (100 - earlyPct) ~/ 100;
 
-  int get total => subtotal - earlyDiscount + perRegistration;
+  /// 지정 할인 전 합계. 신청 웹이 저장한 금액(`quoted`)은 이것과 비교한다.
+  int get beforeDiscount => subtotal - earlyDiscount + perRegistration;
+
+  /// 지정 할인액 = 합계(그룹당 포함)의 pct% + amount. 합계보다 크게 빼지 않는다.
+  int get specialDiscount {
+    final b = beforeDiscount;
+    return math.min(b, b - b * (100 - discount.pct) ~/ 100 + discount.amount);
+  }
+
+  int get total => beforeDiscount - specialDiscount;
 
   /// "성인 2 · 중고등 1 · 유치 1"
   String get summary {
@@ -521,6 +568,7 @@ Quote quote(
   required DateTime end,
   required List<Person> people,
   required DateTime appliedAt,
+  Discount discount = Discount.none,
 }) {
   final s = _day(start);
   final e = _day(end).isBefore(s) ? s : _day(end);
@@ -551,6 +599,13 @@ Quote quote(
     lines,
     lines.isEmpty ? 0 : fee.earlyPctOn(appliedAt, s).clamp(0, 100),
     lines.isEmpty ? 0 : fee.perRegistration,
+    lines.isEmpty
+        ? Discount.none
+        : Discount(
+            pct: discount.pct.clamp(0, 100),
+            amount: math.max(0, discount.amount),
+            note: discount.note,
+          ),
   );
 }
 

@@ -255,6 +255,27 @@ void main() {
     expect(r.total, 0);
   });
 
+  test('지정 할인: 합계(그룹당 포함)에서 % 또는 원을 빼고, 0 아래로 내려가지 않는다', () {
+    final family = [p('아빠', 1985), p('엄마', 1987)];
+    Quote d(Discount x) => quote(
+      planRule(),
+      start: start,
+      end: end,
+      people: family,
+      appliedAt: DateTime(2026, 9, 10),
+      discount: x,
+    );
+    final base = d(Discount.none).total;
+    expect(d(Discount.none).specialDiscount, 0);
+    expect(d(const Discount(pct: 50)).total, base - base ~/ 2);
+    expect(d(const Discount(amount: 30000)).total, base - 30000);
+    expect(d(const Discount(amount: 99999999)).total, 0);
+    expect(d(const Discount(pct: 100)).total, 0);
+    expect(d(const Discount(pct: 50)).beforeDiscount, base);
+    // 참석자가 없으면 할인도 없다
+    expect(q(planRule(), []).discount.isEmpty, isTrue);
+  });
+
   test('할인율이 범위를 벗어나도 음수 금액이 나오지 않는다', () {
     final f = planRule(
       fullDiscountPct: 150,

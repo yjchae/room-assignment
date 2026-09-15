@@ -152,7 +152,8 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
 
     final all = regs!;
     final quotes = {
-      for (final r in all) r.id: g.quoteFor(r.people, r.createdAt),
+      for (final r in all)
+        r.id: g.quoteFor(r.people, r.createdAt, discount: r.discount),
     };
     final shown = [
       for (final r in all)
@@ -297,6 +298,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                     onCancel: () => _cancel(selected),
                     onResetPin: () => _resetPin(selected),
                     onDelete: () => _delete(selected),
+                    onDiscount: (d) => _patch(selected, {
+                      'discount_pct': d.pct,
+                      'discount_amount': d.amount,
+                      'discount_note': d.note,
+                    }, d.isEmpty ? '지정 할인을 해제했습니다.' : '지정 할인을 적용했습니다.'),
                   ),
                 ),
               ],
@@ -594,6 +600,119 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   }
 }
 
+/// 지정 할인 입력. 신청 1건(혼자면 그 사람, 가족·그룹이면 전체)에 % 또는 원으로 준다.
+class _DiscountEditor extends StatefulWidget {
+  const _DiscountEditor({
+    super.key,
+    required this.r,
+    required this.busy,
+    required this.onSave,
+  });
+  final Registration r;
+  final bool busy;
+  final ValueChanged<Discount> onSave;
+
+  @override
+  State<_DiscountEditor> createState() => _DiscountEditorState();
+}
+
+class _DiscountEditorState extends State<_DiscountEditor> {
+  late final Discount d = widget.r.discount;
+  late bool pct = d.amount <= 0;
+  late final value = TextEditingController(
+    text: d.isEmpty ? '' : '${pct ? d.pct : d.amount}',
+  );
+  late final note = TextEditingController(text: d.note ?? '');
+  String? err;
+
+  @override
+  void dispose() {
+    value.dispose();
+    note.dispose();
+    super.dispose();
+  }
+
+  void _apply() {
+    final n = int.tryParse(digitsOnly(value.text));
+    if (n == null || n <= 0 || (pct && n > 100)) {
+      setState(() => err = pct ? '1~100 사이로 입력하세요' : '금액을 숫자로 입력하세요');
+      return;
+    }
+    setState(() => err = null);
+    final t = note.text.trim();
+    widget.onSave(
+      Discount(
+        pct: pct ? n : 0,
+        amount: pct ? 0 : n,
+        note: t.isEmpty ? null : t,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: true, label: Text('%')),
+              ButtonSegment(value: false, label: Text('원')),
+            ],
+            selected: {pct},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) => setState(() => pct = s.first),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: value,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: pct ? '할인율' : '할인 금액',
+                suffixText: pct ? '%' : '원',
+                errorText: err,
+              ),
+              onSubmitted: (_) => _apply(),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: note,
+        decoration: const InputDecoration(
+          labelText: '사유 (신청자 조회 화면에 보임)',
+          hintText: '예) 봉사자, 셋째 자녀',
+        ),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton(
+            onPressed: widget.busy ? null : _apply,
+            child: const Text('할인 적용'),
+          ),
+          TextButton(
+            onPressed: widget.busy || widget.r.discount.isEmpty
+                ? null
+                : () {
+                    value.clear();
+                    note.clear();
+                    widget.onSave(Discount.none);
+                  },
+            child: const Text('해제'),
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
 String _n(int n) => won(n).replaceAll('원', '');
 
 String _stay(Quote q) {
@@ -660,7 +779,7 @@ class _RegRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mismatch = r.quoted != q.total;
+    final mismatch = r.quoted != q.beforeDiscount;
     final diff = r.status == RegStatus.confirmed ? r.paid - q.total : 0;
     return Material(
       color: selected ? AppColors.brandSoft : AppColors.surface,
@@ -698,7 +817,9 @@ class _RegRow extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     Text(
-                      q.summary,
+                      q.specialDiscount > 0
+                          ? '${q.summary} · 지정 할인'
+                          : q.summary,
                       style: const TextStyle(
                         fontSize: 11,
                         color: AppColors.textMuted,
@@ -797,12 +918,14 @@ class _Detail extends StatelessWidget {
     required this.onCancel,
     required this.onResetPin,
     required this.onDelete,
+    required this.onDiscount,
   });
   final Registration r;
   final Quote q;
   final bool busy;
   final VoidCallback onClose, onConfirm, onRevert, onCancel, onResetPin;
   final VoidCallback onDelete;
+  final ValueChanged<Discount> onDiscount;
 
   @override
   Widget build(BuildContext context) {
@@ -858,7 +981,7 @@ class _Detail extends StatelessWidget {
         const SectionTitle('금액'),
         const SizedBox(height: 8),
         QuoteTable(q),
-        if (r.quoted != q.total)
+        if (r.quoted != q.beforeDiscount)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
@@ -866,6 +989,17 @@ class _Detail extends StatelessWidget {
               style: const TextStyle(fontSize: 12, color: AppColors.warnInk),
             ),
           ),
+        if (r.status != RegStatus.cancelled) ...[
+          const SizedBox(height: 16),
+          const SectionTitle('지정 할인'),
+          const SizedBox(height: 8),
+          _DiscountEditor(
+            key: ValueKey(r.id),
+            r: r,
+            busy: busy,
+            onSave: onDiscount,
+          ),
+        ],
         const SizedBox(height: 16),
         const SectionTitle('참석자'),
         const SizedBox(height: 6),

@@ -468,6 +468,9 @@ class _ApplyPageState extends State<ApplyPage> {
   /// 수정할 때도 처음 신청한 날 기준으로 계산한다 (얼리버드 유지).
   DateTime get appliedAt => widget.editing?.createdAt ?? DateTime.now();
 
+  /// 수정 중인 신청에 운영자가 준 지정 할인.
+  Discount get discount => widget.editing?.discount ?? Discount.none;
+
   @override
   void initState() {
     super.initState();
@@ -504,7 +507,7 @@ class _ApplyPageState extends State<ApplyPage> {
 
   @override
   Widget build(BuildContext context) {
-    final q = g.quoteFor(_people, appliedAt);
+    final q = g.quoteFor(_people, appliedAt, discount: discount);
     return Scaffold(
       appBar: AppBar(
         title: Text(editing ? '신청 수정' : '신청하기'),
@@ -838,7 +841,7 @@ class _ApplyPageState extends State<ApplyPage> {
           phone: i == 0 && !editing ? digitsOnly(phone.text) : null,
         )!,
     ];
-    final q = g.quoteFor(people, appliedAt);
+    final q = g.quoteFor(people, appliedAt, discount: discount);
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -874,7 +877,7 @@ class _ApplyPageState extends State<ApplyPage> {
           people: people,
           depositor: dep,
           memo: m,
-          quoted: q.total,
+          quoted: q.beforeDiscount,
         );
         if (!mounted) return;
         await Navigator.pushReplacement(
@@ -895,7 +898,7 @@ class _ApplyPageState extends State<ApplyPage> {
           people: people,
           depositor: dep,
           memo: m,
-          quoted: q.total,
+          quoted: q.beforeDiscount,
         );
         if (r == null) {
           throw const RemoteError('휴대폰번호나 PIN이 맞지 않습니다. 조회부터 다시 해 주세요.');
@@ -1201,7 +1204,7 @@ class _LookupPageState extends State<LookupPage> {
   ];
 
   List<Widget> _view(Registration r) {
-    final q = g.quoteFor(r.people, r.createdAt);
+    final q = g.quoteFor(r.people, r.createdAt, discount: r.discount);
     final pending = r.status == RegStatus.pending;
     final canEdit = pending && g.acceptingOn(DateTime.now());
     final free = g.fee.isFree;
