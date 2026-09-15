@@ -337,7 +337,7 @@ void main() {
       await tester.tap(find.text('여').at(1));
       await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
       await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
-      await tester.tap(find.byType(CheckboxListTile));
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
       await tester.pumpAndSettle();
       expect(find.text('280,000원'), findsOneWidget);
       expect(find.text('성인 1 · 중고등 1'), findsOneWidget);
@@ -374,7 +374,7 @@ void main() {
       await tester.enterText(field('이름 *'), '홍길동');
       await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
       await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
-      await tester.tap(find.byType(CheckboxListTile));
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
       await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
       await tester.pumpAndSettle();
       // 셀만 막는다. 출생연도·성별은 비워도 된다.
@@ -393,6 +393,32 @@ void main() {
         'cell',
       ]);
       expect(Gathering.fromRow({}).requiredFields, ['birthYear', 'gender']);
+    });
+
+    testWidgets('사역자를 체크하면 교회 이름이 필수이고, 완료 화면에 안내가 나온다', (tester) async {
+      setView(tester, const Size(400, 2400));
+      final g = sample()..requiredFields = [];
+      await pumpPage(tester, ApplyPage(gathering: g));
+      await tester.enterText(field('이름 *'), '김목사');
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      expect(field('교회 이름 *'), findsNothing);
+      await tester.tap(find.text('사역자입니다'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      expect(find.text('교회 이름을 입력하세요'), findsOneWidget);
+      expect(fake.lastSubmit, isNull);
+
+      await tester.enterText(field('교회 이름 *'), '신촌하나교회');
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      final p = (fake.lastSubmit!['people'] as List<Person>).single;
+      expect((p.minister, p.church), (true, '신촌하나교회'));
+      expect(find.text(Gathering.defaultMinisterNotice), findsOneWidget);
     });
 
     testWidgets('운영자가 끈 출생연도·셀·존은 신청서에 없고, 금액은 성인으로', (tester) async {
@@ -878,7 +904,7 @@ void main() {
     testWidgets('집회 설정: 추가 항목을 지우고 저장하면 신청서에서 빠진다', (tester) async {
       current.value = sample()..formFields = ['교회'];
       store.event.customFields.add('교회');
-      setView(tester, const Size(1400, 2400));
+      setView(tester, const Size(1400, 3000));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       await tester.tap(find.byTooltip("'교회' 항목 삭제"));
       await tester.pumpAndSettle();

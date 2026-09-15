@@ -369,7 +369,9 @@ class _PersonForm {
       // 셀·존은 가족이라도 다를 수 있어 동반자는 빈칸으로 시작한다.
       cell = TextEditingController(text: p?.cell ?? ''),
       zone = TextEditingController(text: p?.zone ?? ''),
+      church = TextEditingController(text: p?.church ?? ''),
       gender = p?.gender,
+      minister = p?.minister ?? false,
       relation = p?.relation ?? (applicant ? '본인' : '자녀') {
     if (p != null) {
       for (final e in p.extra.entries) {
@@ -386,9 +388,10 @@ class _PersonForm {
   final String id;
   final bool applicant;
   final String? phone;
-  final TextEditingController name, birth, cell, zone;
+  final TextEditingController name, birth, cell, zone, church;
   final extras = <String, TextEditingController>{};
   String? gender;
+  bool minister;
   String relation;
 
   /// 참석하는 날. null = 전체 참석.
@@ -425,6 +428,8 @@ class _PersonForm {
       phone: phone ?? this.phone,
       cell: t(cell),
       zone: t(zone),
+      minister: g.asks('minister') && minister,
+      church: g.asks('minister') && minister ? t(church) : null,
       extra: {
         for (final e in extras.entries)
           if (e.value.text.trim().isNotEmpty) e.key: e.value.text.trim(),
@@ -712,6 +717,20 @@ class _ApplyPageState extends State<ApplyPage> {
             ],
           ),
         ],
+        if (g.asks('minister'))
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text('사역자입니다'),
+            value: f.minister,
+            onChanged: (v) => setState(() => f.minister = v ?? false),
+          ),
+        if (g.asks('minister') && f.minister)
+          TextFormField(
+            controller: f.church,
+            decoration: const InputDecoration(labelText: '교회 이름 *'),
+            validator: (v) => (v ?? '').trim().isEmpty ? '교회 이름을 입력하세요' : null,
+          ),
         for (final field in g.formFields)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -1013,6 +1032,25 @@ class _TotalBar extends StatelessWidget {
 // 완료 · 조회
 // ---------------------------------------------------------------------------
 
+/// 사역자를 체크한 신청자에게만 보이는 안내 (문구는 집회 설정에서 바꾼다).
+Widget _ministerNotice(String text) => _Section(
+  children: [
+    Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.info, size: 20, color: AppColors.brand),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    ),
+  ],
+);
+
 class DonePage extends StatelessWidget {
   const DonePage({
     super.key,
@@ -1052,6 +1090,8 @@ class DonePage extends StatelessWidget {
               if (!free) ...[const SizedBox(height: 16), QuoteTable(quote)],
             ],
           ),
+          if (gathering.ministerNoticeFor(quote.lines.map((l) => l.person)))
+            _ministerNotice(gathering.ministerNotice),
           if (!free && !gathering.bank.isEmpty)
             _Section(
               title: '입금 계좌',
@@ -1247,6 +1287,8 @@ class _LookupPageState extends State<LookupPage> {
             ),
         ],
       ),
+      if (r.status != RegStatus.cancelled && g.ministerNoticeFor(r.people))
+        _ministerNotice(g.ministerNotice),
       if (pending && !free && !g.bank.isEmpty)
         _Section(
           title: '입금 계좌',

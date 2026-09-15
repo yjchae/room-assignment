@@ -139,6 +139,8 @@ class Person {
     this.phone,
     this.cell,
     this.zone,
+    this.minister = false,
+    this.church,
     Map<String, String>? extra,
   }) : id = id ?? newPersonId(),
        extra = extra ?? {};
@@ -156,6 +158,12 @@ class Person {
   /// 예전 신청서 형식(도착일~출발일). [days] 가 없을 때만 본다. null 이면 집회 시작일/종료일.
   DateTime? checkIn, checkOut;
   String? phone, cell, zone;
+
+  /// 신청서의 "사역자" 체크.
+  bool minister;
+
+  /// 사역자가 섬기는 교회 이름. 사역자를 체크하면 필수.
+  String? church;
 
   /// 사용자 정의 항목(교회·직분 등) 값.
   Map<String, String> extra;
@@ -196,6 +204,8 @@ class Person {
     'phone': phone,
     'cell': cell,
     'zone': zone,
+    if (minister) 'minister': true,
+    if (church != null) 'church': church,
     'extra': extra,
   };
 
@@ -217,6 +227,8 @@ class Person {
     phone: _str(j['phone']),
     cell: _str(j['cell']),
     zone: _str(j['zone']),
+    minister: j['minister'] == true,
+    church: _str(j['church']),
     extra: {
       if (j['extra'] is Map)
         for (final e in (j['extra'] as Map).entries) '${e.key}': '${e.value}',
@@ -265,7 +277,10 @@ class Gathering {
     List<String>? requiredFields,
     this.open = false,
     this.deadline,
-  }) : themes = themes ?? [],
+    this.ministerNoticeOn = true,
+    String? ministerNotice,
+  }) : ministerNotice = ministerNotice ?? defaultMinisterNotice,
+       themes = themes ?? [],
        fee = fee ?? FeeRule(),
        bank = bank ?? Bank(),
        formFields = formFields ?? [],
@@ -287,7 +302,7 @@ class Gathering {
   /// 신청서에 나오는 사용자 정의 항목. 관리자 앱의 참석자 항목과 같은 이름.
   List<String> formFields;
 
-  /// 운영자가 신청서에서 뺀 기본 항목: 'birthYear' · 'gender' · 'cell' · 'zone'.
+  /// 운영자가 신청서에서 뺀 기본 항목: 'birthYear' · 'gender' · 'cell' · 'zone' · 'minister'.
   /// 출생연도를 빼면 모두 성인 금액으로 계산한다.
   List<String> hiddenFields;
 
@@ -304,6 +319,20 @@ class Gathering {
 
   /// 이 날까지 신청 받는다.
   DateTime? deadline;
+
+  static const defaultMinisterNotice =
+      '사역자의 경우 추가 할인이 있을 수 있습니다. 주최 측에 문의해 주세요.';
+
+  /// 사역자를 체크한 신청자에게 신청 완료·조회 화면에서 보여 줄 안내.
+  bool ministerNoticeOn;
+  String ministerNotice;
+
+  /// [people] 신청에 사역자 안내를 보여 주는가 — 사역자를 체크한 사람이 있을 때만.
+  bool ministerNoticeFor(Iterable<Person> people) =>
+      asks('minister') &&
+      ministerNoticeOn &&
+      ministerNotice.trim().isNotEmpty &&
+      people.any((p) => p.minister);
 
   int get nights => _nights(_day(start), _day(end));
 
@@ -350,6 +379,8 @@ class Gathering {
     'required_fields': requiredFields,
     'open': open,
     'deadline': deadline == null ? null : ymd(deadline!),
+    'minister_notice_on': ministerNoticeOn,
+    'minister_notice': ministerNotice,
   };
 
   factory Gathering.fromRow(Map r) => Gathering(
@@ -372,6 +403,8 @@ class Gathering {
         : null,
     open: r['open'] == true,
     deadline: _date(r['deadline']),
+    ministerNoticeOn: r['minister_notice_on'] != false,
+    ministerNotice: _str(r['minister_notice']),
   );
 }
 

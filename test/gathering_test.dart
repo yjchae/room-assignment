@@ -90,6 +90,30 @@ void main() {
       expect(g.quoteFor(family, on).total, greaterThan(0));
     });
 
+    test('사역자 안내는 사역자를 체크한 신청에만, 설정이 켜져 있을 때만', () {
+      final g = sample();
+      final minister = Person.fromJson({
+        ...person('목사', 1970).toJson(),
+        'minister': true,
+      });
+      expect(minister.minister, isTrue);
+      expect(g.ministerNotice, Gathering.defaultMinisterNotice);
+      expect(g.ministerNoticeFor([person('a', 1990)]), isFalse);
+      expect(g.ministerNoticeFor([person('a', 1990), minister]), isTrue);
+
+      g
+        ..ministerNoticeOn = false
+        ..ministerNotice = '문의: 총무';
+      final back = Gathering.fromRow({...g.toRow(), 'id': 'x'});
+      expect(back.ministerNotice, '문의: 총무');
+      expect(back.ministerNoticeFor([minister]), isFalse);
+
+      g
+        ..ministerNoticeOn = true
+        ..hiddenFields.add('minister');
+      expect(g.ministerNoticeFor([minister]), isFalse); // 체크 칸을 안 받으면 안 보인다
+    });
+
     test('모르는 값·빈 값은 기본값으로 읽는다', () {
       final g = Gathering.fromRow({
         'id': 'x',

@@ -51,6 +51,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   final perReg = TextEditingController();
   final fullPct = TextEditingController();
   final themeInput = TextEditingController();
+  final ministerNotice = TextEditingController();
 
   /// '열키:구분' → 입력칸. 예: 'full:adult'
   final fee = <String, TextEditingController>{};
@@ -74,6 +75,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     place.text = x.place ?? '';
     address.text = x.address ?? '';
     notice.text = x.notice ?? '';
+    ministerNotice.text = x.ministerNotice;
     bank.text = x.bank.bank;
     account.text = x.bank.account;
     holder.text = x.bank.holder;
@@ -138,6 +140,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     x.place = _opt(place);
     x.address = _opt(address);
     x.notice = _opt(notice);
+    x.ministerNotice = _opt(ministerNotice) ?? Gathering.defaultMinisterNotice;
     x.bank = Bank(
       bank: bank.text.trim(),
       account: account.text.trim(),
@@ -732,6 +735,39 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                         ],
                       ),
                     ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '사역자',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('신청서에 "사역자" 체크 칸 받기'),
+                    value: x.asks('minister'),
+                    onChanged: (v) => setState(() {
+                      x.hiddenFields.remove('minister');
+                      if (!v) x.hiddenFields.add('minister');
+                    }),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('사역자 안내 문구 보이기'),
+                    subtitle: const Text('사역자를 체크한 신청자에게만 신청 완료·조회 화면에 보입니다.'),
+                    value: x.ministerNoticeOn,
+                    onChanged: x.asks('minister')
+                        ? (v) => setState(() => x.ministerNoticeOn = v)
+                        : null,
+                  ),
+                  TextField(
+                    controller: ministerNotice,
+                    enabled: x.asks('minister') && x.ministerNoticeOn,
+                    minLines: 1,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: '안내 문구',
+                      helperText: '비워 두고 저장하면 기본 문구로 돌아갑니다.',
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   const Text(
                     '신청서 추가 항목',

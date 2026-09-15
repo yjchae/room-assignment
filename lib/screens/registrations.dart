@@ -1016,6 +1016,7 @@ class _Detail extends StatelessWidget {
                         '  ${p.relation}'
                         '${p.gender.isEmpty ? '' : ' · ${genderLabel(p.gender)}'}'
                         '${p.birthYear == 0 ? '' : ' · ${p.birthYear}년생'}'
+                        '${p.minister ? ' · 사역자${p.church == null ? '' : '(${p.church})'}' : ''}'
                         '${(p.cell ?? '').isNotEmpty ? ' · 셀 ${p.cell}' : ''}'
                         '${(p.zone ?? '').isNotEmpty ? ' · 존 ${p.zone}' : ''}'
                         '${p.extra.entries.map((e) => ' · ${e.key} ${e.value}').join()}'
