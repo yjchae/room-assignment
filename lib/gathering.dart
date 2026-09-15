@@ -262,13 +262,18 @@ class Gathering {
     Bank? bank,
     List<String>? formFields,
     List<String>? hiddenFields,
+    List<String>? requiredFields,
     this.open = false,
     this.deadline,
   }) : themes = themes ?? [],
        fee = fee ?? FeeRule(),
        bank = bank ?? Bank(),
        formFields = formFields ?? [],
-       hiddenFields = hiddenFields ?? [];
+       hiddenFields = hiddenFields ?? [],
+       requiredFields = requiredFields ?? [...defaultRequiredFields];
+
+  /// 이 칸이 생기기 전 집회의 필수 항목 (서버 기본값과 같다).
+  static const defaultRequiredFields = ['birthYear', 'gender'];
 
   /// '' = 아직 서버에 저장 안 됨.
   String id;
@@ -288,6 +293,13 @@ class Gathering {
 
   /// 신청서에 [field] 칸이 나오는가.
   bool asks(String field) => !hiddenFields.contains(field);
+
+  /// 운영자가 필수로 정한 기본 항목. 신청서에 나오는 칸만 뜻이 있다 ([requires]).
+  /// 선택 항목을 비우면 출생연도는 성인 금액, 성별은 '' = 모름으로 들어간다.
+  List<String> requiredFields;
+
+  /// 신청서에서 [field] 칸을 꼭 채워야 하는가.
+  bool requires(String field) => asks(field) && requiredFields.contains(field);
   bool open;
 
   /// 이 날까지 신청 받는다.
@@ -325,6 +337,7 @@ class Gathering {
     'bank': bank.toJson(),
     'form_fields': formFields,
     'hidden_fields': hiddenFields,
+    'required_fields': requiredFields,
     'open': open,
     'deadline': deadline == null ? null : ymd(deadline!),
   };
@@ -344,6 +357,9 @@ class Gathering {
     bank: Bank.fromJson(r['bank']),
     formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
     hiddenFields: [for (final f in (r['hidden_fields'] as List? ?? [])) '$f'],
+    requiredFields: r['required_fields'] is List
+        ? [for (final f in r['required_fields'] as List) '$f']
+        : null,
     open: r['open'] == true,
     deadline: _date(r['deadline']),
   );

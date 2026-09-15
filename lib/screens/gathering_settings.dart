@@ -674,32 +674,64 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   const Text(
-                    '끄면 신청서에 그 칸이 나오지 않습니다. 출생연도를 끄면 모두 성인 금액으로 계산하고, '
-                    '성별을 끄면 참석자 성별이 "-"로 들어오니 방배정 전에 참석자 탭에서 채우세요.',
+                    '안 받음이면 신청서에 그 칸이 나오지 않고, 선택이면 비워도 신청됩니다. '
+                    '출생연도를 안 받거나 비우면 성인 금액으로 계산하고, '
+                    '성별이 비면 참석자 성별이 "-"로 들어오니 방배정 전에 참석자 탭에서 채우세요.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final (key, label) in const [
-                        ('birthYear', '출생연도'),
-                        ('gender', '성별'),
-                        ('cell', '셀'),
-                        ('zone', '존'),
-                      ])
-                        FilterChip(
-                          label: Text(label),
-                          selected: x.asks(key),
-                          onSelected: (on) => setState(
-                            () => on
-                                ? x.hiddenFields.remove(key)
-                                : x.hiddenFields.add(key),
+                  for (final (key, label) in const [
+                    ('birthYear', '출생연도'),
+                    ('gender', '성별'),
+                    ('cell', '셀'),
+                    ('zone', '존'),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 72,
+                            child: Text(
+                              label,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ),
-                        ),
-                    ],
-                  ),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'off', label: Text('안 받음')),
+                              ButtonSegment(
+                                value: 'optional',
+                                label: Text('선택'),
+                              ),
+                              ButtonSegment(
+                                value: 'required',
+                                label: Text('필수'),
+                              ),
+                            ],
+                            selected: {
+                              x.requires(key)
+                                  ? 'required'
+                                  : x.asks(key)
+                                  ? 'optional'
+                                  : 'off',
+                            },
+                            showSelectedIcon: false,
+                            onSelectionChanged: (s) => setState(() {
+                              x.hiddenFields.remove(key);
+                              x.requiredFields.remove(key);
+                              if (s.first == 'off') x.hiddenFields.add(key);
+                              if (s.first == 'required') {
+                                x.requiredFields.add(key);
+                              }
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 16),
                   const Text(
                     '신청서 추가 항목',

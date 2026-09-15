@@ -367,6 +367,34 @@ void main() {
       expect((people.last.cell, people.last.zone), (null, null));
     });
 
+    testWidgets('운영자가 정한 필수 여부: 출생연도·성별 선택, 셀 필수', (tester) async {
+      setView(tester, const Size(400, 2400));
+      final g = sample()..requiredFields = ['cell'];
+      await pumpPage(tester, ApplyPage(gathering: g));
+      await tester.enterText(field('이름 *'), '홍길동');
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      // 셀만 막는다. 출생연도·성별은 비워도 된다.
+      expect(find.text('셀을 입력하세요'), findsOneWidget);
+      expect(find.text('성별을 고르세요'), findsNothing);
+      expect(find.text('4자리 연도로 입력하세요'), findsNothing);
+
+      await tester.enterText(field('셀 *'), '1셀');
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      final p = (fake.lastSubmit!['people'] as List<Person>).single;
+      expect((p.gender, p.birthYear, p.cell), ('', 0, '1셀')); // 0 = 성인 금액
+      expect(Gathering.fromRow({...g.toRow(), 'id': g.id}).requiredFields, [
+        'cell',
+      ]);
+      expect(Gathering.fromRow({}).requiredFields, ['birthYear', 'gender']);
+    });
+
     testWidgets('운영자가 끈 출생연도·셀·존은 신청서에 없고, 금액은 성인으로', (tester) async {
       setView(tester, const Size(400, 2400));
       final g = sample()

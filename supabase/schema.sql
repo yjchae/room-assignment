@@ -43,12 +43,14 @@ create table if not exists public.gatherings (
   bank jsonb,                                -- {bank, account, holder}
   form_fields text[] not null default '{}',  -- 사용자 정의 항목
   hidden_fields text[] not null default '{}',  -- 신청서에서 뺀 기본 항목: birthYear, gender, cell, zone
+  required_fields text[] not null default '{birthYear,gender}',  -- 신청서에서 꼭 채워야 하는 기본 항목
   open boolean not null default false,
   deadline date,                             -- 이 날(한국 시간)까지 신청 받음
   created_at timestamptz not null default now()
 );
 -- 이미 만든 DB 에 새 칸 추가.
 alter table public.gatherings add column if not exists hidden_fields text[] not null default '{}';
+alter table public.gatherings add column if not exists required_fields text[] not null default '{birthYear,gender}';
 
 create table if not exists public.registrations (
   id uuid primary key default gen_random_uuid(),

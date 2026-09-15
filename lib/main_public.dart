@@ -330,6 +330,7 @@ class _FeeTable extends StatelessWidget {
         const SizedBox(height: 8),
         for (final line in [
           if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
+          if (byAge && !g.requires('birthYear')) '출생연도를 비워 두면 성인 금액으로 계산합니다.',
           if (f.fullDiscountPct > 0)
             '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
           '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
@@ -403,10 +404,13 @@ class _PersonForm {
     return n == null || n < 1900 || n > DateTime.now().year ? null : n;
   }
 
-  /// 금액 계산·제출용. 출생연도가 아직 없으면 null.
-  /// [askBirth] 가 false(운영자가 출생연도 칸을 뺌)면 0 = 모름.
-  Person? toPerson({String? phone, bool askBirth = true}) {
-    final y = askBirth ? birthYear : 0;
+  /// 금액 계산·제출용. 출생연도가 아직 없거나 틀리면 null.
+  /// 운영자가 출생연도를 안 받거나, 선택 항목인데 비워 두면 0 = 모름(성인 금액).
+  Person? toPerson(Gathering g, {String? phone}) {
+    final skip =
+        !g.asks('birthYear') ||
+        (!g.requires('birthYear') && birth.text.trim().isEmpty);
+    final y = skip ? 0 : birthYear;
     if (y == null) return null;
     String? t(TextEditingController c) =>
         c.text.trim().isEmpty ? null : c.text.trim();
@@ -490,9 +494,7 @@ class _ApplyPageState extends State<ApplyPage> {
 
   void _changed() => setState(() {});
 
-  List<Person> get _people => [
-    for (final f in forms) ?f.toPerson(askBirth: g.asks('birthYear')),
-  ];
+  List<Person> get _people => [for (final f in forms) ?f.toPerson(g)];
 
   void _addCompanion() => setState(
     () => forms.add(
@@ -632,13 +634,13 @@ class _ApplyPageState extends State<ApplyPage> {
                   controller: f.birth,
                   keyboardType: TextInputType.number,
                   maxLength: 4,
-                  decoration: const InputDecoration(
-                    labelText: '출생연도 *',
+                  decoration: InputDecoration(
+                    labelText: _label('출생연도', 'birthYear'),
                     hintText: '1985',
                     counterText: '',
                   ),
                   validator: (_) =>
-                      f.birthYear == null ? '4자리 연도로 입력하세요' : null,
+                      f.toPerson(g) == null ? '4자리 연도로 입력하세요' : null,
                 ),
               ),
               const SizedBox(width: 12),
@@ -658,7 +660,7 @@ class _ApplyPageState extends State<ApplyPage> {
                     onSelectionChanged: (s) =>
                         setState(() => f.gender = s.firstOrNull),
                   ),
-                  if (tried && f.gender == null)
+                  if (tried && f.gender == null && g.requires('gender'))
                     const Padding(
                       padding: EdgeInsets.only(top: 4, left: 4),
                       child: Text(
@@ -691,7 +693,8 @@ class _ApplyPageState extends State<ApplyPage> {
                 Expanded(
                   child: TextFormField(
                     controller: f.cell,
-                    decoration: const InputDecoration(labelText: '셀'),
+                    decoration: InputDecoration(labelText: _label('셀', 'cell')),
+                    validator: (v) => _need('cell', v, '셀을 입력하세요'),
                   ),
                 ),
               if (g.asks('cell') && g.asks('zone')) const SizedBox(width: 12),
@@ -699,7 +702,8 @@ class _ApplyPageState extends State<ApplyPage> {
                 Expanded(
                   child: TextFormField(
                     controller: f.zone,
-                    decoration: const InputDecoration(labelText: '존'),
+                    decoration: InputDecoration(labelText: _label('존', 'zone')),
+                    validator: (v) => _need('zone', v, '존을 입력하세요'),
                   ),
                 ),
             ],
@@ -729,6 +733,13 @@ class _ApplyPageState extends State<ApplyPage> {
       ],
     );
   }
+
+  /// 운영자가 필수로 정한 기본 항목은 이름 뒤에 * 를 붙인다.
+  String _label(String text, String field) =>
+      g.requires(field) ? '$text *' : text;
+
+  String? _need(String field, String? v, String error) =>
+      g.requires(field) && (v ?? '').trim().isEmpty ? error : null;
 
   Widget _schedule(_PersonForm f) {
     final days = g.days;
@@ -813,7 +824,8 @@ class _ApplyPageState extends State<ApplyPage> {
       serverError = null;
     });
     final formOk = formKey.currentState!.validate();
-    final genderOk = !g.asks('gender') || forms.every((f) => f.gender != null);
+    final genderOk =
+        !g.requires('gender') || forms.every((f) => f.gender != null);
     final daysOk = forms.every((f) => f.full || f.days!.isNotEmpty);
     if (!formOk || !genderOk || !daysOk || (!editing && !consent)) {
       setState(() => serverError = '빨간 표시된 칸을 확인하세요.');
@@ -822,8 +834,8 @@ class _ApplyPageState extends State<ApplyPage> {
     final people = [
       for (final (i, f) in forms.indexed)
         f.toPerson(
+          g,
           phone: i == 0 && !editing ? digitsOnly(phone.text) : null,
-          askBirth: g.asks('birthYear'),
         )!,
     ];
     final q = g.quoteFor(people, appliedAt);
