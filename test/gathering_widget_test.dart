@@ -6,6 +6,7 @@ import 'package:room_assignment/main.dart';
 import 'package:room_assignment/main_public.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/remote.dart';
+import 'package:room_assignment/screens/attendees.dart' show AttendeesScreen;
 import 'package:room_assignment/screens/gathering_settings.dart';
 import 'package:room_assignment/screens/gatherings.dart';
 import 'package:room_assignment/screens/registrations.dart';
@@ -904,6 +905,54 @@ void main() {
       expect(fake.regs.single.status, RegStatus.cancelled);
       expect(store.event.attendees.map((a) => a.name), ['현장등록']);
       expect(find.textContaining('참석자 2명을 뺐습니다'), findsOneWidget);
+    });
+
+    testWidgets('신청·입금: 좁은 창에서 신청을 골라 상세가 열려도 표가 깨지지 않는다', (tester) async {
+      fake.regs.add(pendingReg());
+      current.value = sample();
+      setView(tester, const Size(900, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      await tester.tap(find.text('홍길동').first);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('참석자: 날짜를 고르면 당일 신청자도 그날 인원에 든다 (식수)', (tester) async {
+      fake.regs.add(
+        Registration(
+          id: 'r9',
+          gatheringId: 'g1',
+          phone: '01011112222',
+          people: [
+            Person(
+              id: 'd',
+              name: '당일이',
+              gender: 'F',
+              birthYear: 1990,
+              days: [DateTime(2026, 10, 10)],
+            ),
+            Person(id: 'f', name: '전참이', gender: 'M', birthYear: 1980),
+          ],
+          quoted: 0,
+          createdAt: DateTime(2026, 9, 10),
+        )..status = RegStatus.confirmed,
+      );
+      current.value = sample();
+      store.syncRegistrations(sample(), fake.regs);
+      expect(store.event.attendees.map((a) => a.name), ['전참이']); // 방은 1박 이상만
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const AttendeesScreen());
+
+      // 합계 = 기간 중 하루라도 오는 사람(당일 포함), 전참 = 모든 날 오는 사람만
+      expect(find.text('합계 2명'), findsOneWidget);
+      expect(find.text('전참 1명'), findsOneWidget);
+      expect(find.text('10-09(금) 1명'), findsOneWidget);
+      expect(find.text('10-11(일) 1명'), findsOneWidget); // 전참은 마지막 날도
+      await tester.tap(find.text('10-10(토) 2명'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('당일이'), findsOneWidget);
+      expect(find.text('당일'), findsOneWidget);
     });
 
     testWidgets('신청·입금: 신청 때 금액과 다르면 경고, 일괄 확정', (tester) async {

@@ -272,38 +272,49 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                             ? '아직 신청이 없습니다.\n[집회 설정]에서 신청 링크를 복사해 공지하세요.'
                             : '조건에 맞는 신청이 없습니다.',
                       )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const _Header(),
-                          const Divider(height: 1),
-                          Expanded(
-                            child: ListView.separated(
-                              itemCount: shown.length,
-                              separatorBuilder: (_, _) =>
-                                  const Divider(height: 1),
-                              itemBuilder: (context, i) {
-                                final r = shown[i];
-                                return _RegRow(
-                                  r: r,
-                                  q: quotes[r.id]!,
-                                  selected: r.id == selectedId,
-                                  checked: checked.contains(r.id),
-                                  onTap: () => setState(
-                                    () => selectedId = selectedId == r.id
-                                        ? null
-                                        : r.id,
+                    // 창이 좁거나 오른쪽 상세가 열려 폭이 모자라면 열을 찌그러뜨리지 않고 가로로 굴린다.
+                    : LayoutBuilder(
+                        builder: (context, box) => SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SizedBox(
+                            width: box.maxWidth < _minTableWidth
+                                ? _minTableWidth
+                                : box.maxWidth,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const _Header(),
+                                const Divider(height: 1),
+                                Expanded(
+                                  child: ListView.separated(
+                                    itemCount: shown.length,
+                                    separatorBuilder: (_, _) =>
+                                        const Divider(height: 1),
+                                    itemBuilder: (context, i) {
+                                      final r = shown[i];
+                                      return _RegRow(
+                                        r: r,
+                                        q: quotes[r.id]!,
+                                        selected: r.id == selectedId,
+                                        checked: checked.contains(r.id),
+                                        onTap: () => setState(
+                                          () => selectedId = selectedId == r.id
+                                              ? null
+                                              : r.id,
+                                        ),
+                                        onCheck: (v) => setState(
+                                          () => v
+                                              ? checked.add(r.id)
+                                              : checked.remove(r.id),
+                                        ),
+                                      );
+                                    },
                                   ),
-                                  onCheck: (v) => setState(
-                                    () => v
-                                        ? checked.add(r.id)
-                                        : checked.remove(r.id),
-                                  ),
-                                );
-                              },
+                                ),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
               ),
               if (selected != null) ...[
@@ -825,6 +836,19 @@ String _stay(Quote q) {
 /// 목록의 열 폭. 머리글과 행이 같은 값을 쓴다.
 const _wCheck = 40.0, _wDate = 84.0, _wStay = 104.0, _wMoney = 100.0;
 const _wName = 100.0, _wStatus = 80.0, _wWarn = 48.0;
+
+/// 표가 찌그러지지 않는 최소 폭 = 고정 열 + 신청자 칸 160 + 사이 여백·안쪽 여백.
+const _minTableWidth =
+    _wCheck +
+    _wDate +
+    160 +
+    _wStay +
+    _wMoney * 2 +
+    _wName +
+    _wStatus +
+    _wWarn +
+    24 +
+    16;
 
 class _Header extends StatelessWidget {
   const _Header();

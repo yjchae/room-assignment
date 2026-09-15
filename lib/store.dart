@@ -122,14 +122,18 @@ class Store extends ChangeNotifier {
     for (final r in regs)
       if (r.status == RegStatus.confirmed)
         for (final line in g.quoteFor(r.people, r.createdAt).lines)
-          if (line.nights > 0) line.person.id: _attendeeOf(g, r, line.person),
+          if (line.nights > 0) line.person.id: attendeeOf(g, r, line.person),
   };
 
-  Attendee _attendeeOf(Gathering g, Registration r, Person p) {
-    // [_wanted] 가 1박 이상인 사람만 부르므로 비어 있지 않다.
-    final nights = nightsOf(p.daysIn(g.start, g.end));
-    final last = nights.last;
-    final gap = nightsOf(nights).length != nights.length - 1;
+  /// 신청의 한 사람 → 참석자. [p] 는 집회 기간 안에 오는 날이 하루 이상 있어야 한다.
+  /// 당일(0박)만 오는 사람은 체크인 = 체크아웃 = 그날이 된다. 이런 사람은 참석자 화면의
+  /// 날짜별(식수) 통계에만 쓰고 방배정 참석자로는 넣지 않는다([_wanted]).
+  Attendee attendeeOf(Gathering g, Registration r, Person p) {
+    final days = p.daysIn(g.start, g.end);
+    final nights = nightsOf(days);
+    final last = nights.lastOrNull;
+    final gap =
+        nights.isNotEmpty && nightsOf(nights).length != nights.length - 1;
     return Attendee(
       id: p.id,
       name: p.name,
@@ -138,8 +142,10 @@ class Store extends ChangeNotifier {
       phone: fmtPhone(p.phone ?? r.phone),
       cell: p.cell,
       zone: p.zone,
-      checkIn: nights.first,
-      checkOut: DateTime(last.year, last.month, last.day + 1),
+      checkIn: nights.firstOrNull ?? days.first,
+      checkOut: last == null
+          ? days.first
+          : DateTime(last.year, last.month, last.day + 1),
       stayNights: gap ? nights : null,
       extra: {...p.extra},
       registrationId: r.id,
@@ -330,11 +336,12 @@ class Store extends ChangeNotifier {
   List<Attendee> get unassigned =>
       event.attendees.where((a) => a.roomId == null).toList();
 
-  /// 이름/셀/존/전화 통합 검색.
-  List<Attendee> search(String q) {
+  /// 이름/셀/존/전화 통합 검색. [among] 을 주면 그 사람들 안에서 찾는다 (기본 = 참석자 전체).
+  List<Attendee> search(String q, [Iterable<Attendee>? among]) {
+    final from = among ?? event.attendees;
     final k = q.trim().toLowerCase();
-    if (k.isEmpty) return [...event.attendees];
-    return event.attendees.where((a) {
+    if (k.isEmpty) return [...from];
+    return from.where((a) {
       return [
         a.name,
         a.cell,

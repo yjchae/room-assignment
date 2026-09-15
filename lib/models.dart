@@ -175,6 +175,16 @@ class Attendee {
       (!night.isBefore(dateOnly(checkIn)) &&
           night.isBefore(dateOnly(checkOut)));
 
+  /// 하루 [day] 에 집회에 와 있는가: 그날 밤 묵거나, 전날 밤 묵고 그날 떠난다.
+  /// 일정이 집회 밤([nights])과 하나도 안 겹치는 사람(집회 날짜를 정하기 전에 넣은 사람 등)은
+  /// [stayMask] 와 같이 모든 날 온 것으로 본다 — 안 그러면 전체에는 있는데 어느 날에도 안 잡힌다.
+  /// ponytail: 참석자는 묵는 밤만 들고 있어서 1박 이상인 사람의 따로 떨어진 당일 방문
+  /// (1·2·4일 신청의 4일)은 빠진다. 정확히 보려면 신청의 Person.days 를 참석자에 담는다.
+  bool attendsOn(DateTime day, List<DateTime> nights) =>
+      !nights.any(staysOn) ||
+      staysOn(day) ||
+      staysOn(DateTime(day.year, day.month, day.day - 1));
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../gathering.dart' show mdw, ymd, nightsOf, Registration, RegStatus;
 import '../main.dart';
 import '../remote.dart';
 import '../theme.dart';
@@ -19,9 +20,92 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   String query = '';
   String sortKey = 'name';
 
+  /// 통계 칩으로 고른 조건: (통계 제목, 값). 같은 칩을 다시 누르면 푼다.
+  (String, String)? pick;
+
+  /// 누구를 볼지. 'total' = 집회 기간 중 하루라도 오는 사람 전부(당일 포함),
+  /// 'full' = 모든 날 오는 사람(전참), 날짜(ymd) = 그날 오는 사람. 통계와 목록이 같이 바뀐다.
+  String view = 'total';
+
+  /// 이 집회의 신청. 날짜별 인원은 신청서의 실제 참석일로 센다. null = 아직/못 불러옴.
+  List<Registration>? regs;
+  String? regsError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRegs();
+  }
+
+  Future<void> _loadRegs() async {
+    final g = current.value;
+    if (g == null || !remote.signedIn) return;
+    try {
+      final r = await remote.registrations(g.id);
+      if (mounted) {
+        setState(() {
+          regs = r;
+          regsError = null;
+        });
+      }
+    } catch (err) {
+      if (mounted) setState(() => regsError = errorText(err));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final list = store.search(query)..sort(_cmp);
+    final e = store.event;
+    final g = current.value;
+    final days = [
+      for (
+        var d = dateOnly(e.startDate);
+        !d.isAfter(dateOnly(e.endDate));
+        d = DateTime(d.year, d.month, d.day + 1)
+      )
+        d,
+    ];
+    // 일정이 바뀌어 없는 날을 보고 있었으면 합계로.
+    final on = days.where((d) => ymd(d) == view).firstOrNull;
+    final sel = view == 'full' || on != null ? view : 'total';
+    final nights = e.nights;
+
+    // 확정된 신청에서 온 사람은 신청서의 참석일로 센다. 당일(0박)만 오는 사람도 식수에 들어가야
+    // 하는데, 방이 필요 없어 참석자에는 없으므로 날짜를 골랐을 때만 따로 만들어 보탠다.
+    final regDays = <String, List<DateTime>>{};
+    final dayOnly = <Attendee>[];
+    if (g != null) {
+      final have = {for (final a in e.attendees) a.id};
+      for (final r in regs ?? const <Registration>[]) {
+        if (r.status != RegStatus.confirmed) continue;
+        for (final p in r.people) {
+          final ds = p.daysIn(g.start, g.end);
+          if (ds.isEmpty) continue;
+          regDays[p.id] = ds;
+          if (nightsOf(ds).isEmpty && !have.contains(p.id)) {
+            dayOnly.add(store.attendeeOf(g, r, p));
+          }
+        }
+      }
+    }
+    final visitors = {for (final a in dayOnly) a.id};
+    bool comes(Attendee a, DateTime d) =>
+        regDays[a.id]?.contains(d) ?? a.attendsOn(d, nights);
+    bool full(Attendee a) => days.every((d) => comes(a, d));
+    final everyone = [...e.attendees, ...dayOnly];
+    final people = [
+      for (final a in everyone)
+        if (switch (sel) {
+          'total' => true,
+          'full' => full(a),
+          _ => comes(a, on!),
+        })
+          a,
+    ];
+    final key = attendeeStats[pick?.$1];
+    final list = store.search(query, people)
+      ..retainWhere((a) => key == null || key(a) == pick!.$2)
+      ..sort(_cmp);
     return Scaffold(
       // 한 명씩 추가는 [신청·입금]의 [신청 추가]로 한다 — 입금 확인까지 거쳐야 해서.
       floatingActionButton: FloatingActionButton.extended(
@@ -78,14 +162,81 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                     label: const Text('신청에서 가져오기'),
                     onPressed: current.value == null
                         ? null
-                        : () => importRegistrations(context),
+                        : () async {
+                            await importRegistrations(context);
+                            _loadRegs();
+                          },
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text('${list.length} / ${store.event.attendees.length}명'),
+                if (pick != null) ...[
+                  InputChip(
+                    label: Text('${pick!.$1}: ${pick!.$2}'),
+                    onDeleted: () => setState(() => pick = null),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Text('${list.length} / ${people.length}명'),
               ],
             ),
           ),
+          if (everyone.isNotEmpty) ...[
+            // 가장 큰 기준 = 날짜. 합계(기간 전체 인원) · 전참(모든 날) · 하루씩.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: SegmentedButton<String>(
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment(
+                      value: 'total',
+                      label: Text('합계 ${everyone.length}명'),
+                      tooltip: '집회 기간 중 하루라도 오는 사람 전부 (당일 참석 포함)',
+                    ),
+                    ButtonSegment(
+                      value: 'full',
+                      label: Text('전참 ${everyone.where(full).length}명'),
+                      tooltip: '모든 날 참석하는 사람만',
+                    ),
+                    for (final d in days)
+                      ButtonSegment(
+                        value: ymd(d),
+                        label: Text(
+                          '${mdw(d)} ${everyone.where((a) => comes(a, d)).length}명',
+                        ),
+                      ),
+                  ],
+                  selected: {sel},
+                  onSelectionChanged: (s) => setState(() => view = s.first),
+                ),
+              ),
+            ),
+            if (regsError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  '신청을 불러오지 못해 날짜별 인원에서 당일 참석자가 빠졌습니다. $regsError',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.warnInk,
+                  ),
+                ),
+              ),
+            // 셀이 수십 개여도 목록 자리는 남도록 높이를 막고 카드 안에서 굴린다.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: SizedBox(
+                height: 224,
+                child: _StatsPanel(
+                  people: people,
+                  pick: pick,
+                  onPick: (p) => setState(() => pick = pick == p ? null : p),
+                ),
+              ),
+            ),
+          ],
           const Divider(height: 1),
           Expanded(
             child: list.isEmpty
@@ -101,6 +252,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                     itemBuilder: (context, i) {
                       final a = list[i];
                       final room = store.roomById(a.roomId);
+                      // 당일 참석자는 신청에만 있다 — 고치려면 [신청·입금]에서.
+                      final visitor = visitors.contains(a.id);
                       return ListTile(
                         dense: true,
                         title: Text(
@@ -117,13 +270,19 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                           ].join('  '),
                         ),
                         trailing: Text(
-                          room == null ? '미배정' : room.label,
+                          visitor
+                              ? '당일'
+                              : room == null
+                              ? '미배정'
+                              : room.label,
                           style: TextStyle(
                             color: room == null ? Colors.grey : Colors.indigo,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        onTap: () => attendeeDialog(context, a),
+                        onTap: visitor
+                            ? null
+                            : () => attendeeDialog(context, a),
                       );
                     },
                   ),
@@ -146,6 +305,287 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     },
     _ => a.name.compareTo(b.name),
   };
+}
+
+String _decade(Attendee a) => a.age <= 0
+    ? '나이 모름' // 0 = 모름 (출생연도 없이 들어온 사람)
+    : a.age < 10
+    ? '0~9세'
+    : '${a.age ~/ 10 * 10}대';
+
+/// 참석자 화면 위쪽 통계: 제목 → (사람 → 값). 같은 값끼리 묶어 센다.
+/// 빈 존·셀은 '없음' 칸으로 모아서 빠진 사람을 바로 찾게 한다.
+final Map<String, String Function(Attendee)> attendeeStats = {
+  '존': (a) => (a.zone ?? '').trim().isEmpty ? '존 없음' : a.zone!.trim(),
+  '셀': (a) => (a.cell ?? '').trim().isEmpty ? '셀 없음' : a.cell!.trim(),
+  '성별': (a) => genderLabel(a.gender),
+  '나이': _decade,
+  '나이·성별': (a) => '${_decade(a)} ${genderLabel(a.gender)}',
+};
+
+/// 값별 인원. 숫자는 크기 순으로 비교해서 '2셀'이 '10셀'보다, '0~9세'가 '10대'보다 앞선다.
+List<(String, int)> countBy(
+  Iterable<Attendee> xs,
+  String Function(Attendee) key,
+) {
+  final m = <String, int>{};
+  for (final a in xs) {
+    m.update(key(a), (n) => n + 1, ifAbsent: () => 1);
+  }
+  return [for (final e in m.entries) (e.key, e.value)]
+    ..sort((x, y) => naturalCompare(x.$1, y.$1));
+}
+
+int naturalCompare(String a, String b) {
+  final re = RegExp(r'\d+|\D+');
+  final xs = re.allMatches(a).map((m) => m[0]!).toList();
+  final ys = re.allMatches(b).map((m) => m[0]!).toList();
+  for (var i = 0; i < xs.length && i < ys.length; i++) {
+    final x = int.tryParse(xs[i]), y = int.tryParse(ys[i]);
+    final c = x != null && y != null ? x.compareTo(y) : xs[i].compareTo(ys[i]);
+    if (c != 0) return c;
+  }
+  return xs.length.compareTo(ys.length);
+}
+
+/// 존·셀 카드 + 나이×성별 표. 칸을 누르면 그 사람들만 아래 목록에 남는다.
+class _StatsPanel extends StatelessWidget {
+  const _StatsPanel({
+    required this.people,
+    required this.pick,
+    required this.onPick,
+  });
+
+  /// 통계 대상. 날짜를 고르면 그날 오는 사람만.
+  final List<Attendee> people;
+  final (String, String)? pick;
+  final ValueChanged<(String, String)> onPick;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(flex: 2, child: _countCard('존')),
+      const SizedBox(width: 12),
+      Expanded(flex: 2, child: _countCard('셀')),
+      const SizedBox(width: 12),
+      Expanded(flex: 4, child: _ageGenderCard()),
+    ],
+  );
+
+  /// 값 이름 · 비율 막대 · 인원 한 줄씩. '없음'은 개수에 넣지 않는다. "셀 12개"
+  Widget _countCard(String title) {
+    final counts = countBy(people, attendeeStats[title]!);
+    final named = counts.where((c) => c.$1 != '$title 없음').length;
+    final top = counts.fold(0, (m, c) => c.$2 > m ? c.$2 : m);
+    return _frame(
+      title: '$title별 인원',
+      trailing: '$title $named개',
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          for (final (v, n) in counts)
+            _pickable(
+              (title, v),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        v,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _bar(n / top),
+                    SizedBox(
+                      width: 48,
+                      child: Text(
+                        '$n명',
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: tabular,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 열 = 나이대, 행 = 남·여·계. 칸 = 나이·성별, 계 행 = 나이, 계 열 = 성별로 거른다.
+  Widget _ageGenderCard() {
+    final all = people;
+    Map<String, int> tally(String t) => {
+      for (final (v, n) in countBy(all, attendeeStats[t]!)) v: n,
+    };
+    final byAge = tally('나이'), byGender = tally('성별'), both = tally('나이·성별');
+
+    Widget head(String s) => SizedBox(
+      height: 28,
+      child: Center(
+        child: Text(
+          s,
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textMuted,
+          ),
+        ),
+      ),
+    );
+    Widget cell((String, String)? p, int n, {bool total = false}) {
+      final box = SizedBox(
+        height: 38,
+        child: Center(
+          child: Text(
+            n == 0 ? '–' : '$n',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: total ? FontWeight.w700 : FontWeight.w600,
+              fontFeatures: tabular,
+              color: n == 0 ? AppColors.textFaint : null,
+            ),
+          ),
+        ),
+      );
+      return p == null || n == 0 ? box : _pickable(p, box);
+    }
+
+    return _frame(
+      title: '나이 · 성별',
+      trailing: '총 ${all.length}명',
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Table(
+          columnWidths: const {0: FixedColumnWidth(36)},
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          children: [
+            TableRow(
+              children: [
+                const SizedBox(),
+                for (final d in byAge.keys) head(d == '나이 모름' ? '모름' : d),
+                head('계'),
+              ],
+            ),
+            for (final g in ['남', '여'])
+              TableRow(
+                children: [
+                  head(g),
+                  for (final d in byAge.keys)
+                    cell(('나이·성별', '$d $g'), both['$d $g'] ?? 0),
+                  cell(('성별', g), byGender[g] ?? 0, total: true),
+                ],
+              ),
+            TableRow(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: AppColors.border)),
+              ),
+              children: [
+                head('계'),
+                for (final d in byAge.keys)
+                  cell(('나이', d), byAge[d]!, total: true),
+                cell(null, all.length, total: true),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _frame({
+    required String title,
+    required String trailing,
+    required Widget child,
+  }) => Card(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  trailing,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: tabular,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(child: child),
+        ],
+      ),
+    ),
+  );
+
+  /// 누를 수 있는 한 칸. 고른 칸은 파랑 옅은 바탕 + 파랑 글자.
+  Widget _pickable((String, String) p, Widget child) {
+    final on = pick == p;
+    return Material(
+      key: ValueKey(p),
+      color: on ? AppColors.brandSoft : Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.tile),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => onPick(p),
+        child: DefaultTextStyle.merge(
+          style: TextStyle(color: on ? AppColors.brand : AppColors.text),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  static Widget _bar(double ratio) => Container(
+    width: 48,
+    height: 6,
+    alignment: Alignment.centerLeft,
+    decoration: BoxDecoration(
+      color: AppColors.fill,
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: FractionallySizedBox(
+      widthFactor: ratio,
+      heightFactor: 1,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.brand,
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ),
+    ),
+  );
 }
 
 /// 입금 확인된 신청 → 참석자. 방이 배정된 사람이 빠지게 되면 먼저 보여주고 묻는다.

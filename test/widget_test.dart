@@ -63,6 +63,63 @@ void main() {
     }
   });
 
+  testWidgets('참석자 통계 칩을 누르면 그 값으로 걸러진다', (tester) async {
+    Attendee p(String name, String g, int age, String cell) => Attendee(
+      id: name,
+      name: name,
+      gender: g,
+      age: age,
+      cell: cell,
+      zone: 'A존',
+      checkIn: DateTime(2026, 1, 1),
+      checkOut: DateTime(2026, 1, 4),
+    );
+    store.event.attendees.addAll([
+      p('가철수', 'M', 15, '2셀'),
+      p('나영희', 'F', 17, '10셀'),
+      p('다민수', 'M', 34, '2셀')..checkIn = DateTime(2026, 1, 3), // 3일 도착
+    ]);
+    // 집회 날짜를 정하기 전에 넣어 일정이 기간 밖인 사람은 모든 날 온 것으로 친다.
+    final early = p('라이전', 'F', 20, '1셀')
+      ..checkIn = DateTime(2025, 12, 1)
+      ..checkOut = DateTime(2025, 12, 4);
+    for (final d in store.event.nights) {
+      expect(early.attendsOn(d, store.event.nights), isTrue, reason: '$d');
+    }
+    expect(countBy(store.event.attendees, (a) => a.cell!), [
+      ('2셀', 2),
+      ('10셀', 1),
+    ]);
+    await pump(tester, const AttendeesScreen());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('셀 2개'), findsOneWidget);
+    expect(find.text('A존'), findsOneWidget);
+
+    const teenBoys = ValueKey(('나이·성별', '10대 남'));
+    await tester.tap(find.byKey(teenBoys));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('가철수'), findsOneWidget);
+    expect(find.textContaining('다민수'), findsNothing);
+    expect(find.text('1 / 3명'), findsOneWidget);
+
+    // 다시 누르면 풀린다
+    await tester.tap(find.byKey(teenBoys));
+    await tester.pumpAndSettle();
+    expect(find.text('3 / 3명'), findsOneWidget);
+
+    // 날짜를 고르면 그날 오는 사람만 센다. 마지막 날(떠나는 날)도 온 날로 친다.
+    expect(find.text('01-04(일) 3명'), findsOneWidget);
+    expect(find.text('합계 3명'), findsOneWidget);
+    await tester.tap(find.text('전참 2명')); // 다민수는 3일 도착이라 빠진다
+    await tester.pumpAndSettle();
+    expect(find.text('2 / 2명'), findsOneWidget);
+    await tester.tap(find.text('01-01(목) 2명'));
+    await tester.pumpAndSettle();
+    expect(find.text('2 / 2명'), findsOneWidget);
+    expect(find.textContaining('다민수'), findsNothing);
+  });
+
   testWidgets('방배정 화면이 뜬다', (tester) async {
     // AssignScreen 은 자체 Scaffold 가 없다 (실제로는 Shell 의 Scaffold 안에 들어간다).
     await pump(tester, const AssignScreen());
