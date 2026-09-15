@@ -164,6 +164,29 @@ class FakeRemote extends Remote {
   }
 
   @override
+  Future<String> adminSubmit(
+    String gatheringId, {
+    required String phone,
+    required String pin,
+    required List<Person> people,
+    String? depositor,
+    String? memo,
+    required int quoted,
+  }) async {
+    final id = await submit(
+      gatheringId,
+      phone: phone,
+      pin: pin,
+      people: people,
+      depositor: depositor,
+      memo: memo,
+      quoted: quoted,
+    );
+    lastSubmit!['admin'] = true;
+    return id;
+  }
+
+  @override
   Future<Registration?> lookup(
     String gatheringId,
     String phone,
@@ -778,6 +801,41 @@ void main() {
       expect(find.textContaining('참석자 2명을 등록했습니다'), findsOneWidget);
     });
 
+    testWidgets('신청·입금: 운영자가 대신 받은 신청은 입금대기로 들어가고 바로 입금 확인한다', (tester) async {
+      current.value = sample()..open = false; // 신청을 닫은 뒤에도 현장 접수는 된다
+      setView(tester, const Size(1400, 2400));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      await tester.tap(find.text('신청 추가'));
+      await tester.pumpAndSettle();
+      expect(find.text('신청 추가 (운영자 접수)'), findsOneWidget);
+      expect(find.textContaining('개인정보'), findsNothing);
+
+      await tester.enterText(field('이름 *'), '김현장');
+      await tester.enterText(field('출생연도 *'), '1985');
+      await tester.tap(find.text('남').first);
+      await tester.enterText(field('휴대폰번호 *'), '010-5555-4444');
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청 추가'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final s = fake.lastSubmit!;
+      expect(s['admin'], isTrue);
+      expect(s['pin'], matches(RegExp(r'^\d{4}$'))); // 미리 채운 PIN
+      expect(s['quoted'], 160000);
+      expect(find.text('입금대기 1'), findsOneWidget);
+
+      // 추가한 신청이 열려 있어 바로 입금 확인 → 참석자로 올라간다
+      await tester.tap(find.widgetWithText(FilledButton, '입금 확인'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '확정'));
+      await tester.pumpAndSettle();
+      expect(fake.patches.single['paid'], 160000);
+      expect(store.event.attendees.map((a) => a.name), ['김현장']);
+    });
+
     testWidgets('신청·입금: 취소하면 그 신청의 참석자가 빠진다 (방 배정된 사람은 미리 경고)', (tester) async {
       fake.regs.add(
         pendingReg()
@@ -850,6 +908,40 @@ void main() {
       // 입금액은 신청 때 값이 아니라 지금 계산한 금액
       expect(fake.regs.map((r) => r.paid), [280000, 160000]);
       expect(store.event.attendees, hasLength(3)); // 두 신청의 3명 모두 참석자로
+    });
+
+    testWidgets('신청·입금: 사역자 신청은 표시되고, 필터로 그 신청만 본다', (tester) async {
+      fake.regs
+        ..add(pendingReg())
+        ..add(
+          Registration(
+            id: 'r2',
+            gatheringId: 'g1',
+            phone: '01099998888',
+            people: [
+              Person(
+                id: 'c',
+                name: '김목사',
+                gender: 'M',
+                birthYear: 1970,
+                minister: true,
+                church: '새빛교회',
+              ),
+            ],
+            quoted: 160000,
+            createdAt: DateTime(2026, 9, 11),
+          ),
+        );
+      current.value = sample();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      expect(find.text('사역자'), findsOneWidget); // 김목사 줄에만
+      expect(find.byType(Checkbox), findsNWidgets(2));
+
+      await tester.tap(find.widgetWithText(FilterChip, '사역자 1'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Checkbox), findsOneWidget);
+      expect(find.text('김목사'), findsWidgets); // 신청자·입금자명 칸
     });
 
     testWidgets('신청 삭제: 확인하면 서버에서 지우고 그 신청의 참석자도 뺀다', (tester) async {

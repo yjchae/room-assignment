@@ -318,6 +318,31 @@ begin
   delete from public.lookup_failures where phone = ph;
 end $$;
 
+-- 운영자가 대신 받는 신청 (전화·현장 접수). 신청 받는 중이 아니어도 된다. 성공하면 신청 id.
+-- 입력 검사·PIN 해시는 submit_registration 과 같다 — 신청자가 나중에 휴대폰+PIN 으로 조회한다.
+create or replace function public.admin_add_registration(
+  p_gathering uuid, p_phone text, p_pin text, p_people jsonb,
+  p_depositor text, p_memo text, p_quoted int
+) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare
+  ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g');
+  new_id uuid;
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if ph !~ '^01[0-9]{8,9}$' then raise exception 'INVALID_PHONE'; end if;
+  if coalesce(p_pin, '') !~ '^[0-9]{4}$' then raise exception 'INVALID_PIN'; end if;
+  perform public._check_input(p_people, p_depositor, p_memo, p_quoted);
+
+  insert into public.registrations (gathering_id, phone, pin_hash, people, depositor, memo, quoted)
+  values (p_gathering, ph, extensions.crypt(p_pin, extensions.gen_salt('bf', 8)), p_people,
+          nullif(trim(p_depositor), ''), nullif(trim(p_memo), ''), p_quoted)
+  returning id into new_id;
+  return new_id;
+exception when unique_violation then
+  raise exception 'ALREADY_REGISTERED';
+end $$;
+
 -- 방배정 저장. p_version = 마지막으로 읽은 버전(서버에 아직 없으면 0). 성공하면 새 버전.
 -- 그사이 다른 기기가 저장했으면 CONFLICT — 앱은 덮어쓰지 않고 최신 문서를 다시 읽는다.
 create or replace function public.save_room_plan(p_gathering uuid, p_data jsonb, p_version int)
@@ -379,6 +404,7 @@ revoke execute on function
   public._check_input(jsonb, text, text, int),
   public._verify(uuid, text, text),
   public.reset_pin(uuid, text),
+  public.admin_add_registration(uuid, text, text, jsonb, text, text, int),
   public.save_room_plan(uuid, jsonb, int),
   public.admin_requests(),
   public.approve_admin(uuid),
@@ -395,6 +421,7 @@ grant execute on function
 
 grant execute on function
   public.reset_pin(uuid, text),
+  public.admin_add_registration(uuid, text, text, jsonb, text, text, int),
   public.save_room_plan(uuid, jsonb, int),
   public.admin_requests(),
   public.approve_admin(uuid),

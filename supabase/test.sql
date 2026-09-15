@@ -117,6 +117,7 @@ select t.err('select * from public.lookup_failures', 'permission denied');
 select t.err('select * from public.admins', 'permission denied');
 select t.err($q$select public._verify('00000000-0000-0000-0000-000000000001', '01012345678', '1234')$q$, 'permission denied');
 select t.err($q$select public.reset_pin(gen_random_uuid(), '0000')$q$, 'permission denied');
+select t.err($q$select public.admin_add_registration('00000000-0000-0000-0000-000000000001', '01055554444', '1234', '[{"name":"a"}]', null, null, 0)$q$, 'permission denied');
 select t.err($q$insert into public.admins values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
 select t.err('select * from public.room_plans', 'permission denied');
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'permission denied');
@@ -168,6 +169,7 @@ select t.ok(not public.is_admin(), 'b 는 운영자가 아니다');
 select t.ok((select count(*) from public.registrations) = 0, '운영자가 아니면 신청이 하나도 안 보인다');
 select t.err($q$insert into public.gatherings (name, start_date, end_date) values ('x', '2026-01-01', '2026-01-02')$q$, 'row-level security');
 select t.err($q$select public.reset_pin(gen_random_uuid(), '0000')$q$, 'FORBIDDEN');
+select t.err($q$select public.admin_add_registration('00000000-0000-0000-0000-000000000001', '01055554444', '1234', '[{"name":"a"}]', null, null, 0)$q$, 'FORBIDDEN');
 select t.err($q$insert into storage.objects (bucket_id, name) values ('gathering-images', 'x.jpg')$q$, 'row-level security');
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'FORBIDDEN');
 select t.err($q$insert into public.room_plans (gathering_id, data) values ('00000000-0000-0000-0000-000000000001', '{}')$q$,
@@ -192,6 +194,14 @@ update public.registrations set status = 'confirmed', paid = 445000, paid_at = c
 update public.gatherings set notice = '준비물: 성경' where id = '00000000-0000-0000-0000-000000000001';
 insert into storage.objects (bucket_id, name) values ('gathering-images', 'g1/poster-1.jpg');
 select public.reset_pin(id, '4444') from public.registrations where phone = '01099998888';
+
+-- 운영자 대신 접수: 닫힌 집회에도 되고, 신청자는 그 PIN 으로 조회한다
+select t.ok(public.admin_add_registration('00000000-0000-0000-0000-000000000002', '010-5555-4444', '5555',
+  '[{"name":"현장"}]', null, null, 150000) is not null, '운영자는 닫힌 집회에도 신청을 넣는다');
+select t.err($q$select public.admin_add_registration('00000000-0000-0000-0000-000000000002', '01055554444', '1111', '[{"name":"b"}]', null, null, 0)$q$,
+             'ALREADY_REGISTERED');
+select t.err($q$select public.admin_add_registration('00000000-0000-0000-0000-000000000002', '0212345678', '1111', '[{"name":"b"}]', null, null, 0)$q$,
+             'INVALID_PHONE');
 
 -- 방배정: 읽은 버전으로만 저장된다 (두 기기가 동시에 고치면 늦은 쪽이 CONFLICT)
 select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001', '{"rooms":[]}', 0) = 1,
@@ -230,6 +240,8 @@ select t.err($q$select public.cancel_registration('00000000-0000-0000-0000-00000
              'NOT_EDITABLE');
 select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000001', '01099998888', '4444') is not null,
   'PIN 재설정 후 새 PIN 으로 조회되고 잠금도 풀린다');
+select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000002', '01055554444', '5555') ->> 'status' = 'pending',
+  '운영자가 넣은 신청도 휴대폰+PIN 으로 조회된다');
 select t.err($q$insert into storage.objects (bucket_id, name) values ('gathering-images', 'y.jpg')$q$, 'row-level security');
 
 -- 마감되면 수정은 막히고 취소는 된다

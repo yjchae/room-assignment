@@ -238,6 +238,20 @@ class Remote {
     if (rows.isEmpty) throw const RemoteError('삭제하지 못했습니다. 운영자로 다시 로그인해 보세요.');
   }
 
+  /// 운영자가 대신 받는 신청 (전화·현장 접수). 신청을 받지 않는 중에도 된다. 신청 id.
+  Future<String> adminSubmit(
+    String gatheringId, {
+    required String phone,
+    required String pin,
+    required List<Person> people,
+    String? depositor,
+    String? memo,
+    required int quoted,
+  }) async => '${await _db.rpc('admin_add_registration', params: {
+    ..._key(gatheringId, phone, pin),
+    ..._body(people, depositor, memo, quoted),
+  })}';
+
   Future<void> resetPin(String registrationId, String pin) async {
     await _db.rpc(
       'reset_pin',

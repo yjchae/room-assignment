@@ -5,6 +5,7 @@
 /// 여기서 가져오는 파일(gathering · remote · theme · quote_table)은 dart:io 금지 (웹 빌드가 깨짐).
 library;
 
+import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -445,12 +446,17 @@ class ApplyPage extends StatefulWidget {
     this.editing,
     this.phone,
     this.pin,
+    this.admin = false,
   });
   final Gathering gathering;
 
   /// 수정이면 기존 신청과, 조회에 쓴 휴대폰·PIN.
   final Registration? editing;
   final String? phone, pin;
+
+  /// 운영자 앱의 [신청 추가] (전화·현장 접수). 동의 칸이 없고, PIN 은 미리 채워 보여 주고,
+  /// 신청을 받지 않는 중에도 넣을 수 있다. 끝나면 신청 id 를 들고 닫힌다.
+  final bool admin;
 
   @override
   State<ApplyPage> createState() => _ApplyPageState();
@@ -489,6 +495,9 @@ class _ApplyPageState extends State<ApplyPage> {
     for (final f in forms) {
       f.birth.addListener(_changed);
     }
+    if (widget.admin) {
+      pin.text = '${math.Random.secure().nextInt(10000)}'.padLeft(4, '0');
+    }
     if (r != null) {
       // 예전 형식(도착·출발일)이나 기간이 바뀐 신청도 날짜 체크로 옮긴다. 모든 날이면 전체 참석.
       for (final (i, p) in r.people.indexed) {
@@ -515,7 +524,13 @@ class _ApplyPageState extends State<ApplyPage> {
     final q = g.quoteFor(_people, appliedAt, discount: discount);
     return Scaffold(
       appBar: AppBar(
-        title: Text(editing ? '신청 수정' : '신청하기'),
+        title: Text(
+          widget.admin
+              ? '신청 추가 (운영자 접수)'
+              : editing
+              ? '신청 수정'
+              : '신청하기',
+        ),
         shape: const Border(bottom: BorderSide(color: AppColors.border)),
       ),
       body: Form(
@@ -557,11 +572,13 @@ class _ApplyPageState extends State<ApplyPage> {
                   TextFormField(
                     controller: pin,
                     keyboardType: TextInputType.number,
-                    obscureText: true,
+                    obscureText: !widget.admin,
                     maxLength: 4,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: '조회용 PIN (숫자 4자리) *',
-                      helperText: '나중에 휴대폰번호와 함께 신청을 조회·수정할 때 씁니다.',
+                      helperText: widget.admin
+                          ? '신청자에게 알려 주세요. 휴대폰번호와 함께 조회·수정할 때 씁니다.'
+                          : '나중에 휴대폰번호와 함께 신청을 조회·수정할 때 씁니다.',
                     ),
                     validator: (v) => RegExp(r'^\d{4}$').hasMatch(v ?? '')
                         ? null
@@ -591,7 +608,7 @@ class _ApplyPageState extends State<ApplyPage> {
                 ),
               ],
             ),
-            if (!editing) _Section(children: [_consent()]),
+            if (!editing && !widget.admin) _Section(children: [_consent()]),
             if (serverError != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -607,7 +624,11 @@ class _ApplyPageState extends State<ApplyPage> {
         q: q,
         free: free,
         busy: busy,
-        label: editing ? '수정 저장' : '신청하기',
+        label: editing
+            ? '수정 저장'
+            : widget.admin
+            ? '신청 추가'
+            : '신청하기',
         onSubmit: _submit,
       ),
     );
@@ -849,7 +870,10 @@ class _ApplyPageState extends State<ApplyPage> {
     final genderOk =
         !g.requires('gender') || forms.every((f) => f.gender != null);
     final daysOk = forms.every((f) => f.full || f.days!.isNotEmpty);
-    if (!formOk || !genderOk || !daysOk || (!editing && !consent)) {
+    if (!formOk ||
+        !genderOk ||
+        !daysOk ||
+        (!editing && !widget.admin && !consent)) {
       setState(() => serverError = '빨간 표시된 칸을 확인하세요.');
       return;
     }
@@ -888,7 +912,18 @@ class _ApplyPageState extends State<ApplyPage> {
     final dep = depositor.text.trim().isEmpty ? null : depositor.text.trim();
     final m = memo.text.trim().isEmpty ? null : memo.text.trim();
     try {
-      if (!editing) {
+      if (widget.admin) {
+        final id = await remote.adminSubmit(
+          g.id,
+          phone: phone.text,
+          pin: pin.text,
+          people: people,
+          depositor: dep,
+          memo: m,
+          quoted: q.beforeDiscount,
+        );
+        if (mounted) Navigator.pop(context, id);
+      } else if (!editing) {
         await remote.submit(
           g.id,
           phone: phone.text,

@@ -23,22 +23,12 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   Widget build(BuildContext context) {
     final list = store.search(query)..sort(_cmp);
     return Scaffold(
-      floatingActionButton: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'paste',
-            onPressed: () => _pasteDialog(context),
-            icon: const Icon(Icons.content_paste),
-            label: const Text('붙여넣기 등록'),
-          ),
-          const SizedBox(width: 12),
-          FloatingActionButton(
-            heroTag: 'one',
-            onPressed: () => attendeeDialog(context),
-            child: const Icon(Icons.person_add),
-          ),
-        ],
+      // 한 명씩 추가는 [신청·입금]의 [신청 추가]로 한다 — 입금 확인까지 거쳐야 해서.
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'paste',
+        onPressed: () => _pasteDialog(context),
+        icon: const Icon(Icons.content_paste),
+        label: const Text('붙여넣기 등록'),
       ),
       body: Column(
         children: [
@@ -91,7 +81,9 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           Expanded(
             child: list.isEmpty
                 ? const Center(
-                    child: Text('참석자가 없습니다. [붙여넣기 등록]을 눌러 엑셀에서 복사해 붙여넣으세요.'),
+                    child: Text(
+                      '참석자가 없습니다. 신청은 [신청·입금]에서 추가하고, 엑셀 명단은 [붙여넣기 등록]으로 넣으세요.',
+                    ),
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.only(bottom: 80),
@@ -235,27 +227,27 @@ Future<bool?> _askKeepAdminEdits(
   );
 }
 
-/// 개별 추가/수정/삭제.
-Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
-  final name = TextEditingController(text: a?.name ?? '');
-  final age = TextEditingController(text: a == null ? '' : '${a.age}');
-  final phone = TextEditingController(text: a?.phone ?? '');
-  final cell = TextEditingController(text: a?.cell ?? '');
-  final zone = TextEditingController(text: a?.zone ?? '');
-  final note = TextEditingController(text: a?.note ?? '');
-  var gender = a?.gender ?? 'M';
+/// 참석자 수정/삭제. 새로 받는 사람은 [신청·입금]의 [신청 추가]로 넣는다.
+Future<void> attendeeDialog(BuildContext context, Attendee a) async {
+  final name = TextEditingController(text: a.name);
+  final age = TextEditingController(text: '${a.age}');
+  final phone = TextEditingController(text: a.phone ?? '');
+  final cell = TextEditingController(text: a.cell ?? '');
+  final zone = TextEditingController(text: a.zone ?? '');
+  final note = TextEditingController(text: a.note ?? '');
+  var gender = a.gender;
   final messenger = ScaffoldMessenger.of(context);
   // 사용자 정의 항목: 이름 -> 입력칸
   final extras = {
     for (final f in store.event.customFields)
-      f: TextEditingController(text: a?.extra[f] ?? ''),
+      f: TextEditingController(text: a.extra[f] ?? ''),
   };
 
   final action = await showDialog<String>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setLocal) => AlertDialog(
-        title: Text(a == null ? '참석자 추가' : '참석자 수정'),
+        title: const Text('참석자 수정'),
         content: SizedBox(
           width: 360,
           child: SingleChildScrollView(
@@ -349,11 +341,10 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
           ),
         ),
         actions: [
-          if (a != null)
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'delete'),
-              child: const Text('삭제', style: TextStyle(color: Colors.red)),
-            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'delete'),
+            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, 'cancel'),
             child: const Text('취소'),
@@ -368,7 +359,7 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
   );
 
   if (action == null || action == 'cancel') return;
-  if (action == 'delete' && a != null) {
+  if (action == 'delete') {
     if (!context.mounted) return;
     final ok = await confirmDialog(
       context,
@@ -391,7 +382,7 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
   if (!context.mounted) return;
   final save = await confirmDialog(
     context,
-    title: a == null ? '참석자 추가' : '참석자 수정',
+    title: '참석자 수정',
     body: "'$n' 님 정보를 저장합니다.",
     action: '저장',
   );
@@ -404,45 +395,27 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? a]) async {
       if (e.value.text.trim().isNotEmpty) e.key: e.value.text.trim(),
   };
 
-  if (a == null) {
-    store.event.attendees.add(
-      Attendee(
-        id: store.newId(),
-        name: n,
-        gender: gender,
-        age: ageN,
-        phone: opt(phone),
-        cell: opt(cell),
-        zone: opt(zone),
-        note: opt(note),
-        checkIn: store.event.startDate,
-        checkOut: store.event.endDate,
-        extra: extraValues,
-      ),
-    );
-  } else {
-    // 신청에서 오는 항목이 실제로 바뀌었을 때만 "운영자가 고침"으로 친다.
-    // 기타(note)는 가져오기가 덮어쓰지 않으니 빼고, 그냥 [저장]만 누른 것도 치지 않는다.
-    // 안 그러면 입금 확인 때의 자동 가져오기가 그 사람의 신청 변경을 말없이 건너뛴다.
-    final changed =
-        a.name != n ||
-        a.gender != gender ||
-        a.age != ageN ||
-        a.phone != opt(phone) ||
-        a.cell != opt(cell) ||
-        a.zone != opt(zone) ||
-        !mapEquals(a.extra, extraValues);
-    a
-      ..name = n
-      ..gender = gender
-      ..age = ageN
-      ..phone = opt(phone)
-      ..cell = opt(cell)
-      ..zone = opt(zone)
-      ..note = opt(note)
-      ..extra = extraValues;
-    if (changed) a.editedByAdmin = true;
-  }
+  // 신청에서 오는 항목이 실제로 바뀌었을 때만 "운영자가 고침"으로 친다.
+  // 기타(note)는 가져오기가 덮어쓰지 않으니 빼고, 그냥 [저장]만 누른 것도 치지 않는다.
+  // 안 그러면 입금 확인 때의 자동 가져오기가 그 사람의 신청 변경을 말없이 건너뛴다.
+  final changed =
+      a.name != n ||
+      a.gender != gender ||
+      a.age != ageN ||
+      a.phone != opt(phone) ||
+      a.cell != opt(cell) ||
+      a.zone != opt(zone) ||
+      !mapEquals(a.extra, extraValues);
+  a
+    ..name = n
+    ..gender = gender
+    ..age = ageN
+    ..phone = opt(phone)
+    ..cell = opt(cell)
+    ..zone = opt(zone)
+    ..note = opt(note)
+    ..extra = extraValues;
+  if (changed) a.editedByAdmin = true;
   store.commit();
 }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../gathering.dart';
 import '../main.dart';
+import '../main_public.dart' show ApplyPage;
 import '../models.dart';
 import '../remote.dart';
 import '../theme.dart';
@@ -26,6 +27,9 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
 
   /// null = 전체.
   RegStatus? filter;
+
+  /// 사역자가 한 명이라도 있는 신청만.
+  bool ministerOnly = false;
   String query = '';
   String? selectedId;
 
@@ -157,7 +161,10 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     };
     final shown = [
       for (final r in all)
-        if ((filter == null || r.status == filter) && _matches(r)) r,
+        if ((filter == null || r.status == filter) &&
+            (!ministerOnly || _hasMinister(r)) &&
+            _matches(r))
+          r,
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final active = all.where((r) => r.status != RegStatus.cancelled);
     final pendingSum = active
@@ -208,6 +215,12 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                   selected: filter == f,
                   onSelected: (_) => setState(() => filter = f),
                 ),
+              if (g.asks('minister') || all.any(_hasMinister))
+                FilterChip(
+                  label: Text('사역자 ${all.where(_hasMinister).length}'),
+                  selected: ministerOnly,
+                  onSelected: (v) => setState(() => ministerOnly = v),
+                ),
               SizedBox(
                 width: 260,
                 child: TextField(
@@ -222,6 +235,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                 onPressed: loading ? null : _load,
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('새로고침'),
+              ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : () => _add(g),
+                icon: const Icon(Icons.person_add_alt, size: 18),
+                label: const Text('신청 추가'),
               ),
               FilledButton.icon(
                 onPressed: checked.isEmpty || busy
@@ -311,6 +329,20 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         ),
       ],
     );
+  }
+
+  /// 전화·현장 접수. 신청 웹과 같은 신청서로 받아 입금대기로 넣고, 그 신청을 열어 둔다 —
+  /// 입금 확인·지정 할인은 다른 신청과 똑같이 여기서 한다.
+  Future<void> _add(Gathering g) async {
+    final id = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => ApplyPage(gathering: g, admin: true)),
+    );
+    if (id == null) return;
+    await _load();
+    if (!mounted) return;
+    setState(() => selectedId = id);
+    _snack('신청을 추가했습니다. 입금이 확인되면 [입금 확인]을 누르세요.');
   }
 
   Future<void> _confirm(Registration r, Quote q) async {
@@ -713,6 +745,8 @@ class _DiscountEditorState extends State<_DiscountEditor> {
   );
 }
 
+bool _hasMinister(Registration r) => r.people.any((p) => p.minister);
+
 String _n(int n) => won(n).replaceAll('원', '');
 
 String _stay(Quote q) {
@@ -812,9 +846,38 @@ class _RegRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      r.applicant,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            r.applicant,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        if (_hasMinister(r)) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.brandSoft,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              '사역자',
+                              style: TextStyle(
+                                fontSize: 11,
+                                height: 1.3,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.brand,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
                       q.specialDiscount > 0
