@@ -252,6 +252,7 @@ class _GatheringView extends StatelessWidget {
                       ),
                       child: const Text('신청 조회 · 수정'),
                     ),
+                    _KakaoChannel(g.kakaoChannelUrl),
                   ],
                 ),
               ],
@@ -1092,6 +1093,7 @@ class DonePage extends StatelessWidget {
                   color: AppColors.textMuted,
                 ),
               ),
+              _KakaoChannel(gathering.kakaoChannelUrl),
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: () =>
@@ -1447,6 +1449,31 @@ class _NoticeListState extends State<_NoticeList> {
             ),
         ],
       ],
+    );
+  }
+}
+
+/// 카카오톡 채널(옛 플러스친구) 추가 버튼. 링크를 안 넣은 집회에서는 아무것도 안 그린다.
+///
+/// 채널을 추가해 두면 단톡방에 없는 사람에게도 운영자가 공지를 보낼 수 있다.
+/// 채널 개설·친구 모으기는 무료다. 단체 메시지 요금은 PLAN_NOTICE.md §1 참고.
+/// 카카오 브랜드 색을 흉내 내지 않는다 — 공식 버튼으로 오해하게 만들 이유가 없다.
+class _KakaoChannel extends StatelessWidget {
+  const _KakaoChannel(this.url);
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    final link = (url ?? '').trim();
+    if (link.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: OutlinedButton.icon(
+        onPressed: () =>
+            launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication),
+        icon: const Icon(Icons.campaign_outlined, size: 18),
+        label: const Text('카카오톡 채널 추가하고 공지 받기'),
+      ),
     );
   }
 }

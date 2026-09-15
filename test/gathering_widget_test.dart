@@ -409,6 +409,25 @@ void main() {
       expect(find.text('더 보기'), findsNothing);
     });
 
+    testWidgets('카카오톡 채널 링크를 안 넣으면 채널 버튼이 없다', (tester) async {
+      setView(tester, const Size(400, 1400));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('카카오톡 채널'), findsNothing);
+    });
+
+    testWidgets('채널 링크를 넣으면 집회 페이지에 [채널 추가] 버튼', (tester) async {
+      fake.gs.first.kakaoChannelUrl = 'http://pf.kakao.com/_abcd';
+      setView(tester, const Size(400, 1600));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        find.widgetWithText(OutlinedButton, '카카오톡 채널 추가하고 공지 받기'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('공지가 없으면 공지 카드가 아예 안 나온다', (tester) async {
       setView(tester, const Size(400, 1400));
       await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));

@@ -45,6 +45,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   final place = TextEditingController();
   final address = TextEditingController();
   final notice = TextEditingController();
+  final kakaoChannel = TextEditingController();
   final bank = TextEditingController();
   final account = TextEditingController();
   final holder = TextEditingController();
@@ -74,6 +75,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     place.text = x.place ?? '';
     address.text = x.address ?? '';
     notice.text = x.notice ?? '';
+    kakaoChannel.text = x.kakaoChannelUrl ?? '';
     bank.text = x.bank.bank;
     account.text = x.bank.account;
     holder.text = x.bank.holder;
@@ -138,6 +140,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     x.place = _opt(place);
     x.address = _opt(address);
     x.notice = _opt(notice);
+    x.kakaoChannelUrl = _opt(kakaoChannel);
     x.bank = Bank(
       bank: bank.text.trim(),
       account: account.text.trim(),
@@ -428,6 +431,19 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       labelText: '안내 문구',
                       hintText: '준비물, 문의처 등',
                       alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: kakaoChannel,
+                    decoration: const InputDecoration(
+                      labelText: '카카오톡 채널 추가 링크 (선택)',
+                      hintText: '채널 관리자센터에서 받은 주소. 비우면 아무 데도 안 나옵니다',
+                      helperText:
+                          '넣으면 신청 완료 화면과 공지 메시지에 [채널 추가] 안내가 붙습니다. '
+                          '채널 개설과 친구 모으기는 무료지만, 채널에서 보내는 단체 메시지 요금은 '
+                          '카카오톡 채널 관리자센터에서 직접 확인하세요.',
+                      helperMaxLines: 3,
                     ),
                   ),
                 ]),

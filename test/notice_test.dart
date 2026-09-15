@@ -2,11 +2,12 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/gathering.dart';
 
-Gathering g() => Gathering(
+Gathering g({String? channel}) => Gathering(
   id: 'g1',
   name: '가을수련회',
   start: DateTime(2026, 10, 9),
   end: DateTime(2026, 10, 11),
+  kakaoChannelUrl: channel,
 );
 
 Notice notice({
@@ -55,6 +56,14 @@ void main() {
       final m = noticeMessage(g(), notice(body: ''));
       expect(m, isNot(contains('\n\n\n')));
       expect(m.split('\n').first, '[가을수련회] 준비물 안내');
+    });
+
+    test('카카오톡 채널 링크는 넣은 집회에만 꼬리로 붙는다', () {
+      expect(noticeMessage(g(), notice()), isNot(contains('채널 추가')));
+      final m = noticeMessage(g(channel: 'http://pf.kakao.com/_abcd'), notice());
+      expect(m, contains('▶ 카카오톡 채널 추가(공지 받기): http://pf.kakao.com/_abcd'));
+      // 꼬리는 맨 끝에. 본문과 신청 링크 뒤다.
+      expect(m.trimRight().split('\n').last, startsWith('▶ 카카오톡 채널'));
     });
 
     test('앞뒤 공백은 정리한다', () {
@@ -129,6 +138,32 @@ void main() {
       expect(row['body'], '본문');
       expect(row.containsKey('id'), isFalse);
       expect(row.containsKey('created_at'), isFalse);
+    });
+
+    test('집회 행에 채널 링크가 오가고, 없으면 null', () {
+      expect(
+        Gathering.fromRow({
+          'id': 'g1',
+          'name': 'x',
+          'start_date': '2026-10-09',
+          'end_date': '2026-10-11',
+          'kakao_channel_url': 'http://pf.kakao.com/_abcd',
+        }).kakaoChannelUrl,
+        'http://pf.kakao.com/_abcd',
+      );
+      expect(
+        Gathering.fromRow({
+          'id': 'g1',
+          'name': 'x',
+          'start_date': '2026-10-09',
+          'end_date': '2026-10-11',
+        }).kakaoChannelUrl,
+        isNull,
+      );
+      expect(
+        g(channel: 'http://pf.kakao.com/_abcd').toRow()['kakao_channel_url'],
+        'http://pf.kakao.com/_abcd',
+      );
     });
 
     test('fromRow: 빠진 칸은 기본값 (published 는 기본 공개)', () {

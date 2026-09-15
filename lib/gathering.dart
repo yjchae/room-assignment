@@ -260,6 +260,7 @@ class Gathering {
     this.notice,
     this.posterUrl,
     this.backgroundUrl,
+    this.kakaoChannelUrl,
     FeeRule? fee,
     Bank? bank,
     List<String>? formFields,
@@ -283,6 +284,11 @@ class Gathering {
   DateTime start, end;
   List<String> themes;
   String? place, address, notice, posterUrl, backgroundUrl;
+
+  /// 카카오톡 채널(옛 플러스친구) 추가 링크. 넣어 두면 신청 완료 화면과 공지 메시지에
+  /// "채널 추가" 안내가 붙는다. 채널을 안 쓰면 비워 둔다 — 아무 데도 안 나온다.
+  /// 채널을 만들고 친구를 모으는 것까지는 돈이 안 든다. 대량 발송 요금은 PLAN_NOTICE.md §1 참고.
+  String? kakaoChannelUrl;
   FeeRule fee;
   Bank bank;
 
@@ -335,6 +341,7 @@ class Gathering {
     'end_date': ymd(end),
     'poster_url': posterUrl,
     'background_url': backgroundUrl,
+    'kakao_channel_url': kakaoChannelUrl,
     'fee': fee.toJson(),
     'bank': bank.toJson(),
     'form_fields': formFields,
@@ -355,6 +362,7 @@ class Gathering {
     notice: _str(r['notice']),
     posterUrl: _str(r['poster_url']),
     backgroundUrl: _str(r['background_url']),
+    kakaoChannelUrl: _str(r['kakao_channel_url']),
     fee: FeeRule.fromJson(r['fee']),
     bank: Bank.fromJson(r['bank']),
     formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
@@ -559,11 +567,14 @@ String noticeLink(Gathering g, Notice n) =>
 /// 카카오톡은 꾸밈 없는 글자만 받는다. 마크다운·표를 넣으면 붙여넣을 때 깨진다.
 String noticeMessage(Gathering g, Notice n) {
   final body = n.body.trim();
+  final channel = (g.kakaoChannelUrl ?? '').trim();
   return [
     '[${g.name}] ${n.title.trim()}',
     if (body.isNotEmpty) ...['', body],
     '',
     '▶ 자세히 보기 · 신청: ${noticeLink(g, n)}',
+    // 채널을 쓰는 집회만. 단톡방에 안 들어온 사람을 채널로 끌어오는 줄이다.
+    if (channel.isNotEmpty) '▶ 카카오톡 채널 추가(공지 받기): $channel',
   ].join('\n');
 }
 

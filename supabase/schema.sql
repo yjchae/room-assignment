@@ -41,6 +41,7 @@ create table if not exists public.gatherings (
   end_date date not null check (end_date >= start_date),
   poster_url text,
   background_url text,
+  kakao_channel_url text,                    -- 카카오톡 채널(옛 플러스친구) 추가 링크. 비우면 안 쓴다
   fee jsonb not null default '{}',          -- FeeRule (lib/gathering.dart)
   bank jsonb,                                -- {bank, account, holder}
   form_fields text[] not null default '{}',  -- 사용자 정의 항목
@@ -53,6 +54,7 @@ create table if not exists public.gatherings (
 -- 이미 만든 DB 에 새 칸 추가.
 alter table public.gatherings add column if not exists hidden_fields text[] not null default '{}';
 alter table public.gatherings add column if not exists required_fields text[] not null default '{birthYear,gender}';
+alter table public.gatherings add column if not exists kakao_channel_url text;
 
 create table if not exists public.registrations (
   id uuid primary key default gen_random_uuid(),
