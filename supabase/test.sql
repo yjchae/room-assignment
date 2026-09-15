@@ -76,6 +76,9 @@ insert into public.gatherings (id, name, start_date, end_date, open, deadline) v
   ('00000000-0000-0000-0000-000000000001', '열린 집회', '2026-10-09', '2026-10-11', true, null),
   ('00000000-0000-0000-0000-000000000002', '닫힌 집회', '2026-10-09', '2026-10-11', false, null),
   ('00000000-0000-0000-0000-000000000003', '마감 지난 집회', '2026-10-09', '2026-10-11', true, '2020-01-01');
+insert into public.notices (id, gathering_id, title, body, published, pinned) values
+  ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', '준비물 안내', '세면도구를 챙겨 오세요.', true, true),
+  ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000001', '아직 안 띄운 공지', '나중에 공개', false, false);
 
 -- ===========================================================================
 -- 신청자 (로그인 안 함)
@@ -121,6 +124,14 @@ select t.err($q$insert into public.admins values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbb
 select t.err('select * from public.room_plans', 'permission denied');
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'permission denied');
 select t.err('select * from public.admin_requests()', 'permission denied');
+
+-- 공지: 공개한 것만 보이고, 쓰기는 막힌다
+select t.ok((select count(*) from public.notices) = 1, '신청자에게는 공개한 공지만 보인다');
+select t.ok((select title from public.notices) = '준비물 안내', '보이는 건 공개된 공지다');
+select t.err($q$insert into public.notices (gathering_id, title, body) values ('00000000-0000-0000-0000-000000000001', 'x', 'y')$q$,
+             'permission denied');
+select t.err($q$update public.notices set title = '해킹'$q$, 'permission denied');
+select t.err('select * from public.notice_sends', 'permission denied');
 select t.err($q$select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
 
 -- 조회
@@ -179,6 +190,12 @@ end $$;
 select t.ok((select count(*) from public.admin_requests()) = 0, '운영자가 아니면 가입 신청 목록이 비어 있다');
 select t.err($q$select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'FORBIDDEN');
 select t.err($q$select public.reject_admin('cccccccc-cccc-cccc-cccc-cccccccccccc')$q$, 'FORBIDDEN');
+select t.ok((select count(*) from public.notices) = 1, '운영자가 아니면 비공개 공지가 안 보인다');
+select t.err($q$insert into public.notices (gathering_id, title, body) values ('00000000-0000-0000-0000-000000000001', 'x', 'y')$q$,
+             'row-level security');
+select t.err($q$insert into public.notice_sends (notice_id, channel, target) values ('11111111-1111-1111-1111-111111111111', 'copy', 'all')$q$,
+             'row-level security');
+select t.ok((select count(*) from public.notice_sends) = 0, '운영자가 아니면 보낸 기록이 안 보인다');
 
 -- ===========================================================================
 -- 운영자
@@ -201,6 +218,31 @@ select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001', '{"roo
   '읽은 버전으로 저장하면 버전이 오른다');
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 1)$q$, 'CONFLICT');
 select t.ok((select data from public.room_plans) = '{"rooms":[1]}', '늦게 온 저장은 덮어쓰지 않는다');
+
+-- 공지: 운영자는 비공개까지 보고, 고치고, 보낸 기록을 남긴다
+select t.ok((select count(*) from public.notices) = 2, '운영자는 비공개 공지도 본다');
+insert into public.notices (gathering_id, title, body) values ('00000000-0000-0000-0000-000000000002', '닫힌 집회 공지', '본문');
+select t.err($q$insert into public.notices (gathering_id, title, body) values ('00000000-0000-0000-0000-000000000001', '', 'y')$q$,
+             'notices_title_check');
+select t.err($q$insert into public.notices (gathering_id, title, body) values ('00000000-0000-0000-0000-000000000001', 'x', repeat('가', 5001))$q$,
+             'notices_body_check');
+do $$
+declare before timestamptz;
+begin
+  select updated_at into before from public.notices where id = '11111111-1111-1111-1111-111111111111';
+  update public.notices set body = '수건도 챙겨 오세요.' where id = '11111111-1111-1111-1111-111111111111';
+  perform t.ok((select updated_at from public.notices where id = '11111111-1111-1111-1111-111111111111') > before,
+    '공지를 고치면 updated_at 이 올라간다');
+end $$;
+
+insert into public.notice_sends (notice_id, channel, target, count, sent_by)
+values ('11111111-1111-1111-1111-111111111111', 'copy', 'confirmed', 1, auth.uid());
+select t.ok((select count from public.notice_sends) = 1, '보낸 기록이 남는다');
+select t.ok((select sent_by from public.notice_sends) = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '누가 보냈는지 남는다');
+select t.err($q$insert into public.notice_sends (notice_id, channel, target) values ('11111111-1111-1111-1111-111111111111', '문자', 'all')$q$,
+             'notice_sends_channel_check');
+select t.err($q$insert into public.notice_sends (notice_id, channel, target) values ('11111111-1111-1111-1111-111111111111', 'copy', '전체')$q$,
+             'notice_sends_target_check');
 
 -- 가입 승인·거절
 select t.ok((select array_agg(email order by email) from public.admin_requests()) = array['b@x', 'c@x'],
@@ -240,6 +282,16 @@ select t.err($q$select public.update_registration('00000000-0000-0000-0000-00000
              'CLOSED');
 select t.ok(public.cancel_registration('00000000-0000-0000-0000-000000000001', '01099998888', '4444') ->> 'status' = 'cancelled',
   '마감 후에도 입금대기면 취소된다');
+
+-- 집회를 지우면 공지도 같이 지워진다 (보낸 기록도 따라서)
+reset role;
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+set role authenticated;
+delete from public.gatherings where id = '00000000-0000-0000-0000-000000000002';
+select t.ok((select count(*) from public.notices where gathering_id = '00000000-0000-0000-0000-000000000002') = 0,
+  '집회를 지우면 그 집회 공지도 지워진다');
+delete from public.notices where id = '11111111-1111-1111-1111-111111111111';
+select t.ok((select count(*) from public.notice_sends) = 0, '공지를 지우면 보낸 기록도 지워진다');
 
 reset role;
 \o

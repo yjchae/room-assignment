@@ -26,16 +26,21 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 ## 구조
 
-**서버는 Supabase 하나다.** 테이블은 `gatherings`(집회 설정), `registrations`(신청), `room_plans`(방배정), `admins`.
-- 방배정은 집회마다 `room_plans` 행 하나에 `Event` JSON 문서 전체를 저장한다(`lib/store.dart`). 요구사항·설계 이유는 `PLAN.md`(방배정)·`PLAN_GATHERING.md`(집회관리)에 있고, 처음 기획(로컬 JSON·로컬 잠금)에서 달라진 점은 `PLAN_GATHERING.md` §10 에 모아 두었다.
+**서버는 Supabase 하나다.** 테이블은 `gatherings`(집회 설정), `registrations`(신청), `room_plans`(방배정), `admins`, `notices`·`notice_sends`(공지).
+- 방배정은 집회마다 `room_plans` 행 하나에 `Event` JSON 문서 전체를 저장한다(`lib/store.dart`). 요구사항·설계 이유는 `PLAN.md`(방배정)·`PLAN_GATHERING.md`(집회관리)·`PLAN_NOTICE.md`(공지)에 있고, 처음 기획(로컬 JSON·로컬 잠금)에서 달라진 점은 `PLAN_GATHERING.md` §10 에 모아 두었다.
 - 권한은 RLS 가 막는다. 신청자는 `registrations` 테이블에 직접 닿지 못하고 `submit_/lookup_/update_/cancel_registration` RPC(휴대폰+PIN)로만 드나든다. 운영자 = `auth.users` 에 있으면서 `admins` 에도 있는 사람.
 - `lib/config.dart` 에는 publishable 키만 둔다. 저장소가 공개라서 service_role 키, 실명·실제 전화번호가 든 데이터는 커밋하지 않는다.
 
 **웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
 
+**공지 → 카카오톡** (`PLAN_NOTICE.md`): 전화번호만으로 카카오톡을 보내는 길은 알림톡뿐이고 그건 채널·대행사·템플릿 승인이 필요하다.
+그래서 기본 경로는 **`noticeMessage()` 가 만든 글을 운영자가 복사해 단톡방에 붙여넣는 것**이고, 알림톡은 Edge Function
+`supabase/functions/send-notice-kakao` 로 빼 두었다(설정 전에는 `NOT_CONFIGURED`). 복사도 `notice_sends` 에 기록한다.
+공지 메시지를 만드는 곳은 `noticeMessage()` 하나다 — 회비 계산과 같은 이유로 두 군데서 만들면 내용이 어긋난다.
+
 **회비 계산은 `gathering.dart` 의 `quote()` 하나뿐이다.** 신청 웹·조회·관리자 화면·참석자 가져오기가 모두 이 함수를 부른다. 따로 계산하면 금액이 어긋난다.
 
-**전역 상태** (`lib/main.dart`): `store`(방배정 `Store`, ChangeNotifier), `current`(열어 둔 `Gathering`), `tabIndex`. 탭 번호는 숫자 대신 `settingsTab`/`registrationsTab`/`assignTab` 상수로 쓴다. 서버 호출은 전부 `lib/remote.dart` 의 전역 `remote` 로 하고, 테스트는 여기에 `Remote` 를 상속한 가짜(`FakeRemote`, `PlanRemote`)를 끼운다.
+**전역 상태** (`lib/main.dart`): `store`(방배정 `Store`, ChangeNotifier), `current`(열어 둔 `Gathering`), `tabIndex`. 탭 번호는 숫자 대신 `settingsTab`/`registrationsTab`/`assignTab`/`noticesTab` 상수로 쓴다. 화면을 새로 넣을 때는 탭 번호를 **뒤에 붙인다** — 중간에 끼우면 이 상수를 쓰는 곳이 전부 어긋난다. 서버 호출은 전부 `lib/remote.dart` 의 전역 `remote` 로 하고, 테스트는 여기에 `Remote` 를 상속한 가짜(`FakeRemote`, `PlanRemote`)를 끼운다.
 
 **방배정 저장 흐름** (`Store`)
 - 방배정을 바꾸는 코드는 `event` 를 고친 다음 반드시 `store.commit()` 을 부른다. commit 이 알림을 보내고 문서 전체를 저장한다. 저장은 한 번에 하나만 돌고, 저장 중에 또 바뀌면 끝난 뒤 최신 상태로 한 번 더 올린다.

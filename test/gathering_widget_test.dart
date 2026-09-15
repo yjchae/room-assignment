@@ -1,5 +1,6 @@
 // 새 화면들 — 신청 웹(휴대폰 폭)과 관리자 화면. 서버는 가짜로 바꿔 끼운다.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/gathering.dart';
 import 'package:room_assignment/main.dart';
@@ -8,6 +9,7 @@ import 'package:room_assignment/models.dart';
 import 'package:room_assignment/remote.dart';
 import 'package:room_assignment/screens/gathering_settings.dart';
 import 'package:room_assignment/screens/gatherings.dart';
+import 'package:room_assignment/screens/notices.dart';
 import 'package:room_assignment/screens/registrations.dart';
 import 'package:room_assignment/theme.dart';
 
@@ -88,6 +90,75 @@ class FakeRemote extends Remote {
   @override
   Future<Map<String, ({int total, int confirmed})>>
   registrationCounts() async => {};
+
+  // --- 공지 ---------------------------------------------------------------
+
+  final ns = <Notice>[];
+
+  /// 공지 id → 돌린 기록 (최근 것이 앞).
+  final sends = <String, List<NoticeSend>>{};
+
+  /// 값이 있으면 알림톡 호출이 그 코드로 실패한다. null 이면 성공.
+  String? alimtalkError = 'NOT_CONFIGURED';
+  Map<String, dynamic>? lastAlimtalk;
+
+  @override
+  Future<List<Notice>> notices(String gatheringId) async => sortedNotices([
+    // 서버 RLS 와 같은 규칙 — 로그인 안 한 사람에겐 공개한 공지만 간다.
+    for (final n in ns)
+      if (n.gatheringId == gatheringId && (admin || n.published)) n.copy(),
+  ]);
+
+  @override
+  Future<Notice> saveNotice(Notice n) async {
+    final s = n.copy();
+    if (s.id.isEmpty) s.id = 'n${ns.length + 1}';
+    ns
+      ..removeWhere((x) => x.id == s.id)
+      ..add(s);
+    return s.copy();
+  }
+
+  @override
+  Future<void> deleteNotice(String id) async {
+    ns.removeWhere((n) => n.id == id);
+    sends.remove(id);
+  }
+
+  @override
+  Future<List<NoticeSend>> noticeSends(String noticeId) async => [
+    ...?sends[noticeId],
+  ];
+
+  @override
+  Future<NoticeSend> logNoticeSend(
+    String noticeId,
+    NoticeChannel channel,
+    NoticeTarget target,
+    int count,
+  ) async {
+    final s = NoticeSend(
+      channel: channel,
+      target: target,
+      count: count,
+      sentAt: DateTime(2026, 9, 15, 14, 3),
+    );
+    (sends[noticeId] ??= []).insert(0, s);
+    return s;
+  }
+
+  @override
+  Future<int> sendNoticeKakao({
+    required Notice notice,
+    required NoticeTarget target,
+    required List<String> phones,
+    required String message,
+  }) async {
+    lastAlimtalk = {'phones': phones, 'message': message};
+    if (alimtalkError != null) throw RemoteError(alimtalkError!);
+    await logNoticeSend(notice.id, NoticeChannel.alimtalk, target, phones.length);
+    return phones.length;
+  }
 
   @override
   Future<List<Registration>> registrations(String gatheringId) async => [
@@ -281,6 +352,62 @@ void main() {
       expect(find.text('성인'), findsOneWidget);
       expect(find.text('중고등'), findsNothing);
       expect(find.textContaining('출생연도로 계산'), findsNothing);
+    });
+
+    testWidgets('공지: 공개한 것만, 고정이 먼저', (tester) async {
+      fake.admin = false; // 신청자는 로그인 안 한 사람
+      fake.ns.addAll([
+        Notice(
+          id: 'n1',
+          gatheringId: 'g1',
+          title: '식사 안내',
+          body: '첫 끼는 저녁입니다.',
+          createdAt: DateTime(2026, 9, 12),
+        ),
+        Notice(
+          id: 'n2',
+          gatheringId: 'g1',
+          title: '준비물 안내',
+          body: '세면도구를 챙겨 오세요.',
+          pinned: true,
+          createdAt: DateTime(2026, 9, 10),
+        ),
+        Notice(
+          id: 'n3',
+          gatheringId: 'g1',
+          title: '아직 안 띄운 공지',
+          body: '나중에',
+          published: false,
+          createdAt: DateTime(2026, 9, 14),
+        ),
+      ]);
+      setView(tester, const Size(400, 1800));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('준비물 안내'), findsOneWidget);
+      expect(find.text('세면도구를 챙겨 오세요.'), findsOneWidget);
+      expect(find.text('아직 안 띄운 공지'), findsNothing);
+      // 고정 공지가 최신 공지보다 위에 온다.
+      final pinned = tester.getTopLeft(find.text('준비물 안내')).dy;
+      expect(pinned, lessThan(tester.getTopLeft(find.text('식사 안내')).dy));
+    });
+
+    testWidgets('공지가 없으면 공지 카드가 아예 안 나온다', (tester) async {
+      setView(tester, const Size(400, 1400));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(find.text('공지'), findsNothing);
+    });
+
+    testWidgets('공지를 못 읽어도 집회 페이지는 뜬다', (tester) async {
+      remote = _NoNoticeRemote(fake);
+      setView(tester, const Size(400, 1400));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('신촌하나교회 가족수양회'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '신청하기'), findsOneWidget);
     });
 
     testWidgets('신청을 받지 않으면 [신청하기]가 꺼진다', (tester) async {
@@ -905,11 +1032,205 @@ void main() {
       setView(tester, const Size(1400, 900));
       await pumpPage(tester, const Shell());
       expect(tester.takeException(), isNull);
-      for (final t in ['집회 설정', '신청·입금', '방 관리', '참석자', '방배정', '자동배정', '현황']) {
+      for (final t in [
+        '집회 설정',
+        '신청·입금',
+        '방 관리',
+        '참석자',
+        '방배정',
+        '자동배정',
+        '현황',
+        '공지',
+      ]) {
         expect(find.text(t), findsWidgets, reason: t);
       }
     });
   });
+
+  group('공지 화면', () {
+    setUp(() {
+      current.value = sample();
+      fake.regs.addAll([
+        pendingReg(),
+        Registration(
+          id: 'r2',
+          gatheringId: 'g1',
+          phone: '01099998888',
+          people: [Person(name: '김확정', gender: 'F', birthYear: 1990)],
+          status: RegStatus.confirmed,
+          createdAt: DateTime(2026, 9, 11),
+        ),
+        Registration(
+          id: 'r3',
+          gatheringId: 'g1',
+          phone: '01077776666',
+          people: [Person(name: '박취소', gender: 'M', birthYear: 1990)],
+          status: RegStatus.cancelled,
+          createdAt: DateTime(2026, 9, 12),
+        ),
+      ]);
+    });
+
+    Future<void> open(WidgetTester tester) async {
+      setView(tester, const Size(1500, 1800));
+      await pumpPage(tester, const Scaffold(body: NoticesScreen()));
+    }
+
+    /// 테스트에는 진짜 클립보드가 없다. 응답을 주는 사람이 없으면 [Clipboard.setData] 가
+    /// 끝나지 않아 그 뒤 코드(안내·기록)가 영영 안 돈다.
+    String? copied;
+    setUp(() {
+      copied = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'Clipboard.setData') {
+              copied = '${(call.arguments as Map)['text']}';
+            }
+            if (call.method == 'Clipboard.getData') return {'text': copied};
+            return null;
+          });
+    });
+    tearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    testWidgets('공지가 없으면 안내와 [첫 공지 쓰기]', (tester) async {
+      await open(tester);
+      expect(tester.takeException(), isNull);
+      expect(find.text('아직 공지가 없습니다.'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '첫 공지 쓰기'), findsOneWidget);
+    });
+
+    testWidgets('새 공지를 쓰면 저장되고 미리보기에 집회 이름·링크가 붙는다', (tester) async {
+      await open(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '새 공지'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '제목 *'),
+        '준비물 안내',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, '내용'),
+        '세면도구를 챙겨 오세요.',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('[신촌하나교회 가족수양회] 준비물 안내'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('?g=g1'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(fake.ns.single.title, '준비물 안내');
+      expect(fake.ns.single.body, '세면도구를 챙겨 오세요.');
+      expect(fake.ns.single.published, isTrue);
+    });
+
+    testWidgets('제목이 비면 저장하지 않고 안내한다', (tester) async {
+      await open(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '새 공지'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(find.text('공지 제목을 입력하세요.'), findsOneWidget);
+      expect(fake.ns, isEmpty);
+    });
+
+    testWidgets('대상 칩은 취소를 빼고 세고, 메시지를 복사하면 기록이 남는다', (tester) async {
+      fake.ns.add(
+        Notice(
+          id: 'n1',
+          gatheringId: 'g1',
+          title: '준비물 안내',
+          body: '세면도구',
+          createdAt: DateTime(2026, 9, 12),
+        ),
+      );
+      await open(tester);
+      await tester.tap(find.text('준비물 안내'));
+      await tester.pumpAndSettle();
+
+      // 신청 3건 중 취소 1건은 어느 대상에도 안 들어간다.
+      expect(find.widgetWithText(ChoiceChip, '전체 2'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '입금확인 1'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '입금대기 1'), findsOneWidget);
+      expect(find.textContaining('받는 사람 2명'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, '메시지 복사'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('카카오톡 단톡방에 붙여넣으세요'), findsOneWidget);
+      expect(fake.sends['n1']!.single.channel, NoticeChannel.copy);
+      expect(fake.sends['n1']!.single.count, 2);
+      expect(find.textContaining('메시지 복사 · 전체 2명'), findsOneWidget);
+    });
+
+    testWidgets('번호 복사는 대상자 번호만, 알림톡은 설정 전이면 안내로 끝난다', (tester) async {
+      fake.ns.add(
+        Notice(
+          id: 'n1',
+          gatheringId: 'g1',
+          title: '준비물 안내',
+          createdAt: DateTime(2026, 9, 12),
+        ),
+      );
+      await open(tester);
+      await tester.tap(find.text('준비물 안내'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '입금확인 1'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '번호 복사'));
+      await tester.pumpAndSettle();
+      expect(find.text('휴대폰 번호 1개를 복사했습니다.'), findsOneWidget);
+      expect(copied, '010-9999-8888'); // 사람이 보는 목록은 하이픈을 넣어 준다
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '알림톡으로 보내기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '보내기'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // 서버·대행사로는 숫자만 간다.
+      expect(fake.lastAlimtalk!['phones'], ['01099998888']);
+      expect(find.textContaining('알림톡이 아직 설정되지 않았습니다'), findsOneWidget);
+    });
+
+    testWidgets('비공개 공지는 목록에 표시가 붙는다', (tester) async {
+      fake.ns.add(
+        Notice(
+          id: 'n1',
+          gatheringId: 'g1',
+          title: '나중에 띄울 공지',
+          published: false,
+          createdAt: DateTime(2026, 9, 12),
+        ),
+      );
+      await open(tester);
+      expect(find.text('비공개'), findsOneWidget);
+    });
+
+    testWidgets('로그인하지 않았으면 로그인부터', (tester) async {
+      fake.admin = false;
+      await open(tester);
+      expect(find.text('공지 관리는 운영자 로그인이 필요합니다.'), findsOneWidget);
+    });
+  });
+}
+
+/// 공지 읽기만 실패하는 가짜 (서버 문제로 공지만 못 읽는 상황).
+class _NoNoticeRemote extends FakeRemote {
+  _NoNoticeRemote(this.base);
+  final FakeRemote base;
+
+  @override
+  Future<Gathering?> gathering(String id) => base.gathering(id);
+
+  @override
+  Future<List<Notice>> notices(String gatheringId) async =>
+      throw const RemoteError('서버에 연결하지 못했습니다.');
 }
 
 /// 수정(update_registration)만 가로채는 가짜.

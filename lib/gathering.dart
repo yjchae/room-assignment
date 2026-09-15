@@ -4,6 +4,8 @@ library;
 
 import 'dart:math' as math;
 
+import 'config.dart';
+
 enum AgeGroup {
   adult('성인'),
   youth('중고등'),
@@ -435,6 +437,169 @@ class Registration {
     createdAt: (DateTime.tryParse('${r['created_at']}') ?? DateTime.now())
         .toLocal(),
   );
+}
+
+// ---------------------------------------------------------------------------
+// 공지 (기획: PLAN_NOTICE.md)
+// ---------------------------------------------------------------------------
+
+/// 공지 1건 (서버 `notices` 한 행). 집회 설정의 안내 문구([Gathering.notice])와 다르다 —
+/// 그건 집회 소개에 늘 붙는 한 덩어리고, 이건 시간순으로 쌓이면서 보낸 기록이 남는 것.
+class Notice {
+  Notice({
+    this.id = '',
+    required this.gatheringId,
+    this.title = '',
+    this.body = '',
+    this.pinned = false,
+    this.published = true,
+    DateTime? createdAt,
+    this.updatedAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  /// '' = 아직 서버에 저장 안 됨.
+  String id;
+  String gatheringId, title, body;
+
+  /// 신청 웹 목록 맨 위에 고정.
+  bool pinned;
+
+  /// 끄면 신청 웹에 안 보인다 (미리 써 두고 때가 되면 켠다).
+  bool published;
+  DateTime createdAt;
+  DateTime? updatedAt;
+
+  Notice copy() => Notice(
+    id: id,
+    gatheringId: gatheringId,
+    title: title,
+    body: body,
+    pinned: pinned,
+    published: published,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
+
+  /// 서버에 쓰는 칸들. id·시각은 넣지 않는다 (서버가 만든다).
+  Map<String, dynamic> toRow() => {
+    'gathering_id': gatheringId,
+    'title': title.trim(),
+    'body': body.trim(),
+    'pinned': pinned,
+    'published': published,
+  };
+
+  factory Notice.fromRow(Map r) => Notice(
+    id: '${r['id'] ?? ''}',
+    gatheringId: '${r['gathering_id'] ?? ''}',
+    title: '${r['title'] ?? ''}',
+    body: '${r['body'] ?? ''}',
+    pinned: r['pinned'] == true,
+    published: r['published'] != false,
+    createdAt: (DateTime.tryParse('${r['created_at']}') ?? DateTime.now())
+        .toLocal(),
+    updatedAt: DateTime.tryParse('${r['updated_at']}')?.toLocal(),
+  );
+}
+
+/// 고정 공지가 먼저, 그다음 최신순. 운영자 화면과 신청 웹이 같은 순서를 쓴다.
+List<Notice> sortedNotices(Iterable<Notice> ns) =>
+    [...ns]..sort((a, b) {
+      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
+
+/// 공지를 받을 사람. 취소한 신청은 어디에도 들어가지 않는다.
+enum NoticeTarget {
+  all(null),
+  confirmed(RegStatus.confirmed),
+  pending(RegStatus.pending);
+
+  const NoticeTarget(this.status);
+
+  /// null = 취소를 뺀 전체.
+  final RegStatus? status;
+
+  /// 무료 집회면 '확정' / '대기' 로 부른다 ([RegStatus.labelFor] 와 같은 규칙).
+  String labelFor({required bool free}) =>
+      status?.labelFor(free: free) ?? '전체';
+
+  bool matches(Registration r) =>
+      status == null ? r.status != RegStatus.cancelled : r.status == status;
+
+  static NoticeTarget parse(Object? s) => values.asNameMap()['$s'] ?? all;
+}
+
+/// [target] 에 해당하는 신청.
+List<Registration> noticeTargets(
+  Iterable<Registration> regs,
+  NoticeTarget target,
+) => [
+  for (final r in regs)
+    if (target.matches(r)) r,
+];
+
+/// 대상자의 휴대폰 번호 (숫자만, 같은 번호는 한 번만, 신청 순서대로).
+/// 서버·대행사로 그대로 보낼 수 있게 숫자로 둔다 — 사람에게 보일 때만 [fmtPhone] 을 씌운다.
+List<String> noticePhones(
+  Iterable<Registration> regs,
+  NoticeTarget target,
+) => {
+  for (final r in noticeTargets(regs, target)) digitsOnly(r.phone),
+}.toList();
+
+/// 카카오톡에 붙여넣을 공지 메시지. 신청 웹·관리자 화면이 모두 이것 하나를 부른다 —
+/// 회비 계산([quote])과 같은 원칙이다. 만드는 곳이 둘이면 내용이 어긋난다.
+///
+/// 카카오톡은 꾸밈 없는 글자만 받는다. 마크다운·표를 넣으면 붙여넣을 때 깨진다.
+String noticeMessage(Gathering g, Notice n) {
+  final body = n.body.trim();
+  return [
+    '[${g.name}] ${n.title.trim()}',
+    if (body.isNotEmpty) ...['', body],
+    '',
+    '▶ 신청 · 조회: ${applyLink(g.id)}',
+  ].join('\n');
+}
+
+/// 공지를 어떤 방법으로 돌렸는지 (서버 `notice_sends.channel`).
+/// '복사'도 기록한다 — 실제로 보내는 건 사람 손이지만 "이 공지 돌렸나?"를 제일 자주 묻는다.
+/// 그래서 화면에도 '보냄'이 아니라 이 이름 그대로 적는다.
+enum NoticeChannel {
+  copy('메시지 복사'),
+  phones('번호 복사'),
+  alimtalk('알림톡');
+
+  const NoticeChannel(this.label);
+  final String label;
+
+  static NoticeChannel parse(Object? s) => values.asNameMap()['$s'] ?? copy;
+}
+
+/// 공지를 돌린 기록 한 건 (서버 `notice_sends` 한 행).
+class NoticeSend {
+  NoticeSend({
+    required this.channel,
+    required this.target,
+    required this.count,
+    required this.sentAt,
+  });
+
+  final NoticeChannel channel;
+  final NoticeTarget target;
+  final int count;
+  final DateTime sentAt;
+
+  factory NoticeSend.fromRow(Map r) => NoticeSend(
+    channel: NoticeChannel.parse(r['channel']),
+    target: NoticeTarget.parse(r['target']),
+    count: _int(r['count']),
+    sentAt: (DateTime.tryParse('${r['sent_at']}') ?? DateTime.now()).toLocal(),
+  );
+
+  /// "메시지 복사 · 입금확인 32명"
+  String summary({required bool free}) =>
+      '${channel.label} · ${target.labelFor(free: free)} $count명';
 }
 
 // ---------------------------------------------------------------------------

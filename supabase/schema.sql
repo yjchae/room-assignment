@@ -9,6 +9,8 @@
 --   registrations   신청자는 테이블에 직접 못 닿는다 — 아래 submit/lookup/update/cancel 함수로만.
 --                   운영자는 전부.
 --   room_plans      운영자만. 집회별 방배정(방·참석자·배정) 문서. 저장은 save_room_plan — 버전 검사.
+--   notices         공개한 공지는 누구나 읽기 / 운영자만 쓰기. 신청 웹의 공지 목록.
+--   notice_sends    운영자만. 공지를 언제 누구에게 돌렸는지 기록 (PLAN_NOTICE.md §2).
 --   운영자 = auth.users 에 있고 public.admins 에도 있는 사람.
 --   가입 신청 = auth.users 에만 있는 사람. 누구나 가입(대시보드에서 가입 켜 둠)할 수 있지만
 --   기존 운영자가 approve_admin 으로 승인하기 전엔 아무 데이터에도 못 닿는다.
@@ -89,6 +91,33 @@ create table if not exists public.room_plans (
   updated_at timestamptz not null default now()
 );
 
+-- 공지. 집회마다 여러 건 쌓인다. 기획은 PLAN_NOTICE.md.
+-- gatherings.notice(안내 문구)와 다르다 — 그건 집회 소개에 늘 붙는 한 덩어리고, 이건 시간순으로 쌓이는 것.
+create table if not exists public.notices (
+  id uuid primary key default gen_random_uuid(),
+  gathering_id uuid not null references public.gatherings on delete cascade,
+  title text not null check (length(title) between 1 and 100),
+  body text not null check (length(body) <= 5000),
+  pinned boolean not null default false,     -- 신청 웹 목록 맨 위에 고정
+  published boolean not null default true,   -- 끄면 신청 웹에 안 보인다 (미리 써 두기)
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists notices_gathering on public.notices (gathering_id, pinned desc, created_at desc);
+
+-- 공지를 언제 누구에게 돌렸는지. channel 은 '복사'까지 기록한다 — 실제 발송은 사람 손이지만
+-- "이 공지 돌렸나?"가 운영 중 제일 자주 묻는 것이다. 화면도 '보냄'이 아니라 채널 이름 그대로 적는다.
+create table if not exists public.notice_sends (
+  id uuid primary key default gen_random_uuid(),
+  notice_id uuid not null references public.notices on delete cascade,
+  channel text not null check (channel in ('copy', 'phones', 'alimtalk')),
+  target text not null check (target in ('all', 'confirmed', 'pending')),
+  count int not null default 0 check (count >= 0),
+  sent_at timestamptz not null default now(),
+  sent_by uuid references auth.users on delete set null
+);
+create index if not exists notice_sends_notice on public.notice_sends (notice_id, sent_at desc);
+
 create or replace function public._touch() returns trigger
 language plpgsql set search_path = '' as $$
 begin
@@ -98,6 +127,10 @@ end $$;
 
 drop trigger if exists touch on public.registrations;
 create trigger touch before update on public.registrations
+  for each row execute function public._touch();
+
+drop trigger if exists touch on public.notices;
+create trigger touch before update on public.notices
   for each row execute function public._touch();
 
 -- ---------------------------------------------------------------------------
@@ -114,6 +147,8 @@ alter table public.gatherings enable row level security;
 alter table public.registrations enable row level security;
 alter table public.lookup_failures enable row level security;  -- 정책 없음
 alter table public.room_plans enable row level security;
+alter table public.notices enable row level security;
+alter table public.notice_sends enable row level security;
 
 drop policy if exists "누구나 읽기" on public.gatherings;
 create policy "누구나 읽기" on public.gatherings
@@ -131,14 +166,29 @@ drop policy if exists "운영자만" on public.room_plans;
 create policy "운영자만" on public.room_plans
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
+drop policy if exists "공개된 공지는 누구나 읽기" on public.notices;
+create policy "공개된 공지는 누구나 읽기" on public.notices
+  for select using (published or public.is_admin());
+
+drop policy if exists "운영자 쓰기" on public.notices;
+create policy "운영자 쓰기" on public.notices
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "운영자만" on public.notice_sends;
+create policy "운영자만" on public.notice_sends
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
 -- 테이블 권한을 명시한다. Supabase 의 "새 테이블 자동 공개" 설정이 켜져 있든 꺼져 있든 같게 동작하도록.
 revoke all on public.admins, public.gatherings, public.registrations, public.lookup_failures,
-  public.room_plans
+  public.room_plans, public.notices, public.notice_sends
   from anon, authenticated;
 grant select on public.gatherings to anon, authenticated;
 grant insert, update, delete on public.gatherings to authenticated;
 grant select, insert, update, delete on public.registrations to authenticated;  -- RLS 가 운영자로 제한
 grant select, insert, update on public.room_plans to authenticated;  -- RLS 가 운영자로 제한. 저장은 save_room_plan 으로
+grant select on public.notices to anon, authenticated;  -- RLS 가 공개된 공지만 보여준다
+grant insert, update, delete on public.notices to authenticated;  -- RLS 가 운영자로 제한
+grant select, insert, delete on public.notice_sends to authenticated;  -- RLS 가 운영자로 제한
 
 -- ---------------------------------------------------------------------------
 -- 내부 함수 (API 로 못 부른다)

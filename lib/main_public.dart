@@ -54,23 +54,34 @@ class GatheringPage extends StatefulWidget {
   State<GatheringPage> createState() => _GatheringPageState();
 }
 
-class _GatheringPageState extends State<GatheringPage> {
-  late Future<Gathering> future = _load();
+/// 집회 페이지에 필요한 것. 공지까지 같이 받아 와야 로딩이 두 번 깜빡이지 않는다.
+typedef _Page = ({Gathering gathering, List<Notice> notices});
 
-  Future<Gathering> _load() async {
+class _GatheringPageState extends State<GatheringPage> {
+  late Future<_Page> future = _load();
+
+  Future<_Page> _load() async {
     final id = widget.id?.trim() ?? '';
     if (id.isEmpty) {
       throw const RemoteError('잘못된 링크입니다. 받은 링크를 다시 확인하세요.');
     }
-    final g = await remote.gathering(id);
+    // 둘을 같이 띄워 두고 기다린다 (한 줄씩 기다리면 휴대폰에서 로딩이 두 배로 길다).
+    // 공지는 없어도 신청은 되어야 하니 공지 쪽 실패는 여기서 삼킨다 — 그래서 아래 await 는 안전하다.
+    final gathering = remote.gathering(id);
+    final notices = remote.notices(id).catchError((Object e) {
+      debugPrint('공지를 못 읽었습니다: $e');
+      return <Notice>[];
+    });
+    final g = await gathering;
     if (g == null) {
       throw const RemoteError('집회를 찾지 못했습니다. 받은 링크를 다시 확인하세요.');
     }
-    return g;
+    // 공개된 공지만 서버가 내려준다 (RLS). 여기서 또 거르지 않는다.
+    return (gathering: g, notices: sortedNotices(await notices));
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<Gathering>(
+  Widget build(BuildContext context) => FutureBuilder<_Page>(
     future: future,
     builder: (context, snap) {
       if (snap.hasError) {
@@ -88,14 +99,15 @@ class _GatheringPageState extends State<GatheringPage> {
       if (!snap.hasData) {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
-      return _GatheringView(snap.data!);
+      return _GatheringView(snap.data!.gathering, snap.data!.notices);
     },
   );
 }
 
 class _GatheringView extends StatelessWidget {
-  const _GatheringView(this.g);
+  const _GatheringView(this.g, this.notices);
   final Gathering g;
+  final List<Notice> notices;
 
   @override
   Widget build(BuildContext context) {
@@ -187,6 +199,8 @@ class _GatheringView extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (notices.isNotEmpty)
+                  _Section(title: '공지', children: [_NoticeList(notices)]),
                 if (!g.fee.isFree)
                   _Section(title: '회비', children: [_FeeTable(g)]),
                 if (!g.fee.isFree && !g.bank.isEmpty)
@@ -1294,6 +1308,120 @@ class _LookupPageState extends State<LookupPage> {
         child: const Text('다른 번호로 조회'),
       ),
     ];
+  }
+}
+
+/// 집회 페이지의 공지 목록. 고정 공지가 먼저, 그다음 최신순([sortedNotices]).
+/// 처음엔 [_head]건만 펼쳐 두고, 긴 글은 접어서 누르면 펼친다 — 휴대폰에서 스크롤이 길어지지 않게.
+class _NoticeList extends StatefulWidget {
+  const _NoticeList(this.notices);
+  final List<Notice> notices;
+
+  @override
+  State<_NoticeList> createState() => _NoticeListState();
+}
+
+class _NoticeListState extends State<_NoticeList> {
+  static const _head = 3;
+
+  /// 글이 이보다 길면 접는다.
+  static const _fold = 160;
+
+  bool showAll = false;
+  final opened = <String>{};
+
+  @override
+  Widget build(BuildContext context) {
+    final all = widget.notices;
+    final shown = showAll ? all : all.take(_head).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (i, n) in shown.indexed) ...[
+          if (i > 0) const Divider(height: 24),
+          _notice(n),
+        ],
+        if (!showAll && all.length > _head)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: TextButton(
+              onPressed: () => setState(() => showAll = true),
+              child: Text('공지 ${all.length - _head}개 더 보기'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _notice(Notice n) {
+    final body = n.body.trim();
+    final long = body.length > _fold;
+    final open = opened.contains(n.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (n.pinned) ...[
+              const Padding(
+                padding: EdgeInsets.only(top: 3),
+                child: Icon(
+                  Icons.push_pin_outlined,
+                  size: 15,
+                  color: AppColors.brand,
+                ),
+              ),
+              const SizedBox(width: 5),
+            ],
+            Expanded(
+              child: Text(
+                n.title,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  height: 1.4,
+                ),
+              ),
+            ),
+            Text(
+              ymd(n.createdAt),
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textFaint,
+                fontFeatures: _tabular,
+              ),
+            ),
+          ],
+        ),
+        if (body.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            body,
+            maxLines: long && !open ? 3 : null,
+            overflow: long && !open ? TextOverflow.ellipsis : null,
+            style: const TextStyle(height: 1.6),
+          ),
+          if (long)
+            GestureDetector(
+              onTap: () => setState(
+                () => open ? opened.remove(n.id) : opened.add(n.id),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  open ? '접기' : '더 보기',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.brand,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
   }
 }
 

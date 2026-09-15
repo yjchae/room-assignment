@@ -245,6 +245,91 @@ class Remote {
     );
   }
 
+  // --- 공지 (기획: PLAN_NOTICE.md) ---------------------------------------------
+
+  /// 집회의 공지. 고정 공지가 먼저, 그다음 최신순.
+  /// 신청 웹(로그인 없음)에는 **공개한 공지만** 온다 — RLS 가 거르므로 앱에서 또 거르지 않는다.
+  Future<List<Notice>> notices(String gatheringId) async {
+    final rows = await _db
+        .from('notices')
+        .select()
+        .eq('gathering_id', gatheringId)
+        .order('pinned', ascending: false)
+        .order('created_at', ascending: false);
+    return [for (final r in rows) Notice.fromRow(r)];
+  }
+
+  /// 새 공지(id 가 '')면 만들고, 아니면 고친다. 서버에 저장된 결과를 돌려준다.
+  Future<Notice> saveNotice(Notice n) async {
+    final t = _db.from('notices');
+    final r = n.id.isEmpty
+        ? await t.insert(n.toRow()).select().single()
+        : await t.update(n.toRow()).eq('id', n.id).select().single();
+    return Notice.fromRow(r);
+  }
+
+  /// 공지 삭제. 보낸 기록도 같이 지워진다(DB cascade).
+  Future<void> deleteNotice(String id) async {
+    final rows = await _db.from('notices').delete().eq('id', id).select();
+    // 운영자가 아니면 RLS 가 에러 없이 0건만 지운다.
+    if (rows.isEmpty) throw const RemoteError('삭제하지 못했습니다. 운영자로 다시 로그인해 보세요.');
+  }
+
+  /// 이 공지를 돌린 기록 (최근 것부터).
+  Future<List<NoticeSend>> noticeSends(String noticeId) async {
+    final rows = await _db
+        .from('notice_sends')
+        .select()
+        .eq('notice_id', noticeId)
+        .order('sent_at', ascending: false)
+        .limit(20);
+    return [for (final r in rows) NoticeSend.fromRow(r)];
+  }
+
+  /// 돌린 기록을 남긴다. 복사도 기록한다 (PLAN_NOTICE.md §2).
+  Future<NoticeSend> logNoticeSend(
+    String noticeId,
+    NoticeChannel channel,
+    NoticeTarget target,
+    int count,
+  ) async {
+    final r = await _db
+        .from('notice_sends')
+        .insert({
+          'notice_id': noticeId,
+          'channel': channel.name,
+          'target': target.name,
+          'count': count,
+          'sent_by': Supabase.instance.client.auth.currentUser?.id,
+        })
+        .select()
+        .single();
+    return NoticeSend.fromRow(r);
+  }
+
+  /// 알림톡으로 개별 발송 (Edge Function `send-notice-kakao`). 보낸 건수를 돌려준다.
+  /// 대행사 설정이 없으면 `NOT_CONFIGURED` — 앱은 [errorText] 로 "복사해서 보내세요"를 안내한다.
+  /// 왜 서버를 거치는가는 PLAN_NOTICE.md §1·§5.
+  Future<int> sendNoticeKakao({
+    required Notice notice,
+    required NoticeTarget target,
+    required List<String> phones,
+    required String message,
+  }) async {
+    final res = await _db.functions.invoke(
+      'send-notice-kakao',
+      body: {
+        'notice_id': notice.id,
+        'target': target.name,
+        'phones': phones,
+        'message': message,
+      },
+    );
+    final d = res.data;
+    final sent = d is Map ? d['sent'] : null;
+    return sent is num ? sent.toInt() : phones.length;
+  }
+
   // --- 방배정 (운영자) --------------------------------------------------------
 
   /// 집회의 방배정 문서와 그 버전. 아직 저장한 적 없으면 null.
@@ -369,6 +454,8 @@ class RemoteError implements Exception {
 /// 서버 에러의 원문 메시지.
 String _raw(Object e) => switch (e) {
   PostgrestException(:final message) => message,
+  // Edge Function 이 던진 것 — 본문(details)에 우리 에러 코드가 들어 있다.
+  FunctionException(:final details) => '$details',
   AuthException(:final message) => message,
   RemoteError(:final message) => message,
   _ => '$e',
@@ -393,6 +480,9 @@ String errorText(Object e) {
         'PIN을 여러 번 틀려 30분간 조회가 잠겼습니다. 잠시 후 다시 시도하거나 담당자에게 문의하세요.',
     'NOT_EDITABLE': '입금이 확인됐거나 취소된 신청은 바꿀 수 없습니다. 담당자에게 문의하세요.',
     'FORBIDDEN': '운영자만 할 수 있습니다.',
+    // 설정 방법은 PLAN_NOTICE.md §5. 화면에는 지금 할 수 있는 일만 적는다.
+    'NOT_CONFIGURED': '알림톡이 아직 설정되지 않았습니다. [메시지 복사]로 단톡방에 보내세요.',
+    'NO_TARGET': '보낼 대상이 없습니다. 대상을 다시 고르세요.',
     'NOT_FOUND': '신청을 찾지 못했습니다.',
     'registrations_active_phone': '같은 번호로 진행 중인 다른 신청이 있어 되돌릴 수 없습니다.',
     'invalid input syntax for type uuid': '잘못된 링크입니다. 받은 링크를 다시 확인하세요.',

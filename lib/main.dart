@@ -11,6 +11,7 @@ import 'screens/attendees.dart';
 import 'screens/auto_assign_screen.dart';
 import 'screens/gathering_settings.dart';
 import 'screens/gatherings.dart';
+import 'screens/notices.dart';
 import 'screens/registrations.dart';
 import 'screens/rooms.dart';
 import 'screens/status.dart';
@@ -27,7 +28,8 @@ final current = ValueNotifier<Gathering?>(null);
 final tabIndex = ValueNotifier<int>(0);
 
 /// 탭 번호. 다른 화면에서 탭을 넘길 때 숫자 대신 이걸 쓴다.
-const settingsTab = 0, registrationsTab = 1, assignTab = 4;
+/// 새 화면은 뒤에 붙인다 — 번호를 끼워 넣으면 여기를 쓰는 곳이 전부 어긋난다.
+const settingsTab = 0, registrationsTab = 1, assignTab = 4, noticesTab = 7;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,6 +69,7 @@ class Shell extends StatelessWidget {
     3 => AttendeesScreen(),
     assignTab => AssignScreen(),
     5 => AutoAssignScreen(),
+    noticesTab => NoticesScreen(),
     _ => StatusScreen(),
   };
 
@@ -78,6 +81,7 @@ class Shell extends StatelessWidget {
     (Icons.assignment_ind_outlined, '방배정'),
     (Icons.shuffle, '자동배정'),
     (Icons.space_dashboard_outlined, '현황'),
+    (Icons.campaign_outlined, '공지'),
   ];
 
   @override
@@ -144,6 +148,7 @@ class _SideNav extends StatelessWidget {
   static const _groups = [
     ('준비', [0, 1, 2, 3]),
     ('배정', [4, 5, 6]),
+    ('알림', [noticesTab]),
   ];
 
   @override
