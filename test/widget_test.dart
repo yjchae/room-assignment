@@ -242,12 +242,114 @@ void main() {
     await tester.pumpAndSettle();
     // 안 받는 밤을 짚어 주고 묻는다
     expect(find.text('신청하지 않은 날입니다'), findsOneWidget);
-    expect(find.textContaining('신청하지 않은 밤 1박'), findsOneWidget);
+    expect(find.textContaining('가정 1곳에 신청하지 않은 밤 1박'), findsOneWidget);
+    expect(find.text('김호스트 · 안 받는 날'), findsOneWidget);
     expect(find.text('01-02(금)'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(TextButton, '취소'));
     await tester.pumpAndSettle();
     expect(store.event.attendees.single.roomId, isNull); // 취소하면 그대로
+  });
+
+  testWidgets('홈스테이 배정: 가정을 여러 곳 골라 채워도 신청하지 않은 날은 경고한다', (
+    tester,
+  ) async {
+    current.value = Gathering(
+      id: 'h1',
+      name: '홈스테이',
+      kind: GatheringKind.homestay,
+      start: DateTime(2026, 1, 1),
+      end: DateTime(2026, 1, 4),
+    );
+    addTearDown(() => current.value = null);
+    store.event.rooms
+      ..clear()
+      ..addAll([
+        // 1/1 밤만 받는 집 · 1/3 밤만 받는 집. 둘 다 3박 아이는 못 받는다.
+        Room(
+          id: 'h1',
+          roomNo: '김호스트',
+          capacity: 1,
+          registrationId: 'r1',
+          hostFrom: DateTime(2026, 1, 1),
+          hostTo: DateTime(2026, 1, 2),
+        ),
+        Room(
+          id: 'h2',
+          roomNo: '이호스트',
+          capacity: 1,
+          registrationId: 'r2',
+          hostFrom: DateTime(2026, 1, 3),
+          hostTo: DateTime(2026, 1, 4),
+        ),
+      ]);
+    store.event.attendees.addAll([
+      for (var i = 0; i < 2; i++)
+        Attendee(
+          id: 'k$i',
+          name: '아이$i',
+          gender: 'M',
+          age: 12,
+          checkIn: DateTime(2026, 1, 1),
+          checkOut: DateTime(2026, 1, 4), // 3박
+        ),
+    ]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+
+    // 가정 두 곳을 고르면 "며칠만" 창을 건너뛰고 한 번에 채우는 길로 간다.
+    await tester.tap(find.text('아이0'));
+    await tester.tap(find.text('아이1'));
+    await tester.tap(tile('김호스트'));
+    await tester.tap(tile('이호스트'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('개 방 배정'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '배정'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('신청하지 않은 날입니다'), findsOneWidget);
+    expect(find.textContaining('가정 2곳에'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '취소'));
+    await tester.pumpAndSettle();
+    expect(store.event.attendees.every((a) => a.roomId == null), isTrue);
+  });
+
+  testWidgets('홈스테이 배정: 신청서에서 기간을 못 가져온 가정은 그렇게 말해 준다', (
+    tester,
+  ) async {
+    current.value = Gathering(
+      id: 'h1',
+      name: '홈스테이',
+      kind: GatheringKind.homestay,
+      start: DateTime(2026, 1, 1),
+      end: DateTime(2026, 1, 4),
+    );
+    addTearDown(() => current.value = null);
+    store.event.rooms
+      ..clear()
+      // 이 칸이 생기기 전에 만든 가정 — hostFrom 이 비어 있다.
+      ..add(Room(id: 'h', roomNo: '김호스트', capacity: 4, registrationId: 'r1'));
+    store.event.attendees.add(
+      Attendee(
+        id: 'k1',
+        name: '아이하나',
+        gender: 'M',
+        age: 12,
+        checkIn: DateTime(2026, 1, 1),
+        checkOut: DateTime(2026, 1, 4),
+      ),
+    );
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('아이하나'));
+    await tester.tap(tile('김호스트'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('개 방 배정'));
+    await tester.pumpAndSettle();
+    // 집회 전체를 받는 것처럼 보이면 안 된다
+    expect(find.textContaining('신청에서 가져오기'), findsOneWidget);
+    expect(find.text('01-01(목) ~ 01-04(일)'), findsNothing);
   });
 
   testWidgets('홈스테이 배정: [전체 기간 배정]은 아이 일정을 그대로 넣는다', (tester) async {

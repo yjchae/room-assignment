@@ -24,6 +24,10 @@ final _shiftKeys = {
 /// 배정 화면에서 미리 선택해둘 참석자 (현황 화면에서 넘어올 때 사용).
 final pendingSelection = <String>{};
 
+/// 신청서에서 "받는 날"을 못 가져온 가정. 집회 전체를 받는 것처럼 보이면 안 되므로
+/// 기간 대신 이 문구를 보여주고 무엇을 눌러야 채워지는지 알려준다.
+const _noWindow = '신청서에서 안 가져옴 — [가정 관리]의 [신청에서 가져오기]를 누르세요';
+
 class AssignScreen extends StatefulWidget {
   const AssignScreen({super.key});
 
@@ -846,6 +850,12 @@ class _AssignScreenState extends State<AssignScreen> {
             ) ==
             true;
     if (!ok) return;
+    // 홈스테이 가정이 섞여 있으면 신청하지 않은 밤을 여기서도 잡는다.
+    if (!await _confirmOutside([
+      for (final x in plan.assignments) (x.room, x.attendee),
+    ])) {
+      return;
+    }
 
     applyAssignments(plan.assignments);
     store.commit();
@@ -900,9 +910,7 @@ class _AssignScreenState extends State<AssignScreen> {
               children: [
                 _line(
                   '신청한 날',
-                  hostWindowLabel(room).isEmpty
-                      ? '${mdw(openFrom)} ~ ${mdw(openTo)}'
-                      : hostWindowLabel(room),
+                  hostWindowLabel(room).isEmpty ? _noWindow : hostWindowLabel(room),
                 ),
                 _line(
                   '정원',
@@ -979,9 +987,11 @@ class _AssignScreenState extends State<AssignScreen> {
     if (choice == null || choice == 'cancel') return;
 
     // 신청하지 않은 밤이 들어가면 먼저 알린다 (중간에 비워 둔 날은 기간만 보면 안 보인다).
-    if (!await _confirmOutside(room, chosen, all: choice == 'all', from: from, to: to)) {
-      return;
-    }
+    final ok = await _confirmOutside(
+      [for (final a in chosen) (room, a)],
+      only: choice == 'all' ? null : (from, to),
+    );
+    if (!ok) return;
 
     final String done;
     if (choice == 'all') {
@@ -1000,42 +1010,67 @@ class _AssignScreenState extends State<AssignScreen> {
     setState(() => selected.removeAll(chosen.map((a) => a.id)));
   }
 
-  /// 이 가정이 신청하지 않은 밤에 사람이 들어가면 그 날을 보여주고 물어본다.
-  /// 넣을 밤이 전부 신청한 날이면 아무것도 묻지 않고 true.
+  /// 배정하려는 (가정, 그 집에서 묵게 될 사람) 짝을 받아, 그 가정이 신청하지 않은 밤이
+  /// 끼어 있으면 가정마다 짚어 주고 물어본다. 전부 신청한 날이면 묻지 않고 true.
+  ///
+  /// 배정으로 사람이 방에 들어가는 길은 전부 이 함수를 지난다 — 가정 한 곳([_assignHomestay])도,
+  /// 여러 곳을 골라 한 번에 채우는 길([_assignToRooms])도. 일반 집회 방은 [Room.hostsOn] 이
+  /// 늘 참이라 걸리지 않는다.
+  ///
+  /// [only] 가 있으면 그 기간의 밤만 본다 ([이 기간만 배정]).
   Future<bool> _confirmOutside(
-    Room room,
-    List<Attendee> chosen, {
-    required bool all,
-    required DateTime from,
-    required DateTime to,
+    List<(Room, Attendee)> pairs, {
+    (DateTime, DateTime)? only,
   }) async {
     final nights = store.event.nights;
-    final outside = <DateTime>[];
-    for (var i = 0; i < nights.length; i++) {
-      final n = nights[i];
-      if (!all && (n.isBefore(from) || !n.isBefore(to))) continue;
-      if (room.hostsOn(n)) continue;
-      if (chosen.any((a) => stayMask(a, nights)[i])) outside.add(n);
+    final bad = <Room, Set<DateTime>>{};
+    for (final (room, a) in pairs) {
+      final stays = stayMask(a, nights);
+      for (var i = 0; i < nights.length; i++) {
+        final n = nights[i];
+        if (!stays[i] || room.hostsOn(n)) continue;
+        if (only case (final f, final t)) {
+          if (n.isBefore(f) || !n.isBefore(t)) continue;
+        }
+        (bad[room] ??= <DateTime>{}).add(n);
+      }
     }
-    if (outside.isEmpty) return true;
+    if (bad.isEmpty) return true;
     if (!mounted) return false;
+    final rows = [
+      for (final e in bad.entries)
+        (
+          e.key,
+          ([...e.value]..sort()).map(mdw).join(', '),
+          hostWindowLabel(e.key),
+        ),
+    ]..sort((x, y) => byRoomNo(x.$1, y.$1));
+    final total = bad.values.fold(0, (n, v) => n + v.length);
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('신청하지 않은 날입니다'),
             content: SizedBox(
-              width: 400,
+              width: 420,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${room.label} 가정이 신청하지 않은 밤 ${outside.length}박이 들어갑니다.',
+                    '가정 ${bad.length}곳에 신청하지 않은 밤 $total박이 들어갑니다.',
                     style: const TextStyle(color: AppColors.danger),
                   ),
                   const SizedBox(height: 12),
-                  _line('신청한 날', hostWindowLabel(room)),
-                  _line('안 받는 날', outside.map(mdw).join(', ')),
+                  for (final (room, outside, applied) in rows.take(10)) ...[
+                    _line('${room.label} · 안 받는 날', outside),
+                    _line(
+                      '  신청한 날',
+                      applied.isEmpty ? _noWindow : applied,
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  if (rows.length > 10)
+                    Text('… 외 ${rows.length - 10}곳'),
                 ],
               ),
             ),
