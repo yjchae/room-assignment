@@ -279,13 +279,16 @@ end $$;
 
 -- 홈스테이: 이 신청으로 만든 방(가정)에 배정된 참석자. 없으면 빈 배열.
 -- 신청자에게 보일 내용만 고른다 — 운영자 메모(note)·방 id 는 빼고 준다.
+-- 묵는 기간(checkIn·checkOut, 띄엄띄엄이면 nights)도 같이 준다 — 기간을 나눈 조각은 제 기간을 갖는다.
 -- 일반 집회는 registrationId 를 가진 방이 없어 항상 [] 다.
 create or replace function public._assigned(p_gathering uuid, p_registration uuid)
 returns jsonb
 language sql stable security definer set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object(
            'name', a->>'name', 'gender', a->>'gender', 'age', a->'age',
-           'phone', a->>'phone', 'cell', a->>'cell', 'zone', a->>'zone')), '[]'::jsonb)
+           'phone', a->>'phone', 'cell', a->>'cell', 'zone', a->>'zone',
+           'checkIn', a->>'checkIn', 'checkOut', a->>'checkOut',
+           'nights', a->'stayNights')), '[]'::jsonb)
     from public.room_plans p,
          lateral jsonb_array_elements(p.data->'rooms') r,
          lateral jsonb_array_elements(p.data->'attendees') a

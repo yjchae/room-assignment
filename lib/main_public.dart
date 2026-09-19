@@ -1552,6 +1552,19 @@ class _StayRow extends StatelessWidget {
   );
 }
 
+/// 우리 집에 묵는 기간. "10-09(금) ~ 10-11(일) · 2박".
+/// 기간을 나눈 사람은 이 집에 묵는 조각의 기간만 나온다. 날짜가 없으면 null.
+String? _stayText(AssignedGuest a) {
+  if (a.nights.isNotEmpty) {
+    final ns = [...a.nights]..sort();
+    return '${ns.map(mdw).join(', ')} · ${ns.length}박';
+  }
+  final (i, o) = (a.checkIn, a.checkOut);
+  if (i == null || o == null) return null;
+  final n = o.difference(i).inDays;
+  return n <= 0 ? mdw(i) : '${mdw(i)} ~ ${mdw(o)} · $n박';
+}
+
 /// 우리 집에 배정된 참석자 한 줄. 연락처는 눌러서 바로 걸 수 있다.
 class _AssignedRow extends StatelessWidget {
   const _AssignedRow(this.a);
@@ -1569,6 +1582,7 @@ class _AssignedRow extends StatelessWidget {
       a.cell,
       a.zone,
     ].whereType<String>().join(' · ');
+    final stay = _stayText(a);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -1590,6 +1604,15 @@ class _AssignedRow extends StatelessWidget {
                     style: const TextStyle(
                       fontSize: 12.5,
                       color: AppColors.textMuted,
+                    ),
+                  ),
+                if (stay != null)
+                  Text(
+                    stay,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.brand,
                     ),
                   ),
               ],

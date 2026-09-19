@@ -611,6 +611,21 @@ void main() {
           phone: '01000001111',
           cell: '믿음셀',
           zone: null,
+          checkIn: DateTime(2026, 10, 9),
+          checkOut: DateTime(2026, 10, 10),
+          nights: const [],
+        ),
+        // 기간을 나눠 하루만 우리 집에 묵는 조각
+        (
+          name: '손님2',
+          gender: 'M',
+          age: 30,
+          phone: null,
+          cell: null,
+          zone: null,
+          checkIn: DateTime(2026, 10, 10),
+          checkOut: DateTime(2026, 10, 11),
+          nights: const [],
         ),
       ];
       await tester.tap(find.widgetWithText(TextButton, '다른 번호로 조회'));
@@ -621,10 +636,13 @@ void main() {
       );
       await tester.tap(find.widgetWithText(FilledButton, '조회'));
       await tester.pumpAndSettle();
-      expect(find.text('1명'), findsOneWidget);
+      expect(find.text('2명'), findsOneWidget);
       expect(find.text('손님1'), findsOneWidget);
       expect(find.text('여 · 20세 · 믿음셀'), findsOneWidget);
       expect(find.text('010-0000-1111'), findsOneWidget);
+      // 배정한 기간이 사람마다 따로 보인다
+      expect(find.text('10-09(금) ~ 10-10(토) · 1박'), findsOneWidget);
+      expect(find.text('10-10(토) ~ 10-11(일) · 1박'), findsOneWidget);
     });
 
     testWidgets('조회: 휴대폰+PIN → 상태, 입금대기면 취소', (tester) async {

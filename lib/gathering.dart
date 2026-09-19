@@ -287,6 +287,8 @@ typedef ScheduleItem = ({DateTime date, String time, String title});
 
 /// 홈스테이 신청자(가정)에게 보여 줄, 그 집에 배정된 참석자 한 명.
 /// 운영자 메모(note)는 담지 않는다 — 신청자에게 보일 내용이 아니다.
+/// [checkIn]~[checkOut] 은 이 집에 묵는 기간 — 기간을 나눈 사람은 이 집에 묵는 조각의 기간이다.
+/// [nights] 는 중간에 빠진 밤이 있을 때만 채워진다(신청에서 날짜를 띄엄띄엄 고른 경우).
 typedef AssignedGuest = ({
   String name,
   String gender,
@@ -294,6 +296,9 @@ typedef AssignedGuest = ({
   String? phone,
   String? cell,
   String? zone,
+  DateTime? checkIn,
+  DateTime? checkOut,
+  List<DateTime> nights,
 });
 
 /// 집회 설정 (서버 `gatherings` 한 행).
@@ -566,6 +571,12 @@ class Registration {
             phone: _str(a['phone']),
             cell: _str(a['cell']),
             zone: _str(a['zone']),
+            checkIn: _date(a['checkIn']),
+            checkOut: _date(a['checkOut']),
+            nights: [
+              for (final n in (a['nights'] as List? ?? []))
+                if (_date(n) != null) _date(n)!,
+            ],
           ),
     ],
     createdAt: (DateTime.tryParse('${r['created_at']}') ?? DateTime.now())
