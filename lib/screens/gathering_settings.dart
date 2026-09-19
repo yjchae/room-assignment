@@ -73,8 +73,11 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   List<String> errors = [];
   bool saving = false;
 
-  /// 이 집회에 등록된 운영자. null = 아직/못 불러옴.
+  /// 이 집회에 등록된 운영자. null = 아직 못 불러옴.
   List<GatheringAdmin>? admins;
+
+  /// 운영자 목록을 못 불러온 이유. 이때는 권한도 모르는 상태라 화면에 그대로 알린다.
+  String? adminsError;
   final adminEmail = TextEditingController();
   bool addingAdmin = false;
 
@@ -103,10 +106,12 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         setState(() {
           fullAdmin = scope.full;
           admins = list;
+          adminsError = null;
         });
       }
     } catch (e) {
-      debugPrint('운영자 목록을 불러오지 못했습니다: $e');
+      // 조용히 넘기면 전체 운영자인데도 [집회 삭제]가 사라진 채 이유를 알 수 없다.
+      if (mounted) setState(() => adminsError = errorText(e));
     }
   }
 
@@ -937,7 +942,25 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (admins == null)
+                  if (adminsError != null)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '운영자 목록을 불러오지 못했습니다. $adminsError',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.danger,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _loadAdmins,
+                          child: const Text('다시 시도'),
+                        ),
+                      ],
+                    )
+                  else if (admins == null)
                     const Text(
                       '불러오는 중…',
                       style: TextStyle(fontSize: 13, color: AppColors.textMuted),
@@ -988,7 +1011,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ],
                   ),
                 ]),
-                if (fullAdmin)
+                // 권한을 못 읽었으면(adminsError) 숨기지 않는다 — 위 카드가 이유를 보여주고,
+                // 삭제는 서버 RLS 가 어차피 전체 운영자만 통과시킨다.
+                if (fullAdmin || adminsError != null)
                   _card('집회 삭제', [
                   const Text(
                     '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',

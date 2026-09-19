@@ -61,8 +61,13 @@ class Remote {
 
   /// 로그인한 사람이 무엇을 할 수 있는지. [full] 이면 모든 집회 + 새 집회 만들기,
   /// 아니면 [gatherings] 에 있는 집회만 관리한다.
+  ///
+  /// 로그인 전이면 [RemoteError] — "맡은 집회가 하나도 없다"와 구별해야 한다.
+  /// 둘을 같은 값으로 돌려주면 세션이 풀렸을 때 집회 목록이 빈 채로 "운영자 등록을 요청하세요"가 뜬다.
   Future<AdminScope> scope() async {
-    if (!signedIn) return (full: false, gatherings: <String>{});
+    if (!signedIn) {
+      throw const RemoteError('로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인하세요.');
+    }
     final full = await _db.rpc('is_admin') == true;
     final mine = await _db.rpc('my_gatherings') as List;
     return (full: full, gatherings: {for (final g in mine) '$g'});

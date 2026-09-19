@@ -80,8 +80,14 @@ class FakeRemote extends Remote {
   Future<void> rejectAdmin(String userId) async =>
       requests.removeWhere((r) => r.id == userId);
 
+  /// true 면 권한 조회가 실패한다 (네트워크 문제·스키마 미적용 흉내).
+  bool scopeError = false;
+
   @override
-  Future<AdminScope> scope() async => (full: full, gatherings: {...managed});
+  Future<AdminScope> scope() async {
+    if (scopeError) throw const RemoteError('서버에 연결하지 못했습니다.');
+    return (full: full, gatherings: {...managed});
+  }
 
   @override
   Future<List<GatheringAdmin>> gatheringAdmins(String gatheringId) async => [
@@ -974,15 +980,34 @@ void main() {
       expect(fake.gAdmins['g1'], isEmpty);
     });
 
-    testWidgets('집회 설정: 집회별 운영자에게는 [집회 삭제]가 없다', (tester) async {
+    testWidgets('집회 설정: [집회 삭제]는 전체 운영자에게만 보인다', (tester) async {
       current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      // 전체 운영자에게는 보여야 한다 — 이 줄이 없으면 권한을 못 읽어 숨는 버그를 못 잡는다.
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('집회 삭제'), findsWidgets);
+
       fake
         ..full = false
         ..managed.add('g1');
-      setView(tester, const Size(1400, 3600));
+      // 같은 위젯을 다시 pump 하면 State 가 살아남아 initState 가 안 돈다. 한 번 비운다.
+      await tester.pumpWidget(const SizedBox());
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(find.text('집회 삭제'), findsNothing);
       expect(find.text('이 집회의 운영자'), findsOneWidget);
+    });
+
+    testWidgets('집회 설정: 운영자 목록을 못 읽으면 이유를 보여주고 [집회 삭제]를 숨기지 않는다', (
+      tester,
+    ) async {
+      current.value = sample();
+      fake.scopeError = true;
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.textContaining('운영자 목록을 불러오지 못했습니다'), findsOneWidget);
+      expect(find.text('다시 시도'), findsOneWidget);
+      // 권한을 모르는 동안 전체 운영자가 삭제 카드를 잃지 않는다 (서버가 어차피 막는다)
+      expect(find.text('집회 삭제'), findsWidgets);
     });
 
     testWidgets('집회 목록: 서버 집회가 카드로 보인다', (tester) async {

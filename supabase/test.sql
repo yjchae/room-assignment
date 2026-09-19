@@ -15,7 +15,8 @@ create role authenticated nologin;
 create schema auth;
 create table auth.users (
   id uuid primary key, email varchar(255),
-  raw_user_meta_data jsonb, created_at timestamptz default now()
+  raw_user_meta_data jsonb, created_at timestamptz default now(),
+  email_confirmed_at timestamptz   -- 실제 Supabase 에도 있는 칸 (확인 메일을 누른 시각)
 );
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
@@ -123,6 +124,7 @@ select t.err($q$select public.reset_pin(gen_random_uuid(), '0000')$q$, 'permissi
 select t.err($q$select public.admin_add_registration('00000000-0000-0000-0000-000000000001', '01055554444', '1234', '[{"name":"a"}]', null, null, 0)$q$, 'permission denied');
 select t.err($q$insert into public.admins values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
 select t.err('select * from public.room_plans', 'permission denied');
+select t.err('select public.can_manage()', 'permission denied');  -- 실행 권한도 운영자에게만
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 0)$q$, 'permission denied');
 select t.err('select * from public.admin_requests()', 'permission denied');
 select t.err($q$select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')$q$, 'permission denied');
@@ -239,6 +241,7 @@ select t.ok((select array_agg(email order by email) from public.admin_requests()
 select t.ok((select name from public.admin_requests() where email = 'b@x') = '비', '가입 때 넣은 이름이 보인다');
 select public.reject_admin('cccccccc-cccc-cccc-cccc-cccccccccccc');
 select t.ok(not exists (select 1 from auth.users where email = 'c@x'), '거절하면 계정이 지워진다');
+select t.err($q$select public.reset_pin(gen_random_uuid(), '1234')$q$, 'NOT_FOUND');  -- 없는 신청은 조용히 성공하지 않는다
 select t.err($q$select public.reject_admin('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')$q$, 'NOT_FOUND');
 select t.err($q$select public.approve_admin(gen_random_uuid())$q$, 'NOT_FOUND');
 select public.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
@@ -260,6 +263,17 @@ select t.err($q$select public.add_gathering_admin('00000000-0000-0000-0000-00000
 select t.ok(public.add_gathering_admin('00000000-0000-0000-0000-000000000001', ' D@X ')
               = 'dddddddd-dddd-dddd-dddd-dddddddddddd',
   '이메일로 찾아 집회 운영자로 등록한다 (공백·대소문자 무시)');
+-- 같은 주소로 계정이 둘이면(확인 안 된 가입 등) 확인된 쪽을 고른다 — 아무거나 뽑으면 엉뚱한 사람에게 권한이 간다
+reset role;
+update auth.users set email_confirmed_at = now() where email = 'd@x';
+insert into auth.users (id, email, created_at) values
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'd@x', now() - interval '1 day');
+set role authenticated;
+select t.ok(public.add_gathering_admin('00000000-0000-0000-0000-000000000002', 'd@x')
+              = 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  '같은 이메일이 여럿이면 확인된 계정을 고른다');
+select public.remove_gathering_admin('00000000-0000-0000-0000-000000000002',
+  'dddddddd-dddd-dddd-dddd-dddddddddddd');
 select public.add_gathering_admin('00000000-0000-0000-0000-000000000001', 'd@x');  -- 두 번 넣어도 된다
 select t.ok((select count(*) from public.gathering_admin_list('00000000-0000-0000-0000-000000000001')) = 1,
   '집회 운영자 목록이 보인다');
@@ -311,7 +325,7 @@ select t.ok((select count(*) from storage.objects
 set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 select public.remove_gathering_admin('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd');
 select t.err($q$select public.remove_gathering_admin('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd')$q$,
-             'NOT_FOUND');
+             'NO_SUCH_ADMIN');
 set request.jwt.claim.sub = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 select t.ok(not public.can_manage(), '빼고 나면 관리자 앱에 못 들어온다');
 select t.ok((select count(*) from public.registrations) = 0, '빼고 나면 신청도 안 보인다');

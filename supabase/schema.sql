@@ -18,7 +18,7 @@
 -- 함수가 던지는 에러 메시지(앱이 이 문자열로 안내 문구를 고른다)
 --   CLOSED  INVALID_PHONE  INVALID_PIN  INVALID_PEOPLE  INVALID_TEXT  INVALID_QUOTED
 --   ALREADY_REGISTERED  TOO_MANY_ATTEMPTS  NOT_EDITABLE  FORBIDDEN  NOT_FOUND  CONFLICT
---   NO_ACCOUNT (집회 운영자로 등록하려는 이메일의 계정이 없음)
+--   NO_ACCOUNT (집회 운영자로 등록하려는 이메일의 계정이 없음)  NO_SUCH_ADMIN (이미 해제된 운영자)
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -380,9 +380,16 @@ create or replace function public.reset_pin(p_registration uuid, p_pin text) ret
 language plpgsql security definer set search_path = '' as $$
 declare
   ph text;
+  gid uuid;
 begin
-  if not public.manages((select gathering_id from public.registrations where id = p_registration))
-  then raise exception 'FORBIDDEN'; end if;
+  -- 없는 신청이면 manages(null) 이 전체 운영자를 통과시켜 "성공했는데 0행" 이 된다.
+  -- 다만 운영자가 아닌 사람에게 신청의 있고 없음을 알려주지 않도록 FORBIDDEN 을 먼저 본다.
+  select gathering_id into gid from public.registrations where id = p_registration;
+  if gid is null then
+    if not public.can_manage() then raise exception 'FORBIDDEN'; end if;
+    raise exception 'NOT_FOUND';
+  end if;
+  if not public.manages(gid) then raise exception 'FORBIDDEN'; end if;
   if coalesce(p_pin, '') !~ '^[0-9]{4}$' then raise exception 'INVALID_PIN'; end if;
 
   update public.registrations
@@ -461,8 +468,12 @@ declare
   uid uuid;
 begin
   if not public.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  -- 같은 주소로 계정이 여럿일 수 있다(확인 안 된 가입 등). 확인된 계정을 먼저, 그다음 먼저 만든 것.
+  -- order 가 없으면 매번 다른 계정이 뽑혀 엉뚱한 사람에게 권한이 간다.
   select id into uid from auth.users
-   where lower(email) = lower(trim(coalesce(p_email, '')));
+   where lower(email) = lower(trim(coalesce(p_email, '')))
+   order by (email_confirmed_at is null), created_at
+   limit 1;
   if uid is null then raise exception 'NO_ACCOUNT'; end if;
   insert into public.gathering_admins (gathering_id, user_id) values (p_gathering, uid)
   on conflict do nothing;
@@ -476,7 +487,8 @@ begin
   if not public.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
   delete from public.gathering_admins
    where gathering_id = p_gathering and user_id = p_user;
-  if not found then raise exception 'NOT_FOUND'; end if;
+  -- NOT_FOUND 는 신청 조회에서 쓰는 코드라 안내 문구가 엉뚱해진다.
+  if not found then raise exception 'NO_SUCH_ADMIN'; end if;
 end $$;
 
 -- 승인을 기다리는 가입 신청. 운영자가 아니면 빈 목록.
@@ -513,6 +525,7 @@ end $$;
 -- 함수 실행 권한도 명시한다 (Postgres 기본값은 "누구나 실행 가능").
 revoke execute on function
   public._touch(),
+  public.can_manage(),
   public.add_gathering_admin(uuid, text),
   public.remove_gathering_admin(uuid, uuid),
   public.gathering_admin_list(uuid),

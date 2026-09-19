@@ -618,11 +618,15 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       error = null;
     });
     try {
-      scope = await remote.scope();
+      final signed = remote.signedIn;
+      scope = signed
+          ? await remote.scope()
+          : (full: false, gatherings: <String>{});
       list = await remote.gatherings();
       // 집회별 운영자에게는 맡은 집회만 보여준다 (집회 설정 자체는 누구나 읽을 수 있지만,
       // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).
-      if (!scope.full) {
+      // 로그인 전이면 권한을 모르는 것이지 "맡은 집회가 없는" 게 아니라서 거르지 않는다.
+      if (signed && !scope.full) {
         list = [for (final g in list) if (scope.gatherings.contains(g.id)) g];
       }
       counts = remote.signedIn ? await remote.registrationCounts() : {};
@@ -903,7 +907,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                 if (list.isEmpty && !offline)
                   EmptyNotice(
                     icon: Icons.event_note_outlined,
-                    text: scope.full
+                    text: scope.full || !remote.signedIn
                         ? '아직 집회가 없습니다. [새 집회]로 시작하세요.'
                         : '맡은 집회가 없습니다. 집회 담당자에게 운영자 등록을 요청하세요.',
                   ),
