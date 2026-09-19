@@ -53,7 +53,8 @@ class RoomTile extends StatelessWidget {
 
     return Tooltip(
       message:
-          '${room.label}호  $used/${room.capacity}  ${st.label}'
+          '${room.label}${current.value?.isHomestay == true ? '' : '호'}'
+          '  $used/${room.capacity}  ${st.label}'
           '\n${groups.isEmpty ? '비어 있음' : groups}'
           '${note.isEmpty ? '' : '\n$note'}',
       waitDuration: const Duration(milliseconds: 400),
@@ -514,9 +515,9 @@ class _FloorHeader extends StatelessWidget {
             ),
           )
         else
-          const Text(
-            '기타',
-            style: TextStyle(
+          Text(
+            current.value?.isHomestay == true ? '가정' : '기타',
+            style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
               color: AppColors.text,

@@ -188,6 +188,8 @@ class _GatheringView extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (g.hasSchedule)
+                  _Section(title: '일정', children: [_Schedule(g)]),
                 if (!g.fee.isFree)
                   _Section(title: '회비', children: [_FeeTable(g)]),
                 if (!g.fee.isFree && !g.bank.isEmpty)
@@ -233,6 +235,66 @@ class _GatheringView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 집회 기간의 날짜별 일정. 적어 둔 게 없는 날은 건너뛴다.
+class _Schedule extends StatelessWidget {
+  const _Schedule(this.g);
+  final Gathering g;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (final d in g.days)
+        if (g.scheduleOn(d) case final items when items.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  mdw(d),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: _tabular,
+                    color: AppColors.brand,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                for (final s in items)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 54,
+                          child: Text(
+                            s.time,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: _tabular,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            s.title,
+                            style: const TextStyle(fontSize: 14, height: 1.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+    ],
+  );
 }
 
 class _FeeTable extends StatelessWidget {
@@ -1322,6 +1384,29 @@ class _LookupPageState extends State<LookupPage> {
             ),
         ],
       ),
+      if (g.isHomestay && r.status == RegStatus.confirmed)
+        _Section(
+          title: '우리 집에 배정된 참석자',
+          trailing: r.assigned.isEmpty
+              ? null
+              : Text(
+                  '${r.assigned.length}명',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.brand,
+                  ),
+                ),
+          children: [
+            if (r.assigned.isEmpty)
+              const Text(
+                '아직 배정 전입니다. 배정되면 여기에 표시됩니다.',
+                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+              )
+            else
+              for (final a in r.assigned) _AssignedRow(a),
+          ],
+        ),
       if (r.status != RegStatus.cancelled && g.ministerNoticeFor(r.people))
         _ministerNotice(g.ministerNotice),
       if (pending && !free && !g.bank.isEmpty)
@@ -1374,6 +1459,67 @@ class _LookupPageState extends State<LookupPage> {
         child: const Text('다른 번호로 조회'),
       ),
     ];
+  }
+}
+
+/// 우리 집에 배정된 참석자 한 줄. 연락처는 눌러서 바로 걸 수 있다.
+class _AssignedRow extends StatelessWidget {
+  const _AssignedRow(this.a);
+  final AssignedGuest a;
+
+  @override
+  Widget build(BuildContext context) {
+    final sub = [
+      switch (a.gender) {
+        'M' => '남',
+        'F' => '여',
+        _ => null,
+      },
+      if (a.age > 0) '${a.age}세',
+      a.cell,
+      a.zone,
+    ].whereType<String>().join(' · ');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  a.name,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (sub.isNotEmpty)
+                  Text(
+                    sub,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (a.phone != null)
+            TextButton.icon(
+              onPressed: () => launchUrl(
+                Uri.parse('tel:${digitsOnly(a.phone!)}'),
+                mode: LaunchMode.externalApplication,
+              ),
+              icon: const Icon(Icons.call_outlined, size: 16),
+              label: Text(
+                fmtPhone(a.phone!),
+                style: const TextStyle(fontFeatures: _tabular),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

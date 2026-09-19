@@ -84,6 +84,10 @@ class Room {
   /// null 이면 호수 순서대로 자동 배치된다. 운영자가 드래그로 옮기면 값이 박힌다.
   int? slot;
 
+  /// 홈스테이에서 이 방(가정)을 만든 신청 id. null = 운영자가 손으로 만든 방.
+  /// 신청 조회에 "우리 집에 배정된 사람"을 돌려줄 때 이 값으로 찾는다 (schema.sql `_assigned`).
+  String? registrationId;
+
   Room({
     required this.id,
     required this.roomNo,
@@ -92,6 +96,7 @@ class Room {
     this.gender,
     this.note,
     this.slot,
+    this.registrationId,
   });
 
   /// "301" -> 3. 숫자가 아니면 null.
@@ -115,6 +120,7 @@ class Room {
     'gender': gender,
     'note': note,
     'slot': slot,
+    if (registrationId != null) 'registrationId': registrationId,
   };
 
   factory Room.fromJson(Map<String, dynamic> j) => Room(
@@ -125,6 +131,7 @@ class Room {
     gender: j['gender'] as String?,
     note: j['note'] as String?,
     slot: (j['slot'] as num?)?.toInt(),
+    registrationId: j['registrationId'] as String?,
   );
 }
 
@@ -250,7 +257,13 @@ Event copyEvent(
     endDate: dateOnly(end),
     customFields: attendees ? [...src.customFields] : [],
   );
-  if (rooms) e.rooms = [for (final r in src.rooms) Room.fromJson(r.toJson())];
+  if (rooms) {
+    e.rooms = [
+      // 신청 연결은 푼다 — 새 집회엔 그 신청이 없다 (참석자의 registrationId 와 같은 이유).
+      for (final r in src.rooms)
+        Room.fromJson({...r.toJson(), 'registrationId': null}),
+    ];
+  }
   if (attendees) {
     e.attendees = [
       for (final a in src.attendees)

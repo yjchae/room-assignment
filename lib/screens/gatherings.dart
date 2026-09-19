@@ -638,6 +638,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
     var start = dateOnly(DateTime.now()).add(const Duration(days: 30));
     var end = start.add(const Duration(days: 2));
     String? err;
+    var kind = GatheringKind.gathering;
     // 과거 집회에서 가져오기. null = 새로 시작.
     Gathering? src;
     var copySettings = true, copyRooms = true, copyPeople = false;
@@ -662,6 +663,36 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  SegmentedButton<GatheringKind>(
+                    segments: const [
+                      ButtonSegment(
+                        value: GatheringKind.gathering,
+                        icon: Icon(Icons.groups_outlined, size: 18),
+                        label: Text('집회'),
+                      ),
+                      ButtonSegment(
+                        value: GatheringKind.homestay,
+                        icon: Icon(Icons.home_outlined, size: 18),
+                        label: Text('홈스테이'),
+                      ),
+                    ],
+                    selected: {kind},
+                    onSelectionChanged: (v) => setLocal(() => kind = v.first),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(2, 8, 2, 12),
+                    child: Text(
+                      kind == GatheringKind.homestay
+                          ? '신청자가 재워 줄 가정입니다. 확정하면 그 이름으로 방이 생기고, '
+                                '운영자가 등록한 참석자를 그 방에 배치합니다.'
+                          : '신청자가 참석자가 됩니다. 방은 운영자가 호수로 만듭니다.',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.5,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
                   if (list.isNotEmpty) ...[
                     DropdownButtonFormField<Gathering?>(
                       initialValue: src,
@@ -686,6 +717,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                       onChanged: (x) => setLocal(() {
                         src = x;
                         if (x == null) return;
+                        kind = x.kind;
                         if (name.text.trim().isEmpty) name.text = x.name;
                         end = DateTime(
                           start.year,
@@ -788,6 +820,11 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
               ..posterUrl = null
               ..backgroundUrl = null)
           : Gathering(name: n, start: start, end: end);
+      base.kind = kind;
+      // 홈스테이는 수용 인원을 받아야 방 정원이 정해진다. 신청서 항목으로 넣어 둔다.
+      if (base.isHomestay && !base.formFields.contains(homestayCapacityField)) {
+        base.formFields.add(homestayCapacityField);
+      }
       final g = await remote.saveGathering(
         base
           ..name = n
@@ -869,6 +906,8 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                         place: g.place,
                         imageUrl: g.backgroundUrl,
                         badges: [
+                          if (g.isHomestay)
+                            const _Badge('홈스테이', AppColors.brand),
                           g.acceptingOn(DateTime.now())
                               ? const _Badge('신청 받는 중', AppColors.ok)
                               : const _Badge('신청 닫힘', AppColors.textMuted),

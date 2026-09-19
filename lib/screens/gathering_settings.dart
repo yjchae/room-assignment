@@ -29,6 +29,15 @@ class _Early {
   final TextEditingController fromDays, toDays, pct;
 }
 
+/// 일정표 한 줄의 입력칸. 줄이 붙어 있는 [date] 는 바뀌지 않는다 (다른 날로 옮기려면 지웠다 다시).
+class _Line {
+  _Line(this.date, String time, String title)
+    : time = TextEditingController(text: time),
+      title = TextEditingController(text: title);
+  final DateTime date;
+  final TextEditingController time, title;
+}
+
 /// 회비표의 열: 키 → 머리글.
 const _feeCols = {
   'minAge': '시작 나이',
@@ -56,6 +65,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   /// '열키:구분' → 입력칸. 예: 'full:adult'
   final fee = <String, TextEditingController>{};
   final early = <_Early>[];
+
+  /// 일정표 줄 전체. 집회 기간 밖 날짜의 줄은 화면에 안 그리지만 여기 남아 있다가 같이 저장된다
+  /// (날짜를 잘못 바꿨다 되돌리면 그대로 살아 있게).
+  final lines = <_Line>[];
 
   List<String> errors = [];
   bool saving = false;
@@ -98,6 +111,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     early
       ..clear()
       ..addAll(x.fee.early.map((e) => _Early(e.fromDays, e.toDays, e.pct)));
+    lines
+      ..clear()
+      ..addAll(x.schedule.map((e) => _Line(e.date, e.time, e.title)));
   }
 
   void _snack(String m) =>
@@ -175,6 +191,11 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
     );
+    x.schedule = [
+      for (final l in lines)
+        if (l.title.text.trim().isNotEmpty)
+          (date: l.date, time: l.time.text.trim(), title: l.title.text.trim()),
+    ];
     if (x.open && x.bank.isEmpty && !x.fee.isFree) {
       errs.add('신청을 받으려면 입금 계좌를 입력하세요.');
     }
@@ -350,9 +371,34 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                 const SizedBox(height: 16),
                 _card('기본 정보', [
-                  TextField(
-                    controller: name,
-                    decoration: const InputDecoration(labelText: '집회 이름 *'),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: name,
+                          decoration: const InputDecoration(
+                            labelText: '집회 이름 *',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // 구분은 만들 때만 정한다 — 바꾸면 이미 만든 방·배정과 어긋난다.
+                      Tooltip(
+                        message: x.isHomestay
+                            ? '확정한 신청마다 그 이름으로 방이 생깁니다. 구분은 바꿀 수 없습니다.'
+                            : '신청자가 참석자가 됩니다. 구분은 바꿀 수 없습니다.',
+                        child: Chip(
+                          avatar: Icon(
+                            x.isHomestay
+                                ? Icons.home_outlined
+                                : Icons.groups_outlined,
+                            size: 16,
+                            color: AppColors.textMuted,
+                          ),
+                          label: Text(x.kind.label),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Wrap(
@@ -433,6 +479,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       alignLabelWithHint: true,
                     ),
                   ),
+                ]),
+                _card('일정표', [
+                  const Text(
+                    '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 4),
+                  for (final d in x.days) _scheduleDay(d),
                 ]),
                 _card('이미지', [
                   Wrap(
@@ -829,6 +883,80 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 일정표의 하루 묶음: [날짜] 왼쪽, 오른쪽에 시간·내용 줄과 [줄 추가].
+  Widget _scheduleDay(DateTime d) {
+    final mine = [for (final l in lines) if (dateOnly(l.date) == dateOnly(d)) l];
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 92,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                mdw(d),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: tabular,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final l in mine)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 86,
+                          child: TextField(
+                            controller: l.time,
+                            decoration: const InputDecoration(
+                              hintText: '19:30',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: l.title,
+                            decoration: const InputDecoration(
+                              hintText: '개회예배',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: '이 줄 지우기',
+                          icon: const Icon(Icons.close, size: 18),
+                          color: AppColors.textMuted,
+                          onPressed: () => setState(() => lines.remove(l)),
+                        ),
+                      ],
+                    ),
+                  ),
+                TextButton.icon(
+                  onPressed: () =>
+                      setState(() => lines.add(_Line(dateOnly(d), '', ''))),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('줄 추가'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

@@ -20,6 +20,9 @@ create table auth.users (
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 grant usage on schema auth to anon, authenticated;
+-- 검사 문장이 계정 테이블을 들여다볼 수 있게. 실제 Supabase 에서도 앱은 이 테이블을 직접 읽지 않고
+-- admin_requests()·approve_admin() 같은 security definer 함수로만 드나든다.
+grant select on auth.users to anon, authenticated;
 
 create schema storage;
 create table storage.buckets (
@@ -212,6 +215,24 @@ select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001', '{"roo
 select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000001', '{}', 1)$q$, 'CONFLICT');
 select t.ok((select data from public.room_plans) = '{"rooms":[1]}', '늦게 온 저장은 덮어쓰지 않는다');
 
+-- 홈스테이: 신청마다 방 하나가 생기고, 그 방에 배정된 참석자를 신청자가 조회한다
+select t.err($q$insert into public.gatherings (id, name, kind, start_date, end_date)
+              values (gen_random_uuid(), 'x', '엉뚱', '2026-10-09', '2026-10-11')$q$, 'kind_check');
+insert into public.gatherings (id, name, kind, start_date, end_date, open, schedule) values
+  ('00000000-0000-0000-0000-000000000004', '홈스테이', 'homestay', '2026-10-09', '2026-10-11', true,
+   '[{"date":"2026-10-09","time":"19:30","title":"개회예배"}]');
+select public.admin_add_registration('00000000-0000-0000-0000-000000000004', '01033332222', '1234',
+  '[{"name":"김호스트","extra":{"수용 인원":"3"}}]', null, null, 0);
+select public.save_room_plan('00000000-0000-0000-0000-000000000004', jsonb_build_object(
+  'rooms', jsonb_build_array(
+    jsonb_build_object('id', 'r1', 'roomNo', '김호스트', 'capacity', 3,
+      'registrationId', (select id from public.registrations where phone = '01033332222')),
+    jsonb_build_object('id', 'r2', 'roomNo', '102', 'capacity', 4)),
+  'attendees', jsonb_build_array(
+    jsonb_build_object('name', '손님1', 'gender', 'M', 'age', 30, 'phone', '010-1111-0001',
+      'roomId', 'r1', 'note', '운영자 메모'),
+    jsonb_build_object('name', '손님2', 'gender', 'F', 'age', 20, 'roomId', 'r2'))), 0);
+
 -- 가입 승인·거절
 select t.ok((select array_agg(email order by email) from public.admin_requests()) = array['b@x', 'c@x'],
   '운영자는 가입 신청(운영자 아닌 계정)만 본다');
@@ -243,6 +264,22 @@ select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000001', '
 select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000002', '01055554444', '5555') ->> 'status' = 'pending',
   '운영자가 넣은 신청도 휴대폰+PIN 으로 조회된다');
 select t.err($q$insert into storage.objects (bucket_id, name) values ('gathering-images', 'y.jpg')$q$, 'row-level security');
+
+-- 홈스테이 신청자: 우리 집에 배정된 사람만, 운영자 메모는 빼고 보인다
+select t.ok((select schedule -> 0 ->> 'title' from public.gatherings
+              where id = '00000000-0000-0000-0000-000000000004') = '개회예배',
+  '일정표는 누구나 읽는다');
+select t.ok(jsonb_array_length(
+    public.lookup_registration('00000000-0000-0000-0000-000000000004', '01033332222', '1234') -> 'assigned') = 1,
+  '다른 방(102)에 배정된 사람은 안 보인다');
+select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000004', '01033332222', '1234')
+              -> 'assigned' -> 0 ->> 'phone' = '010-1111-0001', '배정된 참석자의 연락처가 보인다');
+select t.ok(not (public.lookup_registration('00000000-0000-0000-0000-000000000004', '01033332222', '1234')
+              -> 'assigned' -> 0 ? 'note'), '운영자 메모는 신청자에게 안 준다');
+select t.ok(public.lookup_registration('00000000-0000-0000-0000-000000000001', '01012345678', '1234')
+              ->> 'assigned' = '[]', '일반 집회는 배정 목록이 비어 있다');
+select t.err($q$select public._assigned('00000000-0000-0000-0000-000000000004', gen_random_uuid())$q$,
+             'permission denied');
 
 -- 마감되면 수정은 막히고 취소는 된다
 reset role;

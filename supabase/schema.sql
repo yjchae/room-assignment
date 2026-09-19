@@ -31,6 +31,9 @@ create table if not exists public.admins (
 create table if not exists public.gatherings (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  kind text not null default 'gathering'     -- 'gathering' | 'homestay' (lib/gathering.dart)
+    check (kind in ('gathering', 'homestay')),
+  schedule jsonb not null default '[]',      -- 일정표 [{date, time, title}]
   themes text[] not null default '{}',
   place text,
   address text,
@@ -51,6 +54,11 @@ create table if not exists public.gatherings (
   created_at timestamptz not null default now()
 );
 -- 이미 만든 DB 에 새 칸 추가.
+alter table public.gatherings add column if not exists kind text not null default 'gathering';
+alter table public.gatherings drop constraint if exists gatherings_kind_check;
+alter table public.gatherings add constraint gatherings_kind_check
+  check (kind in ('gathering', 'homestay'));
+alter table public.gatherings add column if not exists schedule jsonb not null default '[]';
 alter table public.gatherings add column if not exists hidden_fields text[] not null default '{}';
 alter table public.gatherings add column if not exists required_fields text[] not null default '{birthYear,gender}';
 alter table public.gatherings add column if not exists minister_notice_on boolean not null default true;
@@ -221,6 +229,23 @@ begin
   return r;
 end $$;
 
+-- 홈스테이: 이 신청으로 만든 방(가정)에 배정된 참석자. 없으면 빈 배열.
+-- 신청자에게 보일 내용만 고른다 — 운영자 메모(note)·방 id 는 빼고 준다.
+-- 일반 집회는 registrationId 를 가진 방이 없어 항상 [] 다.
+create or replace function public._assigned(p_gathering uuid, p_registration uuid)
+returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'name', a->>'name', 'gender', a->>'gender', 'age', a->'age',
+           'phone', a->>'phone', 'cell', a->>'cell', 'zone', a->>'zone')), '[]'::jsonb)
+    from public.room_plans p,
+         lateral jsonb_array_elements(p.data->'rooms') r,
+         lateral jsonb_array_elements(p.data->'attendees') a
+   where p.gathering_id = p_gathering
+     and r->>'registrationId' = p_registration::text
+     and a->>'roomId' = r->>'id'
+$$;
+
 -- ---------------------------------------------------------------------------
 -- 신청 웹이 부르는 함수
 -- ---------------------------------------------------------------------------
@@ -257,7 +282,8 @@ declare
   r public.registrations := public._verify(p_gathering, p_phone, p_pin);
 begin
   if r.id is null then return null; end if;
-  return to_jsonb(r) - 'pin_hash' - 'admin_memo';
+  return (to_jsonb(r) - 'pin_hash' - 'admin_memo')
+      || jsonb_build_object('assigned', public._assigned(p_gathering, r.id));
 end $$;
 
 -- 수정. 입금대기 + 신청 받는 중일 때만. 상태·입금액은 못 건드린다. 틀리면 null.
@@ -403,6 +429,7 @@ revoke execute on function
   public._assert_open(uuid),
   public._check_input(jsonb, text, text, int),
   public._verify(uuid, text, text),
+  public._assigned(uuid, uuid),
   public.reset_pin(uuid, text),
   public.admin_add_registration(uuid, text, text, jsonb, text, text, int),
   public.save_room_plan(uuid, jsonb, int),

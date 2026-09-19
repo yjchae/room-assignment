@@ -106,12 +106,18 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     }
   }
 
-  /// 입금 확인된 신청의 사람을 참석자로 올린다 (추가·수정만, 빼지는 않는다). 새로 올린 사람 수.
-  /// 당일 참석자는 방이 필요 없어 올리지 않는다.
-  int _syncConfirmed() {
+  /// 확정된 신청을 방배정에 반영한다 (추가·수정만, 빼지는 않는다). 알림에 덧붙일 문장.
+  ///
+  /// - 집회: 신청의 사람을 참석자로 올린다. 당일 참석자는 방이 필요 없어 올리지 않는다.
+  /// - 홈스테이: 신청자 이름으로 방(가정)을 만든다.
+  String _syncConfirmed() {
     final g = current.value;
-    if (g == null || regs == null) return 0;
-    return store.syncRegistrations(g, regs!, remove: false).added;
+    if (g == null || regs == null) return '';
+    final n = g.isHomestay
+        ? store.syncHomestayRooms(g, regs!, remove: false).added
+        : store.syncRegistrations(g, regs!, remove: false).added;
+    if (n == 0) return '';
+    return g.isHomestay ? ' 가정 $n곳을 방으로 만들었습니다.' : ' 참석자 $n명을 등록했습니다.';
   }
 
   bool _matches(Registration r) {
@@ -511,10 +517,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
       },
       '${r.applicant} 입금 확인했습니다.',
-      then: () {
-        final n = _syncConfirmed();
-        return n > 0 ? ' 참석자 $n명을 등록했습니다.' : '';
-      },
+      then: _syncConfirmed,
     );
   }
 
@@ -553,7 +556,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       (fail == 0
               ? '${targets.length}건 입금 확인했습니다.'
               : '${targets.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.') +
-          (added > 0 ? ' 참석자 $added명을 등록했습니다.' : ''),
+          added,
     );
   }
 
@@ -562,13 +565,17 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     final people = store.event.attendees
         .where((a) => a.registrationId == r.id)
         .length;
+    final home = store.event.rooms.any((x) => x.registrationId == r.id);
+    final losing = store.wouldLoseRoom(r.id).length;
     final ok = await confirmDialog(
       context,
       title: '${r.applicant} 신청 삭제',
       body:
           '신청과 입금 내역이 서버에서 완전히 지워지고 되돌릴 수 없습니다. '
           '신청자가 조회해도 나오지 않습니다.'
-          '${people > 0 ? '\n이 신청으로 들어온 참석자 $people명도 방배정에서 빠집니다.' : ''}',
+          '${home ? '\n이 신청으로 만든 방(가정)도 지워집니다.'
+                '${losing > 0 ? ' 배정돼 있던 $losing명은 미배정으로 돌아갑니다.' : ''}' : ''}'
+          '${!home && people > 0 ? '\n이 신청으로 들어온 참석자 $people명도 방배정에서 빠집니다.' : ''}',
       action: '삭제',
       danger: true,
     );
@@ -592,10 +599,9 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
 
   Future<void> _cancel(Registration r) async {
     final memo = TextEditingController(text: r.adminMemo ?? '');
-    // 취소하면 이 신청의 참석자도 빠진다. 방이 배정된 사람이 있으면 미리 알려준다.
-    final inRooms = store.event.attendees
-        .where((a) => a.registrationId == r.id && a.roomId != null)
-        .toList();
+    // 취소하면 이 신청의 참석자(홈스테이는 그 가정)가 빠진다. 방 배정이 풀리는 사람은 미리 알려준다.
+    final home = store.event.rooms.any((x) => x.registrationId == r.id);
+    final inRooms = store.wouldLoseRoom(r.id);
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -614,9 +620,13 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
               if (inRooms.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
-                  '방이 배정된 ${inRooms.length}명'
-                  '(${inRooms.take(3).map((a) => a.name).join(', ')}'
-                  '${inRooms.length > 3 ? ' 외' : ''})도 참석자에서 빠지고 방 배정이 풀립니다.',
+                  home
+                      ? '이 가정에 배정된 ${inRooms.length}명'
+                            '(${inRooms.take(3).map((a) => a.name).join(', ')}'
+                            '${inRooms.length > 3 ? ' 외' : ''})의 배정이 풀립니다.'
+                      : '방이 배정된 ${inRooms.length}명'
+                            '(${inRooms.take(3).map((a) => a.name).join(', ')}'
+                            '${inRooms.length > 3 ? ' 외' : ''})도 참석자에서 빠지고 방 배정이 풀립니다.',
                   style: const TextStyle(color: AppColors.danger),
                 ),
               ],
@@ -654,7 +664,8 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       '${r.applicant} 신청을 취소했습니다.',
       then: () {
         final n = store.removeRegistration(r.id);
-        return n > 0 ? ' 참석자 $n명을 뺐습니다.' : '';
+        if (n.rooms > 0) return ' 가정 ${n.rooms}곳을 방배정에서 뺐습니다.';
+        return n.people > 0 ? ' 참석자 ${n.people}명을 뺐습니다.' : '';
       },
     );
   }

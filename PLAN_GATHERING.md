@@ -452,3 +452,236 @@ test/gathering_widget_test.dart (신규) 신청 웹(휴대폰 폭)·관리자 �
 1. 저장소 공개 전환 → Settings → Pages → Source: **GitHub Actions**
 2. **Windows PC 에서 관리자 앱 한 바퀴** (로그인 → 이미지 업로드 → 입금 확인 → 가져오기 → 방배정) — macOS 에서는
    Windows 빌드를 할 수 없어 아직 못 해봤다.
+
+---
+
+## 11. 집회 구분 — 집회 / 홈스테이
+
+집회를 만들 때 **구분**을 고른다.
+
+| 구분 | 신청자 | 확정하면 | 방 | 참석자 |
+|---|---|---|---|---|
+| **집회** (지금까지) | 참석자 본인·가족 | 신청자가 **참석자**가 된다 | 운영자가 호수로 만든다 | 신청에서 온다 |
+| **홈스테이** (추가) | 재워 줄 **가정** | 그 가정 이름으로 **방**이 생긴다 | 확정된 신청 1건 = 방 1개 | 운영자가 직접 등록(붙여넣기·직접 추가) |
+
+```
+[홈스테이]
+운영자: 집회 만들기(구분=홈스테이) ──링크──▶ 가정: 신청(이름·연락처·수용 인원)
+                                                  │
+운영자: 신청·입금 관리에서 [확정] ──▶ 방 "김철수" 자동 생성 (정원 = 수용 인원)
+운영자: 참석자 등록(붙여넣기) ──▶ 방배정 화면에서 가정에 배치
+                                                  ▼
+가정: [신청 조회] 에서 우리 집에 배정된 참석자 명단을 본다
+```
+
+### 11.0 결정 (기본값으로 진행, 다르면 알려주세요)
+
+| # | 질문 | 기본값 (이대로 만듦) | 다른 선택지 |
+|---|---|---|---|
+| 1 | 홈스테이 신청자의 가족은 참석자가 되나 | **안 된다.** 신청자는 방 주인이다. `syncRegistrations` 를 아예 부르지 않는다 | 가족도 참석자로 넣고 정원에서 뺀다 |
+| 2 | 수용 인원을 어디서 받나 | **사용자 정의 항목 `수용 인원`** — 이미 있는 기능을 그대로 쓴다. 홈스테이 집회를 만들면 `form_fields` 에 기본으로 들어간다 | 신청서에 전용 숫자 칸 신설(스키마·RPC 3개 변경) |
+| 3 | 방 정원을 나중에 바꾸면 | **운영자 것이 이긴다.** 정원은 방을 **만들 때 한 번만** 신청에서 가져온다 | 신청을 고치면 정원도 따라간다 |
+| 4 | 가정에 보여 줄 참석자 정보 | **이름 · 성별 · 나이 · 연락처 · 셀 · 존.** 운영자 메모(`note`)는 안 보여준다 | 연락처를 빼고 이름만 |
+| 5 | 구분을 나중에 바꾸기 | **못 바꾼다.** 만들 때만 정한다 (이미 만든 방·배정과 어긋난다). 설정 화면엔 배지로 보여만 준다 | 설정에서 변경 허용 |
+| 6 | 홈스테이 회비 | **회비 0 = 무료 집회** 로 둔다. 지금 코드가 회비·계좌를 숨기고 상태를 '대기/확정' 으로 부른다 | 홈스테이 전용 문구 |
+
+### 11.1 데이터
+
+**`gatherings.kind`** (신규 칸)
+
+```sql
+alter table public.gatherings add column if not exists kind text not null default 'gathering'
+  check (kind in ('gathering', 'homestay'));
+```
+
+```dart
+// gathering.dart
+enum GatheringKind { gathering('집회'), homestay('홈스테이'); ... }
+class Gathering { GatheringKind kind; bool get isHomestay => kind == GatheringKind.homestay; }
+```
+`toRow`/`fromRow` 에 넣는다 → `copy()` 와 [과거 집회에서 가져오기] 가 그대로 따라온다.
+
+**`Room.registrationId`** (신규 칸, `models.dart`)
+
+```dart
+/// 홈스테이에서 이 방을 만든 신청 id. null = 운영자가 손으로 만든 방.
+/// 신청 조회에 "우리 집에 배정된 사람" 을 돌려줄 때 이 값으로 찾는다.
+String? registrationId;
+```
+방배정 문서(JSON) 안에만 있으므로 DB 변경 없음. 예전 문서는 null 로 읽힌다.
+
+**수용 인원** — 새 칸을 만들지 않는다. 신청서의 사용자 정의 항목 `수용 인원` 값(`people[0].extra['수용 인원']`)을
+정수로 읽고, 없거나 숫자가 아니면 기본 4.
+
+### 11.2 확정 → 방 생성 (`Store`)
+
+```dart
+/// 홈스테이: 확정된 신청 1건 = 방 1개. 몇 번 불러도 결과가 같다 (신청 id 로 맞춘다).
+({int added, int updated, int removed}) syncHomestayRooms(
+  Gathering g, List<Registration> regs, {bool remove = true});
+
+/// 지워질 방 중 사람이 배정된 방. 지우기 전에 운영자에게 보여준다.
+List<Room> homestayWouldRemove(Gathering g, List<Registration> regs);
+```
+
+- 확정 신청에 방이 없으면 만든다 — `roomNo` = 신청자 이름, `capacity` = 수용 인원(기본 4),
+  `note` = 전화번호, `gender` = null, `registrationId` = 신청 id.
+- 이미 있으면 **이름만** 맞춘다 (신청자가 이름을 고치면 따라간다). 정원·기타·자리는 운영자 것.
+- `remove: true` 일 때 확정이 아닌 신청의 방을 지우고, 배정돼 있던 사람은 미배정으로 돌린다
+  (`deleteRoom` 과 같은 처리). `remove: false` = 확정 버튼이 자동으로 부를 때 — 말없이 배정이 풀리면 안 된다.
+- 방 이름이 겹쳐도 그대로 둔다 (동명이인). 보드에서는 `note` 의 전화번호로 구분한다.
+
+부르는 자리는 지금 `syncRegistrations` 를 부르는 **그 두 곳 그대로**, 구분으로 갈라진다.
+
+| 자리 | 집회 | 홈스테이 |
+|---|---|---|
+| `registrations.dart` 입금 확인 / 일괄 확정 (`_syncConfirmed`) | `syncRegistrations(remove: false)` | `syncHomestayRooms(remove: false)` |
+| `attendees.dart` [신청에서 가져오기] | 지금 그대로(경고 → 충돌 확인 → 가져오기) | `homestayWouldRemove` 경고 → `syncHomestayRooms()` |
+
+### 11.3 신청자에게 배정 결과 보여주기
+
+방배정은 `room_plans` 에 있고 RLS 로 운영자만 읽는다. 신청자는 지금도 RPC 로만 드나드니
+**`lookup_registration` 이 같이 돌려준다.**
+
+```sql
+-- 이 신청으로 만든 방에 배정된 참석자. 운영자 메모(note)는 빼고 준다.
+create or replace function public._assigned(p_gathering uuid, p_registration uuid) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'name', a->>'name', 'gender', a->>'gender', 'age', a->'age',
+           'phone', a->>'phone', 'cell', a->>'cell', 'zone', a->>'zone')), '[]'::jsonb)
+    from public.room_plans p,
+         jsonb_array_elements(p.data->'rooms') r,
+         jsonb_array_elements(p.data->'attendees') a
+   where p.gathering_id = p_gathering
+     and r->>'registrationId' = p_registration::text
+     and a->>'roomId' = r->>'id'
+$$;
+```
+`lookup_registration` 의 반환을 `(to_jsonb(r) - 'pin_hash' - 'admin_memo') || jsonb_build_object('assigned', public._assigned(...))` 로 바꾼다.
+일반 집회는 `registrationId` 를 가진 방이 없어 항상 `[]` — 구분 검사를 따로 하지 않는다.
+`_assigned` 는 `revoke execute ... from public, anon, authenticated` (security definer 안에서만 불린다).
+
+```dart
+// gathering.dart — 신청 조회 화면에만 쓰는 값이라 클래스 대신 record.
+typedef AssignedGuest = ({String name, String gender, int age,
+                          String? phone, String? cell, String? zone});
+class Registration { List<AssignedGuest> assigned; }
+```
+
+**신청 웹** (`main_public.dart` `LookupPage._view`) — 확정된 홈스테이 신청에 섹션 하나:
+
+```
+우리 집에 배정된 참석자 (3명)
+  홍길동   남 34   010-1234-5678
+  김영희   여 29   010-2222-3333   믿음셀
+  ...
+```
+비어 있으면 "아직 배정 전입니다. 배정되면 여기에 표시됩니다."
+
+### 11.4 운영자 화면
+
+- **새 집회 다이얼로그** (`gatherings.dart`): 맨 위에 구분 `SegmentedButton` 2개(집회/홈스테이).
+  홈스테이를 고르면 `formFields` 에 `수용 인원` 을 기본으로 넣고, 안내 문구 한 줄을 바꾼다.
+  과거 집회에서 가져올 때는 그 집회의 구분을 따른다.
+- **집회 설정**: '기본 정보' 카드에 구분 배지(읽기 전용).
+- **라벨** (홈스테이일 때만): 왼쪽 메뉴 `방 관리 → 가정 관리`, `방배정 → 가정 배정`,
+  보드의 층 머리글 `기타 → 가정`, 방 타일 툴팁의 `"101호" → "김철수"`.
+- 방배정·자동배정·현황은 **손대지 않는다**. 방이 가정일 뿐 하는 일이 같다.
+
+### 11.5 안 만드는 것
+
+- 홈스테이 전용 신청서 (주소·차량·알레르기 등) — 필요하면 사용자 정의 항목으로.
+- 가정↔참석자 매칭 자동화(성별·연령 선호) — 기존 자동배정으로 충분한지 먼저 써 본다.
+- 가정에게 알림(문자·카톡) — 링크를 직접 공지한다.
+
+---
+
+## 12. 일정표
+
+집회 기간 동안 날짜마다 무엇을 하는지 운영자가 적고, 신청 웹에서 누구나 본다.
+
+### 12.1 데이터
+
+```sql
+alter table public.gatherings add column if not exists schedule jsonb not null default '[]';
+```
+`gatherings` 는 이미 **누구나 읽기** 라 신청 웹이 RPC 없이 그대로 읽는다.
+
+```dart
+// gathering.dart — 시간은 '09:00' 같은 자유 문자열. 비워도 된다(종일 일정).
+typedef ScheduleItem = ({DateTime date, String time, String title});
+class Gathering { List<ScheduleItem> schedule; }
+```
+저장 모양: `[{"date":"2026-10-09","time":"19:30","title":"개회예배"}, ...]`.
+정렬은 보여줄 때 (날짜 → 시간 → 입력순).
+
+### 12.2 운영자 편집 (집회 설정에 카드 하나)
+
+```
+일정표
+ 10-09(금)   [19:30] [개회예배                    ]  🗑
+             [21:00] [조별 모임                   ]  🗑
+             + 줄 추가
+ 10-10(토)   [     ] [자유 시간 (하루 종일)        ]  🗑
+             + 줄 추가
+```
+- 집회 기간(`g.days`) 날짜마다 한 묶음. 날짜를 바꾸면 묶음도 따라 바뀐다.
+- 내용이 빈 줄은 [저장] 때 버린다.
+- **기간 밖 날짜의 항목은 화면에 안 보이지만 지우지도 않는다.** 날짜를 잘못 바꿨다 되돌리면 그대로 살아 있다.
+- 다른 설정과 같이 [저장] 을 눌러야 신청 웹에 반영된다.
+
+### 12.3 신청 웹 (집회 페이지)
+
+회비 위, 집회 정보 아래에 '일정' 섹션. 비어 있으면 섹션을 안 그린다.
+
+```
+일정
+ 10-09(금)   19:30  개회예배
+             21:00  조별 모임
+ 10-10(토)          자유 시간
+```
+
+---
+
+## 13. 구현 순서 (§11 · §12)
+
+1. **모델·스키마** — `Gathering.kind`·`schedule`, `Room.registrationId`, `AssignedGuest`,
+   `supabase/schema.sql` (칸 2개 + `_assigned` + `lookup_registration`), `supabase/test.sql` 검증 추가.
+2. **일정표** — 집회 설정 편집 카드 + 신청 웹 표시. (§11 과 독립이라 여기서 한 번 끝난다)
+3. **집회 구분** — 새 집회 다이얼로그, 설정 배지, 홈스테이 라벨.
+4. **확정 → 방 생성** — `Store.syncHomestayRooms` / `homestayWouldRemove`, 확정·가져오기 두 자리 분기.
+5. **배정 결과 조회** — `Registration.assigned` 읽기 + 신청 조회 화면 섹션.
+6. `flutter analyze && flutter test`, `psql -f supabase/test.sql`.
+
+**손대는 파일**
+
+| 파일 | 무엇 |
+|---|---|
+| `supabase/schema.sql` | `kind`·`schedule` 칸, `_assigned`, `lookup_registration`, 권한 |
+| `supabase/test.sql` | 홈스테이 배정 조회 검증 |
+| `lib/gathering.dart` | `GatheringKind`, `schedule`, `ScheduleItem`, `AssignedGuest`, `Registration.assigned` |
+| `lib/models.dart` | `Room.registrationId` (toJson/fromJson) |
+| `lib/store.dart` | `syncHomestayRooms`, `homestayWouldRemove` |
+| `lib/main.dart` | 홈스테이일 때 메뉴 라벨 |
+| `lib/screens/gatherings.dart` | 새 집회 다이얼로그의 구분 |
+| `lib/screens/gathering_settings.dart` | 구분 배지, 일정표 카드 |
+| `lib/screens/registrations.dart` | 확정 때 구분 분기 |
+| `lib/screens/attendees.dart` | [신청에서 가져오기] 구분 분기 |
+| `lib/widgets/room_board.dart` | 층 머리글·툴팁 라벨 |
+| `lib/main_public.dart` | 일정 섹션, 배정된 참석자 섹션 |
+| `test/` | 일정표 왕복, 홈스테이 방 생성(멱등·삭제 경고), 배정 조회 파싱 |
+
+### 13.1 구현 현황 (2026-09-19)
+
+§11·§12 구현 완료. 기획과 달라진 점:
+
+- **홈스테이의 [신청에서 가져오기] 는 [가정 관리] 화면에 뒀다.** 참석자 화면에서는 숨긴다 —
+  홈스테이에서 신청은 참석자가 아니라 방이 되기 때문에 그 화면에 있으면 뜻이 어긋난다.
+- **[가정 직접 추가]** 는 호수 범위 파서(`addRoomRange`)를 타지 않고 이름 그대로 방 하나를 만든다.
+  "김철수" 는 숫자가 아니라 범위로 만들 수 없다.
+- **신청 취소·삭제도 가정을 뺀다.** `Store.removeRegistration` 이 그 신청으로 만든 방까지
+  같이 지우도록 고쳤다 (호출하는 두 화면이 그대로 이득을 본다). 반환값이
+  `({int people, int rooms})` 로 바뀌었다.
+- `supabase/test.sql` 이 예전부터 `auth.users` 를 못 읽어 중간에 멈추던 것을 고쳤다
+  (흉내 구간에 `grant select on auth.users`). 이제 끝까지 가서 `ALL OK` 가 나온다.

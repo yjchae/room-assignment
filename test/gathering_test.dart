@@ -63,6 +63,38 @@ Registration reg(String id, RegStatus status, List<Person> people) =>
       createdAt: DateTime(2026, 9, 10),
     );
 
+/// 홈스테이 신청 한 건. [capacity] 는 신청서의 '수용 인원' 항목 값.
+Registration homeReg(
+  String id,
+  String name, {
+  String? capacity,
+  RegStatus status = RegStatus.confirmed,
+}) => Registration(
+  id: id,
+  gatheringId: 'h1',
+  phone: '0101111${id.padLeft(4, '0')}',
+  people: [
+    Person(
+      id: 'p-$id',
+      name: name,
+      gender: 'M',
+      birthYear: 1980,
+      extra: {homestayCapacityField: ?capacity},
+    ),
+  ],
+  status: status,
+  createdAt: DateTime(2026, 9, 10),
+);
+
+Gathering homestay() => Gathering(
+  id: 'h1',
+  name: '홈스테이',
+  kind: GatheringKind.homestay,
+  start: start,
+  end: end,
+  formFields: [homestayCapacityField],
+);
+
 /// 집회를 열지 않은 Store — 서버에 저장하지 않는다.
 Store tmpStore() =>
     Store()..event = Event(name: 'x', startDate: start, endDate: end);
@@ -576,5 +608,162 @@ void main() {
     a.zone = 'd';
     expect(a.zone, 'D');
     expect(a.toJson()['zone'], 'D');
+  });
+
+  group('일정표', () {
+    test('서버 행(JSON)을 거쳐도 그대로고, 날짜별로 시간 순으로 읽힌다', () {
+      final g = sample()
+        ..schedule = [
+          (date: DateTime(2026, 10, 10), time: '09:00', title: '아침기도'),
+          (date: start, time: '21:00', title: '조모임'),
+          (date: start, time: '19:30', title: '개회예배'),
+          (date: DateTime(2026, 12, 25), time: '', title: '기간 밖'),
+        ];
+      final back = Gathering.fromRow({...g.toRow(), 'id': g.id});
+      expect(back.schedule, hasLength(4));
+      expect(
+        back.scheduleOn(start).map((e) => e.title),
+        ['개회예배', '조모임'], // 시간 순
+      );
+      expect(back.scheduleOn(DateTime(2026, 10, 11)), isEmpty);
+      expect(back.hasSchedule, isTrue);
+      // 기간 밖 항목은 어느 날짜에도 안 뜨지만 저장은 돼 있다.
+      expect(back.days.any((d) => back.scheduleOn(d).length == 1), isTrue);
+      expect(sample().hasSchedule, isFalse);
+    });
+  });
+
+  group('집회 구분', () {
+    test('구분은 서버 행을 거쳐도 그대로, 모르는 값은 집회로 읽는다', () {
+      final h = homestay();
+      expect(Gathering.fromRow({...h.toRow(), 'id': 'h1'}).isHomestay, isTrue);
+      expect(h.copy().kind, GatheringKind.homestay);
+      expect(sample().toRow()['kind'], 'gathering');
+      expect(Gathering.fromRow({'name': 'x', 'kind': '엉뚱'}).isHomestay, isFalse);
+    });
+  });
+
+  group('홈스테이: 신청 → 가정(방)', () {
+    final g = homestay();
+
+    test('확정된 신청마다 방이 생긴다 — 이름·정원·연락처', () {
+      final s = tmpStore();
+      final r = s.syncHomestayRooms(g, [
+        homeReg('1', '김호스트', capacity: '3'),
+        homeReg('2', '이호스트'), // 수용 인원 없음 → 기본값
+        homeReg('3', '대기중', status: RegStatus.pending),
+      ]);
+      expect((r.added, r.updated, r.removed), (2, 0, 0));
+      expect(s.event.rooms, hasLength(2));
+      final a = s.event.rooms.firstWhere((x) => x.registrationId == '1');
+      expect(a.roomNo, '김호스트');
+      expect(a.capacity, 3);
+      expect(a.note, '010-1111-0001'); // 보기 좋은 모양으로
+      expect(
+        s.event.rooms.firstWhere((x) => x.registrationId == '2').capacity,
+        defaultHomeCapacity,
+      );
+    });
+
+    test('몇 번 불러도 같다. 이름은 따라가고 정원은 운영자 것이 이긴다', () {
+      final s = tmpStore();
+      s.syncHomestayRooms(g, [homeReg('1', '김호스트', capacity: '3')]);
+      final again = s.syncHomestayRooms(g, [
+        homeReg('1', '김호스트', capacity: '3'),
+      ]);
+      expect((again.added, again.updated, again.removed), (0, 0, 0));
+
+      s.event.rooms.first.capacity = 9; // 운영자가 고침
+      final renamed = s.syncHomestayRooms(g, [
+        homeReg('1', '김호스트네', capacity: '3'),
+      ]);
+      expect((renamed.added, renamed.updated), (0, 1));
+      expect(s.event.rooms.first.roomNo, '김호스트네');
+      expect(s.event.rooms.first.capacity, 9);
+    });
+
+    test('확정이 풀리면 방이 빠지고 배정도 풀린다. remove: false 면 그대로 둔다', () {
+      final s = tmpStore();
+      s.syncHomestayRooms(g, [homeReg('1', '김호스트')]);
+      final room = s.event.rooms.single;
+      s.event.attendees.add(
+        Attendee(
+          id: 'a1',
+          name: '손님',
+          gender: 'M',
+          age: 30,
+          checkIn: start,
+          checkOut: end,
+          roomId: room.id,
+        ),
+      );
+
+      final pending = [homeReg('1', '김호스트', status: RegStatus.pending)];
+      expect(s.homestayWouldRemove(g, pending).single.roomNo, '김호스트');
+      s.syncHomestayRooms(g, pending, remove: false);
+      expect(s.event.rooms, hasLength(1));
+
+      final r = s.syncHomestayRooms(g, pending);
+      expect(r.removed, 1);
+      expect(s.event.rooms, isEmpty);
+      expect(s.event.attendees.single.roomId, isNull); // 손님은 미배정으로
+    });
+
+    test('신청을 취소·삭제하면 그 가정이 방배정에서 빠진다', () {
+      final s = tmpStore();
+      s.syncHomestayRooms(g, [homeReg('1', '김호스트')]);
+      s.event.attendees.add(
+        Attendee(
+          id: 'a1',
+          name: '손님',
+          gender: 'M',
+          age: 30,
+          checkIn: start,
+          checkOut: end,
+          roomId: s.event.rooms.single.id,
+        ),
+      );
+      expect(s.wouldLoseRoom('1').single.name, '손님');
+      final n = s.removeRegistration('1');
+      expect((n.people, n.rooms), (0, 1));
+      expect(s.event.rooms, isEmpty);
+      expect(s.event.attendees.single.roomId, isNull);
+    });
+
+    test('새 집회로 방을 복사하면 신청 연결은 풀린다', () {
+      final s = tmpStore();
+      s.syncHomestayRooms(g, [homeReg('1', '김호스트')]);
+      final copied = copyEvent(
+        s.event,
+        name: '내년',
+        start: DateTime(2027, 10, 8),
+        end: DateTime(2027, 10, 10),
+        rooms: true,
+      );
+      expect(copied.rooms.single.registrationId, isNull);
+    });
+
+    test('배정 결과는 조회 응답에서 읽는다', () {
+      final r = Registration.fromRow({
+        'id': 'r1',
+        'gathering_id': 'h1',
+        'phone': '01011112222',
+        'people': [],
+        'quoted': 0,
+        'status': 'confirmed',
+        'created_at': '2026-09-10T00:00:00Z',
+        'assigned': [
+          {'name': '손님1', 'gender': 'F', 'age': 20, 'phone': '01000001111'},
+          {'name': '손님2'},
+        ],
+      });
+      expect(r.assigned, hasLength(2));
+      expect(r.assigned.first.name, '손님1');
+      expect(r.assigned.first.phone, '01000001111');
+      expect(r.assigned.last.age, 0);
+      expect(r.assigned.last.phone, isNull);
+      // 운영자가 읽는 registrations 행에는 assigned 가 없다.
+      expect(reg('r2', RegStatus.pending, []).assigned, isEmpty);
+    });
   });
 }

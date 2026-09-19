@@ -10,6 +10,7 @@ import 'package:room_assignment/screens/attendees.dart' show AttendeesScreen;
 import 'package:room_assignment/screens/gathering_settings.dart';
 import 'package:room_assignment/screens/gatherings.dart';
 import 'package:room_assignment/screens/registrations.dart';
+import 'package:room_assignment/screens/rooms.dart';
 import 'package:room_assignment/theme.dart';
 
 /// 메모리 서버. 실제 서버 함수(supabase/schema.sql)와 같은 규칙만 흉내 낸다.
@@ -238,6 +239,39 @@ Gathering sample() => Gathering(
     dayOnly: {AgeGroup.adult: 30000},
     perRegistration: 10000,
   ),
+);
+
+Gathering homestay() => Gathering(
+  id: 'h1',
+  name: '겨울 홈스테이',
+  kind: GatheringKind.homestay,
+  start: DateTime(2026, 10, 9),
+  end: DateTime(2026, 10, 11),
+  open: true,
+  formFields: [homestayCapacityField],
+);
+
+/// 홈스테이 신청 한 건 (가정).
+Registration homeReg({
+  RegStatus status = RegStatus.confirmed,
+  String capacity = '3',
+  List<AssignedGuest> assigned = const [],
+}) => Registration(
+  id: 'h-r1',
+  gatheringId: 'h1',
+  phone: '01012345678',
+  people: [
+    Person(
+      id: 'h1',
+      name: '김호스트',
+      gender: 'M',
+      birthYear: 1980,
+      extra: {homestayCapacityField: capacity},
+    ),
+  ],
+  status: status,
+  createdAt: DateTime(2026, 9, 10),
+  assigned: assigned,
 );
 
 Registration pendingReg({int? quoted}) => Registration(
@@ -475,6 +509,83 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('80,000원'), findsOneWidget);
       expect(find.textContaining('성인 · 1박'), findsOneWidget);
+    });
+
+    testWidgets('일정표를 적어 두면 집회 페이지에 날짜별로 보인다', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(
+          sample()
+            ..schedule = [
+              (date: DateTime(2026, 10, 9), time: '19:30', title: '개회예배'),
+              (date: DateTime(2026, 10, 9), time: '21:00', title: '조모임'),
+              (date: DateTime(2027, 1, 1), time: '', title: '기간 밖 일정'),
+            ],
+        );
+      setView(tester, const Size(400, 2000));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('일정'), findsOneWidget);
+      expect(find.text('10-09(금)'), findsOneWidget);
+      expect(find.text('19:30'), findsOneWidget);
+      expect(find.text('개회예배'), findsOneWidget);
+      expect(find.text('조모임'), findsOneWidget);
+      expect(find.text('기간 밖 일정'), findsNothing); // 기간 밖은 안 보인다
+    });
+
+    testWidgets('일정이 없으면 일정 칸 자체가 없다', (tester) async {
+      setView(tester, const Size(400, 1400));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(find.text('일정'), findsNothing);
+    });
+
+    testWidgets('홈스테이 조회: 배정된 참석자가 보이고, 배정 전이면 안내', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(homestay());
+      fake.regs.add(homeReg());
+      fake.pins['h-r1'] = '1234';
+      setView(tester, const Size(400, 1600));
+      await pumpPage(tester, LookupPage(gathering: homestay()));
+      await tester.enterText(
+        find.widgetWithText(TextField, '휴대폰번호'),
+        '01012345678',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '1234',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '조회'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('우리 집에 배정된 참석자'), findsOneWidget);
+      expect(find.textContaining('아직 배정 전입니다'), findsOneWidget);
+
+      // 운영자가 배정한 뒤 다시 조회하면 명단이 뜬다
+      fake.regs.single.assigned = [
+        (
+          name: '손님1',
+          gender: 'F',
+          age: 20,
+          phone: '01000001111',
+          cell: '믿음셀',
+          zone: null,
+        ),
+      ];
+      await tester.tap(find.widgetWithText(TextButton, '다른 번호로 조회'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '1234',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '조회'));
+      await tester.pumpAndSettle();
+      expect(find.text('1명'), findsOneWidget);
+      expect(find.text('손님1'), findsOneWidget);
+      expect(find.text('여 · 20세 · 믿음셀'), findsOneWidget);
+      expect(find.text('010-0000-1111'), findsOneWidget);
     });
 
     testWidgets('조회: 휴대폰+PIN → 상태, 입금대기면 취소', (tester) async {
@@ -765,6 +876,102 @@ void main() {
       final e = Event.fromJson(fake.plans[g2.id]!);
       expect(e.rooms.single.roomNo, '301');
       expect(e.attendees.single.roomId, isNull);
+    });
+
+    testWidgets('새 집회: 홈스테이를 고르면 수용 인원 항목이 붙는다', (tester) async {
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('새 집회'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('홈스테이'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('신청자가 재워 줄 가정입니다'), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextField, '집회 이름 *'),
+        '겨울 홈스테이',
+      );
+      await tester.tap(find.text('만들기'));
+      await tester.pumpAndSettle();
+
+      final g2 = fake.gs.firstWhere((g) => g.id != 'g1');
+      expect(g2.kind, GatheringKind.homestay);
+      expect(g2.formFields, [homestayCapacityField]);
+    });
+
+    testWidgets('신청·입금: 홈스테이는 확정하면 그 이름으로 가정이 생긴다', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(homestay());
+      fake.regs.add(homeReg(status: RegStatus.pending));
+      current.value = homestay();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      await tester.tap(find.text('김호스트').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '입금 확인'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '확정'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      expect(store.event.attendees, isEmpty); // 신청자는 참석자가 아니라 방 주인
+      final room = store.event.rooms.single;
+      expect((room.roomNo, room.capacity), ('김호스트', 3));
+      expect(room.registrationId, 'h-r1');
+      expect(find.textContaining('가정 1곳을 방으로 만들었습니다'), findsOneWidget);
+    });
+
+    testWidgets('가정 관리: 확정된 신청을 가정으로 가져온다', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(homestay());
+      fake.regs.add(homeReg());
+      current.value = homestay();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RoomsScreen()));
+      expect(find.text('가정 관리'), findsOneWidget);
+      expect(find.textContaining('가정이 없습니다'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '신청에서 가져오기'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(store.event.rooms.single.roomNo, '김호스트');
+      expect(find.textContaining('추가 1'), findsOneWidget);
+
+      // 이름으로 직접 추가도 된다 (호수 범위 파서를 타지 않는다)
+      await tester.tap(find.widgetWithText(FilledButton, '가정 직접 추가'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '가정 이름'),
+        '박호스트',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(store.event.rooms.map((r) => r.roomNo), ['김호스트', '박호스트']);
+      expect(store.event.rooms.last.registrationId, isNull);
+    });
+
+    testWidgets('집회 설정: 일정표를 적어 저장하면 서버로 간다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3000));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(tester.takeException(), isNull);
+      expect(find.text('일정표'), findsOneWidget);
+      expect(find.text('10-09(금)'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, '줄 추가').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '19:30'), '19:30');
+      await tester.enterText(find.widgetWithText(TextField, '개회예배'), '개회예배');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final saved = fake.gs.single.schedule.single;
+      expect(
+        (saved.date, saved.time, saved.title),
+        (DateTime(2026, 10, 9), '19:30', '개회예배'),
+      );
     });
 
     testWidgets('신청·입금: 로그인 전엔 로그인 안내', (tester) async {

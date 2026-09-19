@@ -263,14 +263,49 @@ class Bank {
       : Bank();
 }
 
+/// 집회 구분. 만들 때 정하고 나중에 바꾸지 않는다 (이미 만든 방·배정과 어긋난다).
+enum GatheringKind {
+  /// 신청자가 참석자가 된다. 방은 운영자가 호수로 만든다.
+  gathering('집회'),
+
+  /// 신청자가 재워 줄 가정이다. 확정하면 그 이름으로 방이 생기고,
+  /// 운영자가 따로 등록한 참석자를 그 방에 배치한다.
+  homestay('홈스테이');
+
+  const GatheringKind(this.label);
+  final String label;
+
+  static GatheringKind parse(Object? s) => values.asNameMap()['$s'] ?? gathering;
+}
+
+/// 홈스테이 신청서에서 수용 인원을 받는 사용자 정의 항목 이름.
+/// 전용 칸을 새로 만들지 않고 이미 있는 항목 기능을 쓴다 — 값은 `people[0].extra` 에 들어간다.
+const homestayCapacityField = '수용 인원';
+
+/// 일정표 한 줄. [time] 은 '09:00' 같은 자유 문자열 — 비우면 종일 일정.
+typedef ScheduleItem = ({DateTime date, String time, String title});
+
+/// 홈스테이 신청자(가정)에게 보여 줄, 그 집에 배정된 참석자 한 명.
+/// 운영자 메모(note)는 담지 않는다 — 신청자에게 보일 내용이 아니다.
+typedef AssignedGuest = ({
+  String name,
+  String gender,
+  int age,
+  String? phone,
+  String? cell,
+  String? zone,
+});
+
 /// 집회 설정 (서버 `gatherings` 한 행).
 class Gathering {
   Gathering({
     this.id = '',
     required this.name,
+    this.kind = GatheringKind.gathering,
     required this.start,
     required this.end,
     List<String>? themes,
+    List<ScheduleItem>? schedule,
     this.place,
     this.address,
     this.notice,
@@ -287,6 +322,7 @@ class Gathering {
     String? ministerNotice,
   }) : ministerNotice = ministerNotice ?? defaultMinisterNotice,
        themes = themes ?? [],
+       schedule = schedule ?? [],
        fee = fee ?? FeeRule(),
        bank = bank ?? Bank(),
        formFields = formFields ?? [],
@@ -299,8 +335,16 @@ class Gathering {
   /// '' = 아직 서버에 저장 안 됨.
   String id;
   String name;
+
+  /// 집회냐 홈스테이냐. 홈스테이는 확정한 신청마다 방이 생긴다 (store.syncHomestayRooms).
+  GatheringKind kind;
+  bool get isHomestay => kind == GatheringKind.homestay;
   DateTime start, end;
   List<String> themes;
+
+  /// 일정표. 기간 밖 날짜의 항목은 화면에 안 보이지만 지우지도 않는다
+  /// (날짜를 잘못 바꿨다 되돌리면 그대로 살아 있게).
+  List<ScheduleItem> schedule;
   String? place, address, notice, posterUrl, backgroundUrl;
   FeeRule fee;
   Bank bank;
@@ -352,6 +396,16 @@ class Gathering {
           .map((d) => DateTime(d.year, d.month, d.day))
           .toList();
 
+  /// [d] 날의 일정 (시간 순). 운영자 편집 화면과 신청 웹이 같은 순서를 본다.
+  List<ScheduleItem> scheduleOn(DateTime d) =>
+      [
+        for (final s in schedule)
+          if (_day(s.date) == _day(d)) s,
+      ]..sort((a, b) => a.time.compareTo(b.time));
+
+  /// 집회 기간 안에 적어 둔 일정이 하나라도 있는가.
+  bool get hasSchedule => days.any((d) => scheduleOn(d).isNotEmpty);
+
   Quote quoteFor(
     List<Person> people,
     DateTime appliedAt, {
@@ -370,7 +424,12 @@ class Gathering {
   /// 서버에 쓰는 칸들. id 는 넣지 않는다 (insert 때 서버가 만든다).
   Map<String, dynamic> toRow() => {
     'name': name,
+    'kind': kind.name,
     'themes': themes,
+    'schedule': [
+      for (final s in schedule)
+        {'date': ymd(s.date), 'time': s.time, 'title': s.title},
+    ],
     'place': place,
     'address': address,
     'notice': notice,
@@ -392,8 +451,10 @@ class Gathering {
   factory Gathering.fromRow(Map r) => Gathering(
     id: '${r['id'] ?? ''}',
     name: '${r['name'] ?? ''}',
+    kind: GatheringKind.parse(r['kind']),
     start: _date(r['start_date']) ?? DateTime.now(),
     end: _date(r['end_date']) ?? DateTime.now(),
+    schedule: _scheduleIn(r['schedule']),
     themes: [for (final t in (r['themes'] as List? ?? [])) '$t'],
     place: _str(r['place']),
     address: _str(r['address']),
@@ -447,8 +508,9 @@ class Registration {
     this.paidAt,
     this.adminMemo,
     this.discount = Discount.none,
+    List<AssignedGuest>? assigned,
     required this.createdAt,
-  });
+  }) : assigned = assigned ?? [];
 
   String id, gatheringId, phone;
 
@@ -462,6 +524,10 @@ class Registration {
   RegStatus status;
   int paid;
   DateTime? paidAt;
+
+  /// 홈스테이에서 이 가정에 배정된 참석자. `lookup_registration` 이 같이 돌려준다.
+  /// 운영자 앱이 읽는 `registrations` 행에는 없어서 그때는 항상 비어 있다.
+  List<AssignedGuest> assigned;
 
   /// 신청 시각 (한국 시간). 사전등록 할인 기준.
   DateTime createdAt;
@@ -490,6 +556,18 @@ class Registration {
       amount: _int(r['discount_amount']),
       note: _str(r['discount_note']),
     ),
+    assigned: [
+      for (final a in (r['assigned'] as List? ?? []))
+        if (a is Map)
+          (
+            name: '${a['name'] ?? ''}',
+            gender: '${a['gender'] ?? ''}',
+            age: _int(a['age']),
+            phone: _str(a['phone']),
+            cell: _str(a['cell']),
+            zone: _str(a['zone']),
+          ),
+    ],
     createdAt: (DateTime.tryParse('${r['created_at']}') ?? DateTime.now())
         .toLocal(),
   );
@@ -714,6 +792,18 @@ Map<AgeGroup, int> _groupsIn(Object? m) {
 int _int(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
 String? _str(Object? v) => v == null || '$v'.isEmpty ? null : '$v';
+
+/// 서버의 schedule jsonb → 일정 목록. 날짜가 없거나 깨진 줄은 버린다.
+List<ScheduleItem> _scheduleIn(Object? j) => [
+  if (j is List)
+    for (final e in j)
+      if (e is Map && _date(e['date']) != null)
+        (
+          date: _date(e['date'])!,
+          time: '${e['time'] ?? ''}',
+          title: '${e['title'] ?? ''}',
+        ),
+];
 
 /// "2026-10-09" → 그 날 0시(현지). 없거나 깨졌으면 null.
 DateTime? _date(Object? v) {

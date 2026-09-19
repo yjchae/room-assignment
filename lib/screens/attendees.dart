@@ -153,22 +153,25 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                   ],
                 ),
                 const SizedBox(width: 12),
-                Tooltip(
-                  message: current.value == null
-                      ? '서버에 연결된 집회에서만 쓸 수 있습니다'
-                      : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.download_outlined, size: 18),
-                    label: const Text('신청에서 가져오기'),
-                    onPressed: current.value == null
-                        ? null
-                        : () async {
-                            await importRegistrations(context);
-                            _loadRegs();
-                          },
+                // 홈스테이는 신청이 참석자가 아니라 방(가정)이 된다 — 그 버튼은 [가정 관리]에 있다.
+                if (current.value?.isHomestay != true) ...[
+                  Tooltip(
+                    message: current.value == null
+                        ? '서버에 연결된 집회에서만 쓸 수 있습니다'
+                        : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.download_outlined, size: 18),
+                      label: const Text('신청에서 가져오기'),
+                      onPressed: current.value == null
+                          ? null
+                          : () async {
+                              await importRegistrations(context);
+                              _loadRegs();
+                            },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
+                  const SizedBox(width: 12),
+                ],
                 if (pick != null) ...[
                   InputChip(
                     label: Text('${pick!.$1}: ${pick!.$2}'),
@@ -588,7 +591,8 @@ class _StatsPanel extends StatelessWidget {
   );
 }
 
-/// 입금 확인된 신청 → 참석자. 방이 배정된 사람이 빠지게 되면 먼저 보여주고 묻는다.
+/// 확정된 신청 → 방배정. 집회는 참석자로, 홈스테이는 방(가정)으로 가져온다.
+/// 이미 배정된 사람이 빠지게 되면 먼저 보여주고 묻는다.
 Future<void> importRegistrations(BuildContext context) async {
   final g = current.value;
   if (g == null) return;
@@ -596,6 +600,31 @@ Future<void> importRegistrations(BuildContext context) async {
   if (!await ensureAdmin(context)) return;
   try {
     final regs = await remote.registrations(g.id);
+    if (g.isHomestay) {
+      final gone = store.homestayWouldRemove(g, regs);
+      if (gone.isNotEmpty && context.mounted) {
+        final ok = await confirmDialog(
+          context,
+          title: '사람이 배정된 가정 ${gone.length}곳이 빠집니다',
+          body:
+              '신청이 취소됐거나 입금대기로 되돌려진 가정입니다. 빼면 그 집에 배정된 사람도 미배정이 됩니다.\n\n'
+              '${gone.take(20).map((r) => '· ${r.roomNo} (${store.occupantsOf(r).length}명)').join('\n')}'
+              '${gone.length > 20 ? '\n… 외 ${gone.length - 20}곳' : ''}',
+          action: '빼고 가져오기',
+          danger: true,
+        );
+        if (!ok) return;
+      }
+      final r = store.syncHomestayRooms(g, regs);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '신청에서 가져옴: 추가 ${r.added} · 이름 변경 ${r.updated} · 제거 ${r.removed}',
+          ),
+        ),
+      );
+      return;
+    }
     final gone = store.syncWouldRemove(g, regs);
     if (gone.isNotEmpty && context.mounted) {
       final ok = await confirmDialog(

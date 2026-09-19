@@ -4,14 +4,17 @@ import '../main.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/room_board.dart' show RoomBoard, RoomLegend;
+import 'attendees.dart' show importRegistrations;
 
 /// 방 관리. 방배정과 같은 보드를 쓰고, 방을 누르면 수정 창이 뜬다.
+/// 홈스테이에서는 방 = 가정이고, 확정된 신청에서 가져온다.
 class RoomsScreen extends StatelessWidget {
   const RoomsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final rooms = store.event.rooms;
+    final homestay = current.value?.isHomestay == true;
     final free = rooms
         .map(store.freeSeats)
         .fold(0, (s, x) => s + (x > 0 ? x : 0));
@@ -29,17 +32,25 @@ class RoomsScreen extends StatelessWidget {
             runSpacing: 12,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const SectionTitle(
-                '방 관리',
-                subtitle: '방을 누르면 수정 · 추가할 때 "301-310" 처럼 범위로 한 번에',
+              SectionTitle(
+                homestay ? '가정 관리' : '방 관리',
+                subtitle: homestay
+                    ? '확정된 신청에서 가정을 가져옵니다. 가정을 누르면 정원·기타를 고칠 수 있습니다'
+                    : '방을 누르면 수정 · 추가할 때 "301-310" 처럼 범위로 한 번에',
               ),
-              _kpi('방', '${rooms.length}', '개'),
+              _kpi(homestay ? '가정' : '방', '${rooms.length}', homestay ? '곳' : '개'),
               _kpi('총 수용', '${store.totalCapacity}', '명'),
               _kpi('빈자리', '$free', '석'),
+              if (homestay)
+                OutlinedButton.icon(
+                  onPressed: () => importRegistrations(context),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('신청에서 가져오기'),
+                ),
               FilledButton.icon(
                 onPressed: () => _roomDialog(context),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('방 추가'),
+                icon: Icon(Icons.add, size: 18),
+                label: Text(homestay ? '가정 직접 추가' : '방 추가'),
               ),
             ],
           ),
@@ -52,9 +63,11 @@ class RoomsScreen extends StatelessWidget {
         RoomBoard(
           rooms: rooms,
           onTap: (r) => _roomDialog(context, r),
-          emptyMessage:
-              '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.\n'
-              '건물이 여러 개면 건물 이름(예: 반석관)도 같이 넣으세요.',
+          emptyMessage: homestay
+              ? '가정이 없습니다. [신청·입금]에서 신청을 확정하면 그 이름으로 가정이 생깁니다.\n'
+                    '이미 확정한 신청은 [신청에서 가져오기]로 한 번에 가져옵니다.'
+              : '방이 없습니다. [방 추가]로 "301-310" 처럼 범위를 넣으면 한 번에 만들어집니다.\n'
+                    '건물이 여러 개면 건물 이름(예: 반석관)도 같이 넣으세요.',
         ),
       ],
     );
@@ -109,12 +122,18 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
   final noteCtl = TextEditingController(text: room?.note ?? '');
   String? gender = room?.gender;
   final messenger = ScaffoldMessenger.of(context);
+  // 홈스테이는 방이 가정이다 — 이름이 호수가 아니라서 범위(301-310)로 만들지 않는다.
+  final homestay = current.value?.isHomestay == true;
 
   final action = await showDialog<String>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setLocal) => AlertDialog(
-        title: Text(room == null ? '방 추가' : '방 ${room.label} 수정'),
+        title: Text(
+          room == null
+              ? (homestay ? '가정 추가' : '방 추가')
+              : '${homestay ? '가정' : '방'} ${room.label} 수정',
+        ),
         content: SizedBox(
           width: 360,
           child: Column(
@@ -125,10 +144,12 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
               const SizedBox(height: 4),
               TextField(
                 controller: buildingCtl,
-                decoration: const InputDecoration(
-                  labelText: '건물 (선택)',
-                  hintText: '예: 반석관',
-                  helperText: '건물이 여러 개일 때만. 건물이 다르면 같은 호수도 따로 만들어집니다.',
+                decoration: InputDecoration(
+                  labelText: homestay ? '묶음 (선택)' : '건물 (선택)',
+                  hintText: homestay ? '예: 서쪽 마을' : '예: 반석관',
+                  helperText: homestay
+                      ? '가정을 지역·교회로 묶어 보고 싶을 때만 씁니다.'
+                      : '건물이 여러 개일 때만. 건물이 다르면 같은 호수도 따로 만들어집니다.',
                   helperMaxLines: 2,
                 ),
               ),
@@ -136,8 +157,12 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
                 controller: noCtl,
                 autofocus: true,
                 decoration: InputDecoration(
-                  labelText: '호수',
-                  helperText: room == null ? '범위 가능: 301-310, 401' : null,
+                  labelText: homestay ? '가정 이름' : '호수',
+                  helperText: homestay
+                      ? '보통은 [신청에서 가져오기]로 신청자 이름이 들어옵니다.'
+                      : room == null
+                      ? '범위 가능: 301-310, 401'
+                      : null,
                 ),
               ),
               TextField(
@@ -241,6 +266,26 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
       ..gender = gender
       ..note = note;
     store.commit();
+    return;
+  }
+
+  if (homestay) {
+    final no = noCtl.text.trim();
+    if (no.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('가정 이름을 입력하세요')));
+      return;
+    }
+    store.addRoom(
+      Room(
+        id: store.newId(),
+        roomNo: no,
+        building: building,
+        capacity: cap,
+        gender: gender,
+        note: note,
+      ),
+    );
+    messenger.showSnackBar(SnackBar(content: Text('$no 가정을 추가했습니다.')));
     return;
   }
 

@@ -80,6 +80,17 @@ class Shell extends StatelessWidget {
     (Icons.space_dashboard_outlined, '현황'),
   ];
 
+  /// 홈스테이는 방이 곧 가정이다. 메뉴 이름만 바꾸고 화면은 그대로 쓴다.
+  static (IconData, String) dest(int i) {
+    final (icon, label) = _dest[i];
+    if (current.value?.isHomestay != true) return (icon, label);
+    return (icon, switch (label) {
+      '방 관리' => '가정 관리',
+      '방배정' => '가정 배정',
+      _ => label,
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -173,7 +184,7 @@ class _SideNav extends StatelessWidget {
 
   Widget _item(int i) {
     final on = i == index;
-    final (icon, label) = Shell._dest[i];
+    final (icon, label) = Shell.dest(i);
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Semantics(

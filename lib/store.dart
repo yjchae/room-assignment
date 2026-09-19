@@ -253,14 +253,107 @@ class Store extends ChangeNotifier {
     );
   }
 
-  /// 신청 [registrationId] 에서 온 참석자를 뺀다 (신청 취소 때). 뺀 사람 수.
+  // --- 홈스테이: 신청 → 방(가정) ---
+
+  /// 확정된 신청 1건 = 방 1개. 몇 번 불러도 결과가 같다 (신청 id 로 맞춘다).
+  ///
+  /// - 방 이름은 신청자 이름, 정원은 신청서의 '수용 인원'([homestayCapacityField], 기본
+  ///   [defaultHomeCapacity]), 기타는 전화번호.
+  /// - 이미 있는 방은 **이름만** 맞춘다. 정원·기타·자리는 운영자가 고친 것이 이긴다
+  ///   (신청자는 확정 뒤 신청을 못 고치므로 정원은 만들 때 한 번이면 충분하다).
+  /// - [remove] 가 false 면 확정이 풀린 신청의 방을 지우지 않는다 — 확정 버튼이 자동으로
+  ///   부를 때. 방이 말없이 사라지면 안 되므로, 지우는 건 경고를 보여주는 [신청에서 가져오기]에서만.
+  ({int added, int updated, int removed}) syncHomestayRooms(
+    Gathering g,
+    List<Registration> regs, {
+    bool remove = true,
+  }) {
+    final want = {
+      for (final r in regs)
+        if (r.status == RegStatus.confirmed) r.id: r,
+    };
+    final have = {
+      for (final room in event.rooms)
+        if (room.registrationId != null) room.registrationId!: room,
+    };
+    var added = 0, updated = 0;
+    for (final r in want.values) {
+      final room = have[r.id];
+      if (room == null) {
+        event.rooms.add(
+          Room(
+            id: newId(),
+            roomNo: r.applicant,
+            capacity: homeCapacityOf(r),
+            note: fmtPhone(r.phone),
+            registrationId: r.id,
+          ),
+        );
+        added++;
+      } else if (room.roomNo != r.applicant) {
+        room.roomNo = r.applicant;
+        updated++;
+      }
+    }
+    var removed = 0;
+    if (remove) {
+      for (final room in [...event.rooms]) {
+        final id = room.registrationId;
+        if (id == null || want.containsKey(id)) continue;
+        deleteRoom(room); // 배정돼 있던 사람은 미배정으로 돌아간다
+        removed++;
+      }
+    }
+    if (added + updated > 0) commit();
+    return (added: added, updated: updated, removed: removed);
+  }
+
+  /// [syncHomestayRooms] 를 하면 지워질 방 중 사람이 배정된 방. 지우기 전에 보여준다.
+  List<Room> homestayWouldRemove(Gathering g, List<Registration> regs) {
+    final want = {
+      for (final r in regs)
+        if (r.status == RegStatus.confirmed) r.id,
+    };
+    return [
+      for (final room in event.rooms)
+        if (room.registrationId != null &&
+            !want.contains(room.registrationId) &&
+            occupantsOf(room).isNotEmpty)
+          room,
+    ];
+  }
+
+  /// 신청 [registrationId] 에서 온 것을 방배정에서 뺀다 (신청 취소·삭제 때).
+  /// 집회는 그 신청의 참석자를, 홈스테이는 그 신청으로 만든 방(가정)을 뺀다.
   /// 붙여넣기·직접 추가한 사람은 신청 id 가 없으니 건드리지 않는다.
-  int removeRegistration(String registrationId) {
+  ({int people, int rooms}) removeRegistration(String registrationId) {
+    final rooms = [
+      for (final r in event.rooms)
+        if (r.registrationId == registrationId) r,
+    ];
+    for (final r in rooms) {
+      deleteRoom(r); // 배정돼 있던 사람은 미배정으로 돌아간다
+    }
     final before = event.attendees.length;
     event.attendees.removeWhere((a) => a.registrationId == registrationId);
     final n = before - event.attendees.length;
     if (n > 0) commit();
-    return n;
+    return (people: n, rooms: rooms.length);
+  }
+
+  /// 이 신청을 취소·삭제하면 방 배정이 풀리는 사람들.
+  /// 집회는 그 신청으로 온 사람, 홈스테이는 그 가정에 배정된 손님.
+  List<Attendee> wouldLoseRoom(String registrationId) {
+    final roomIds = {
+      for (final r in event.rooms)
+        if (r.registrationId == registrationId) r.id,
+    };
+    return [
+      for (final a in event.attendees)
+        if (a.roomId != null &&
+            (roomIds.contains(a.roomId) || a.registrationId == registrationId))
+          a,
+    ];
   }
 
   bool _sameSource(Attendee a, Attendee b) =>
@@ -499,6 +592,16 @@ class Store extends ChangeNotifier {
     event.attendees.removeWhere((a) => ids.contains(a.id));
     commit();
   }
+}
+
+/// 홈스테이 방 정원의 기본값. 신청서에 '수용 인원'을 안 적었거나 숫자가 아닐 때.
+const defaultHomeCapacity = 4;
+
+/// 홈스테이 신청서에 적힌 수용 인원. 신청자 본인 칸([Registration.people] 첫 사람)에서 읽는다.
+int homeCapacityOf(Registration r) {
+  final raw = r.people.firstOrNull?.extra[homestayCapacityField] ?? '';
+  final n = int.tryParse(digitsOnly(raw));
+  return n == null || n <= 0 ? defaultHomeCapacity : n;
 }
 
 /// "301-310", "301~310", "301" -> ["301","302",...]. 잘못된 입력은 빈 목록.
