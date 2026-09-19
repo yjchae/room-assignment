@@ -279,7 +279,7 @@ class Store extends ChangeNotifier {
     var added = 0, updated = 0;
     for (final r in want.values) {
       final room = have[r.id];
-      final (from, to) = homeWindowOf(g, r);
+      final (from, to, gapNights) = homeWindowOf(g, r);
       if (room == null) {
         event.rooms.add(
           Room(
@@ -290,6 +290,7 @@ class Store extends ChangeNotifier {
             registrationId: r.id,
             hostFrom: from,
             hostTo: to,
+            hostNights: gapNights,
           ),
         );
         added++;
@@ -297,6 +298,9 @@ class Store extends ChangeNotifier {
         // 이 칸이 생기기 전에 만든 가정은 비어 있다 — 그때만 채운다.
         room.hostFrom ??= from;
         room.hostTo ??= to;
+        // 안 받는 밤 목록은 신청서에서만 온다(운영자가 고칠 수 없다).
+        // 이 칸이 생기기 전에 만든 가정도 채워지도록 늘 다시 맞춘다.
+        room.hostNights = gapNights;
         if (room.roomNo != r.applicant) {
           room.roomNo = r.applicant;
           updated++;
@@ -669,19 +673,26 @@ class Store extends ChangeNotifier {
   }
 }
 
-/// 홈스테이 가정이 신청서에서 고른 "받을 수 있는 기간" (처음 날 ~ 마지막 날 다음날).
+/// 홈스테이 가정이 신청서에서 고른 "받을 수 있는 기간" (처음 날 ~ 마지막 날 다음날)과,
+/// 중간에 안 고른 밤이 있을 때만 그 밤 목록([Room.hostNights], 없으면 null).
 /// 날짜를 안 골랐으면 집회 전체 기간.
 /// 마지막으로 고른 날은 돌아가는 날이라 밤이 아니다 — 참석자 일정([attendeeOf])과 같은 규칙으로 센다.
 /// 하루만 고른 가정은 그날 밤 재워 주는 것으로 본다.
-(DateTime, DateTime) homeWindowOf(Gathering g, Registration r) {
+(DateTime, DateTime, List<DateTime>?) homeWindowOf(
+  Gathering g,
+  Registration r,
+) {
   final days = [for (final p in r.people) ...p.daysIn(g.start, g.end)]..sort();
-  if (days.isEmpty) return (dateOnly(g.start), dateOnly(g.end));
-  final nights = nightsOf(days);
-  final last = nights.lastOrNull ?? days.last;
-  return (
-    nights.firstOrNull ?? days.first,
-    DateTime(last.year, last.month, last.day + 1),
-  );
+  if (days.isEmpty) return (dateOnly(g.start), dateOnly(g.end), null);
+  final nights = [
+    for (final d in nightsOf(days)) dateOnly(d),
+  ]..sort();
+  final from = nights.firstOrNull ?? dateOnly(days.first);
+  final last = nights.lastOrNull ?? dateOnly(days.last);
+  final to = DateTime(last.year, last.month, last.day + 1);
+  final span = to.difference(from).inDays;
+  // 빈틈이 없으면 기간만으로 충분하다 — 목록은 빈틈이 있을 때만 남긴다.
+  return (from, to, nights.length < span ? nights : null);
 }
 
 /// 홈스테이 방 정원의 기본값. 신청서에 '수용 인원'을 안 적었거나 숫자가 아닐 때.

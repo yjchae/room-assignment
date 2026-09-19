@@ -172,8 +172,8 @@ void main() {
 
     // 가정이 신청한 기간과 정원이 보인다
     expect(find.text('김호스트 가정에 배정'), findsOneWidget);
-    expect(find.text('받을 수 있는 기간'), findsOneWidget);
-    expect(find.text('01-01(목) ~ 01-03(토)'), findsOneWidget);
+    expect(find.text('신청한 날'), findsOneWidget);
+    expect(find.text('01-01(목) ~ 01-03(토) (2박)'), findsOneWidget);
     expect(find.text('0 / 4명'), findsOneWidget);
     // 기본값은 "가정이 받는 기간 ∩ 아이 일정" — 3박 아이가 2박만 들어간다
     expect(find.text('2026-01-03'), findsOneWidget);
@@ -188,6 +188,66 @@ void main() {
     expect(placed.checkOut, DateTime(2026, 1, 3));
     expect(store.unassigned.single.checkIn, DateTime(2026, 1, 3));
     expect(store.event.attendees.every((a) => a.personId == 'k1'), isTrue);
+  });
+
+  testWidgets('홈스테이 배정: 신청하지 않은 날이 들어가면 경고하고 신청일을 알려준다', (
+    tester,
+  ) async {
+    current.value = Gathering(
+      id: 'h1',
+      name: '홈스테이',
+      kind: GatheringKind.homestay,
+      start: DateTime(2026, 1, 1),
+      end: DateTime(2026, 1, 4),
+    );
+    addTearDown(() => current.value = null);
+    store.event.rooms
+      ..clear()
+      ..add(
+        Room(
+          id: 'h',
+          roomNo: '김호스트',
+          capacity: 4,
+          registrationId: 'r1',
+          // 1/1 밤과 1/3 밤만 받는다 — 가운데 1/2 밤은 비워 뒀다
+          hostFrom: DateTime(2026, 1, 1),
+          hostTo: DateTime(2026, 1, 4),
+          hostNights: [DateTime(2026, 1, 1), DateTime(2026, 1, 3)],
+        ),
+      );
+    store.event.attendees.add(
+      Attendee(
+        id: 'k1',
+        name: '아이하나',
+        gender: 'M',
+        age: 12,
+        checkIn: DateTime(2026, 1, 1),
+        checkOut: DateTime(2026, 1, 4), // 3박 — 1/2 밤이 걸린다
+      ),
+    );
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('아이하나'));
+    await tester.tap(tile('김호스트'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('개 방 배정'));
+    await tester.pumpAndSettle();
+    // 신청한 날이 기간이 아니라 날짜로 보인다
+    expect(
+      find.text('01-01(목), 01-03(토) (2박)'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '전체 기간 배정'));
+    await tester.pumpAndSettle();
+    // 안 받는 밤을 짚어 주고 묻는다
+    expect(find.text('신청하지 않은 날입니다'), findsOneWidget);
+    expect(find.textContaining('신청하지 않은 밤 1박'), findsOneWidget);
+    expect(find.text('01-02(금)'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '취소'));
+    await tester.pumpAndSettle();
+    expect(store.event.attendees.single.roomId, isNull); // 취소하면 그대로
   });
 
   testWidgets('홈스테이 배정: [전체 기간 배정]은 아이 일정을 그대로 넣는다', (tester) async {

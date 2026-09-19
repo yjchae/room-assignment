@@ -92,6 +92,10 @@ class Room {
   /// 배정할 때 이 기간을 보여 주고 며칠을 넣을지 고른다.
   DateTime? hostFrom, hostTo;
 
+  /// 신청서에서 날짜를 띄엄띄엄 골라 중간에 빠진 밤이 있을 때만: 받을 수 있는 밤들.
+  /// 있으면 [hostFrom]~[hostTo] 대신 이것이 기준이다 ([Attendee.stayNights] 와 같은 규칙).
+  List<DateTime>? hostNights;
+
   Room({
     required this.id,
     required this.roomNo,
@@ -103,7 +107,26 @@ class Room {
     this.registrationId,
     this.hostFrom,
     this.hostTo,
+    this.hostNights,
   });
+
+  /// 이 가정이 [night] 밤을 받을 수 있는가. 신청서에 기간이 없으면(= 일반 방) 늘 참.
+  bool hostsOn(DateTime night) {
+    final n = dateOnly(night);
+    if (hostNights case final ns?) return ns.contains(n);
+    if (hostFrom == null || hostTo == null) return true;
+    return !n.isBefore(hostFrom!) && n.isBefore(hostTo!);
+  }
+
+  /// 신청서에 적은 받을 수 있는 밤 전체. 기간이 없으면 빈 목록.
+  List<DateTime> get hostNightList {
+    if (hostNights case final ns?) return ns;
+    final f = hostFrom, t = hostTo;
+    if (f == null || t == null) return const [];
+    return [
+      for (var d = f; d.isBefore(t); d = d.add(const Duration(days: 1))) d,
+    ];
+  }
 
   /// "301" -> 3. 숫자가 아니면 null.
   int? get floor {
@@ -129,6 +152,8 @@ class Room {
     if (registrationId != null) 'registrationId': registrationId,
     if (hostFrom != null) 'hostFrom': hostFrom!.toIso8601String(),
     if (hostTo != null) 'hostTo': hostTo!.toIso8601String(),
+    if (hostNights != null)
+      'hostNights': [for (final d in hostNights!) d.toIso8601String()],
   };
 
   factory Room.fromJson(Map<String, dynamic> j) => Room(
@@ -146,6 +171,9 @@ class Room {
     hostTo: j['hostTo'] == null
         ? null
         : dateOnly(DateTime.parse('${j['hostTo']}')),
+    hostNights: (j['hostNights'] as List?)
+        ?.map((e) => dateOnly(DateTime.parse('$e')))
+        .toList(),
   );
 }
 
@@ -290,6 +318,7 @@ Event copyEvent(
           'registrationId': null,
           'hostFrom': null,
           'hostTo': null,
+          'hostNights': null,
         }),
     ];
   }

@@ -25,6 +25,18 @@ const _gutter = 60.0;
 /// 보드를 그리는 쪽과 자리를 옮기는 쪽이 같은 값을 봐야 한다.
 const boardColumns = 10;
 
+/// 홈스테이 가정이 신청서에서 고른 "받는 날". 중간에 안 받는 밤이 있으면
+/// 기간 대신 날짜를 하나씩 적는다 (기간으로 적으면 빈 날이 감춰진다).
+/// 신청서에 기간이 없는 방(일반 집회)은 빈 문자열.
+String hostWindowLabel(Room room) {
+  final ns = room.hostNightList;
+  if (ns.isEmpty) return '';
+  final gapless = room.hostNights == null;
+  return gapless
+      ? '${mdw(ns.first)} ~ ${mdw(room.hostTo!)} (${ns.length}박)'
+      : '${ns.map(mdw).join(', ')} (${ns.length}박)';
+}
+
 /// 방 한 칸. 바탕색 = 상태, 글자 = 상태("2자리"·"1명 초과"), 숫자 = 인원/정원.
 ///
 /// 색만으로 상태를 알려주면 색각 이상이 있는 사람은 못 읽는다. 상태는 항상 글자로도 적는다.
@@ -54,9 +66,8 @@ class RoomTile extends StatelessWidget {
 
     final homestay = current.value?.isHomestay == true;
     // 홈스테이는 "언제 받을 수 있는 집인지"가 배정의 첫 기준이라 툴팁에 같이 적는다.
-    final window = homestay && room.hostFrom != null && room.hostTo != null
-        ? '\n받는 기간 ${mdw(room.hostFrom!)} ~ ${mdw(room.hostTo!)}'
-        : '';
+    final label = homestay ? hostWindowLabel(room) : '';
+    final window = label.isEmpty ? '' : '\n신청한 날 $label';
     return Tooltip(
       message:
           '${room.label}${homestay ? '' : '호'}'

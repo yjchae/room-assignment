@@ -898,7 +898,12 @@ class _AssignScreenState extends State<AssignScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _line('받을 수 있는 기간', '${mdw(openFrom)} ~ ${mdw(openTo)}'),
+                _line(
+                  '신청한 날',
+                  hostWindowLabel(room).isEmpty
+                      ? '${mdw(openFrom)} ~ ${mdw(openTo)}'
+                      : hostWindowLabel(room),
+                ),
                 _line(
                   '정원',
                   '$used / ${room.capacity}명'
@@ -973,6 +978,11 @@ class _AssignScreenState extends State<AssignScreen> {
     );
     if (choice == null || choice == 'cancel') return;
 
+    // 신청하지 않은 밤이 들어가면 먼저 알린다 (중간에 비워 둔 날은 기간만 보면 안 보인다).
+    if (!await _confirmOutside(room, chosen, all: choice == 'all', from: from, to: to)) {
+      return;
+    }
+
     final String done;
     if (choice == 'all') {
       // 아이 일정을 그대로 — 나누지 않는다.
@@ -988,6 +998,60 @@ class _AssignScreenState extends State<AssignScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(done)));
     setState(() => selected.removeAll(chosen.map((a) => a.id)));
+  }
+
+  /// 이 가정이 신청하지 않은 밤에 사람이 들어가면 그 날을 보여주고 물어본다.
+  /// 넣을 밤이 전부 신청한 날이면 아무것도 묻지 않고 true.
+  Future<bool> _confirmOutside(
+    Room room,
+    List<Attendee> chosen, {
+    required bool all,
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final nights = store.event.nights;
+    final outside = <DateTime>[];
+    for (var i = 0; i < nights.length; i++) {
+      final n = nights[i];
+      if (!all && (n.isBefore(from) || !n.isBefore(to))) continue;
+      if (room.hostsOn(n)) continue;
+      if (chosen.any((a) => stayMask(a, nights)[i])) outside.add(n);
+    }
+    if (outside.isEmpty) return true;
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('신청하지 않은 날입니다'),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${room.label} 가정이 신청하지 않은 밤 ${outside.length}박이 들어갑니다.',
+                    style: const TextStyle(color: AppColors.danger),
+                  ),
+                  const SizedBox(height: 12),
+                  _line('신청한 날', hostWindowLabel(room)),
+                  _line('안 받는 날', outside.map(mdw).join(', ')),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('그래도 배정'),
+              ),
+            ],
+          ),
+        ) ==
+        true;
   }
 
   /// 배정 창의 '항목 — 값' 한 줄.

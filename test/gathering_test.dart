@@ -890,6 +890,73 @@ void main() {
       );
     });
 
+    test('중간을 비워 두고 신청한 가정은 안 받는 밤이 방에 남는다', () {
+      // 10/9~10/14 집회에서 10/9~10/10, 10/12~10/13 만 받겠다고 신청한 가정.
+      // 10/10 밤과 10/11 밤은 안 받는다 — 기간(10/9~10/13)만 보면 감춰진다.
+      final long = Gathering(
+        id: 'h1',
+        name: '홈스테이',
+        kind: GatheringKind.homestay,
+        start: DateTime(2026, 10, 9),
+        end: DateTime(2026, 10, 14),
+        formFields: [homestayCapacityField],
+      );
+      final s = Store()
+        ..event = Event(
+          name: 'x',
+          startDate: DateTime(2026, 10, 9),
+          endDate: DateTime(2026, 10, 14),
+        );
+      final r = homeReg('1', '김호스트')
+        ..people.first.days = [
+          DateTime(2026, 10, 9),
+          DateTime(2026, 10, 10),
+          DateTime(2026, 10, 12),
+          DateTime(2026, 10, 13),
+        ];
+      s.syncHomestayRooms(long, [r]);
+      final room = s.event.rooms.single;
+      expect((room.hostFrom, room.hostTo), (
+        DateTime(2026, 10, 9),
+        DateTime(2026, 10, 13),
+      ));
+      expect(room.hostNights, [DateTime(2026, 10, 9), DateTime(2026, 10, 12)]);
+      expect(room.hostsOn(DateTime(2026, 10, 9)), isTrue);
+      expect(room.hostsOn(DateTime(2026, 10, 10)), isFalse); // 비워 둔 밤
+      expect(room.hostsOn(DateTime(2026, 10, 11)), isFalse);
+      expect(room.hostsOn(DateTime(2026, 10, 12)), isTrue);
+      // 저장을 거쳐도 남는다
+      expect(
+        Event.fromJson(s.event.toJson()).rooms.single.hostNights,
+        room.hostNights,
+      );
+
+      // 자동배정은 안 받는 밤에 묵는 사람을 이 집에 넣지 않는다
+      s.event.attendees.add(
+        Attendee(
+          id: 'k1',
+          name: '아이하나',
+          gender: 'M',
+          age: 12,
+          checkIn: DateTime(2026, 10, 9),
+          checkOut: DateTime(2026, 10, 11), // 10/9·10/10 밤
+        ),
+      );
+      expect(autoAssign(s.event, AutoRule()).unplaced.single.id, 'k1');
+
+      // 빈틈 없이 신청한 가정은 기간만으로 충분하다 (목록을 남기지 않는다)
+      final r2 = homeReg('2', '이호스트')
+        ..people.first.days = [
+          DateTime(2026, 10, 9),
+          DateTime(2026, 10, 10),
+          DateTime(2026, 10, 11),
+        ];
+      s.syncHomestayRooms(long, [r, r2]);
+      final gapless = s.event.rooms.firstWhere((x) => x.roomNo == '이호스트');
+      expect(gapless.hostNights, isNull);
+      expect(gapless.hostsOn(DateTime(2026, 10, 10)), isTrue);
+    });
+
     test('기간을 골라 배정하면 그만큼만 들어가고 나머지는 미배정으로 남는다', () {
       final s = Store()
         ..event = Event(
