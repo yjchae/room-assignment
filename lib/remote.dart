@@ -48,13 +48,55 @@ class Remote {
   bool get signedIn =>
       ready && Supabase.instance.client.auth.currentUser != null;
 
-  /// 로그인. `admins` 에 없는 계정이면 바로 로그아웃하고 에러.
+  /// 로그인. 전체 운영자도 아니고 어느 집회의 운영자도 아니면 바로 로그아웃하고 에러.
   Future<void> signIn(String email, String password) async {
     await _db.auth.signInWithPassword(email: email.trim(), password: password);
-    if (await _db.rpc('is_admin') != true) {
+    if (await _db.rpc('can_manage') != true) {
       await _db.auth.signOut();
-      throw const RemoteError('아직 승인되지 않은 계정입니다. 기존 운영자에게 승인을 요청하세요.');
+      throw const RemoteError(
+        '아직 승인되지 않은 계정입니다. 기존 운영자에게 승인이나 집회 운영자 등록을 요청하세요.',
+      );
     }
+  }
+
+  /// 로그인한 사람이 무엇을 할 수 있는지. [full] 이면 모든 집회 + 새 집회 만들기,
+  /// 아니면 [gatherings] 에 있는 집회만 관리한다.
+  Future<AdminScope> scope() async {
+    if (!signedIn) return (full: false, gatherings: <String>{});
+    final full = await _db.rpc('is_admin') == true;
+    final mine = await _db.rpc('my_gatherings') as List;
+    return (full: full, gatherings: {for (final g in mine) '$g'});
+  }
+
+  // --- 집회별 운영자 --------------------------------------------------------
+
+  /// 이 집회의 운영자들 (전체 운영자는 빠진다 — 그들은 모든 집회를 관리한다).
+  Future<List<GatheringAdmin>> gatheringAdmins(String gatheringId) async {
+    final rows =
+        await _db.rpc(
+              'gathering_admin_list',
+              params: {'p_gathering': gatheringId},
+            )
+            as List;
+    return [
+      for (final r in rows)
+        (userId: '${r['user_id']}', email: '${r['email'] ?? ''}'),
+    ];
+  }
+
+  /// 이메일로 계정을 찾아 이 집회의 운영자로 등록한다. 계정이 없으면 에러(NO_ACCOUNT).
+  Future<void> addGatheringAdmin(String gatheringId, String email) async {
+    await _db.rpc(
+      'add_gathering_admin',
+      params: {'p_gathering': gatheringId, 'p_email': email.trim()},
+    );
+  }
+
+  Future<void> removeGatheringAdmin(String gatheringId, String userId) async {
+    await _db.rpc(
+      'remove_gathering_admin',
+      params: {'p_gathering': gatheringId, 'p_user': userId},
+    );
   }
 
   /// 운영자 가입 신청. 계정만 만들고 바로 로그아웃 — 기존 운영자가 승인해야 쓸 수 있다.
@@ -372,6 +414,12 @@ class Remote {
 /// 운영자 가입 신청 한 건 ([Remote.adminRequests]).
 typedef AdminRequest = ({String id, String email, String name, DateTime at});
 
+/// 로그인한 사람의 권한 범위 ([Remote.scope]).
+typedef AdminScope = ({bool full, Set<String> gatherings});
+
+/// 집회 하나에 등록된 운영자 ([Remote.gatheringAdmins]).
+typedef GatheringAdmin = ({String userId, String email});
+
 class RemoteError implements Exception {
   const RemoteError(this.message);
   final String message;
@@ -406,7 +454,9 @@ String errorText(Object e) {
     'TOO_MANY_ATTEMPTS':
         'PIN을 여러 번 틀려 30분간 조회가 잠겼습니다. 잠시 후 다시 시도하거나 담당자에게 문의하세요.',
     'NOT_EDITABLE': '입금이 확인됐거나 취소된 신청은 바꿀 수 없습니다. 담당자에게 문의하세요.',
-    'FORBIDDEN': '운영자만 할 수 있습니다.',
+    'FORBIDDEN': '이 집회를 맡은 운영자만 할 수 있습니다.',
+    'NO_ACCOUNT':
+        '그 이메일로 가입한 계정이 없습니다. 먼저 운영자 웹에서 [가입 신청]을 하도록 안내한 뒤 다시 등록하세요.',
     // 로그인 없이(anon) 운영자 전용 테이블을 건드렸다 — 세션이 끊겼거나 로그인 전이다.
     'permission denied for table': '로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인한 뒤 집회를 다시 여세요.',
     'NOT_FOUND': '신청을 찾지 못했습니다.',

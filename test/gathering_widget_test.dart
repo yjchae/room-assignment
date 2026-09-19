@@ -17,6 +17,16 @@ import 'package:room_assignment/theme.dart';
 class FakeRemote extends Remote {
   FakeRemote({this.admin = true});
   bool admin;
+
+  /// 전체 운영자인가. false 면 [managed] 집회만 맡은 집회별 운영자다.
+  bool full = true;
+  final managed = <String>{};
+
+  /// 집회 id → 그 집회의 운영자 (이메일).
+  final gAdmins = <String, List<GatheringAdmin>>{};
+
+  /// 가입된 계정 이메일 (집회 운영자로 등록할 수 있는 사람).
+  final accounts = <String>{'helper@x'};
   final gs = <Gathering>[];
   final regs = <Registration>[];
   final pins = <String, String>{};
@@ -69,6 +79,29 @@ class FakeRemote extends Remote {
   @override
   Future<void> rejectAdmin(String userId) async =>
       requests.removeWhere((r) => r.id == userId);
+
+  @override
+  Future<AdminScope> scope() async => (full: full, gatherings: {...managed});
+
+  @override
+  Future<List<GatheringAdmin>> gatheringAdmins(String gatheringId) async => [
+    ...?gAdmins[gatheringId],
+  ];
+
+  @override
+  Future<void> addGatheringAdmin(String gatheringId, String email) async {
+    if (!accounts.contains(email.trim().toLowerCase())) {
+      throw const RemoteError('NO_ACCOUNT');
+    }
+    gAdmins.putIfAbsent(gatheringId, () => []).add((
+      userId: 'u-$email',
+      email: email.trim(),
+    ));
+  }
+
+  @override
+  Future<void> removeGatheringAdmin(String gatheringId, String userId) async =>
+      gAdmins[gatheringId]?.removeWhere((a) => a.userId == userId);
 
   @override
   Future<List<Gathering>> gatherings() async => [for (final g in gs) g.copy()];
@@ -879,6 +912,77 @@ void main() {
       await tester.pumpAndSettle();
       expect(fake.requests, isEmpty);
       expect(find.text('승인을 기다리는 가입 신청이 없습니다.'), findsOneWidget);
+    });
+
+    testWidgets('집회별 운영자: 맡은 집회만 보이고 [새 집회]가 없다', (tester) async {
+      fake.gs.add(
+        sample()
+          ..id = 'g2'
+          ..name = '남의 집회',
+      );
+      fake
+        ..full = false
+        ..managed.add('g1');
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      expect(tester.takeException(), isNull);
+      expect(find.text('신촌하나교회 가족수양회'), findsOneWidget);
+      expect(find.text('남의 집회'), findsNothing);
+      expect(find.widgetWithText(FilledButton, '새 집회'), findsNothing);
+
+      // 전체 운영자는 전부 보고 새 집회도 만든다
+      fake.full = true;
+      await tester.tap(find.byTooltip('새로고침'));
+      await tester.pumpAndSettle();
+      expect(find.text('남의 집회'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '새 집회'), findsOneWidget);
+    });
+
+    testWidgets('집회 설정: 이메일로 이 집회의 운영자를 등록하고 해제한다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(tester.takeException(), isNull);
+      expect(find.text('이 집회의 운영자'), findsOneWidget);
+      expect(find.textContaining('등록된 운영자가 없습니다'), findsOneWidget);
+
+      // 가입하지 않은 이메일은 막는다
+      await tester.enterText(
+        find.widgetWithText(TextField, '운영자 이메일'),
+        'nobody@x',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '운영자 등록'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('가입한 계정이 없습니다'), findsOneWidget);
+      expect(fake.gAdmins['g1'] ?? [], isEmpty);
+
+      // 가입한 이메일이면 등록된다
+      await tester.enterText(
+        find.widgetWithText(TextField, '운영자 이메일'),
+        'helper@x',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '운영자 등록'));
+      await tester.pumpAndSettle();
+      expect(fake.gAdmins['g1']!.single.email, 'helper@x');
+      expect(find.text('helper@x'), findsOneWidget);
+
+      // 해제
+      await tester.tap(find.widgetWithText(TextButton, '해제'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '해제'));
+      await tester.pumpAndSettle();
+      expect(fake.gAdmins['g1'], isEmpty);
+    });
+
+    testWidgets('집회 설정: 집회별 운영자에게는 [집회 삭제]가 없다', (tester) async {
+      current.value = sample();
+      fake
+        ..full = false
+        ..managed.add('g1');
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('집회 삭제'), findsNothing);
+      expect(find.text('이 집회의 운영자'), findsOneWidget);
     });
 
     testWidgets('집회 목록: 서버 집회가 카드로 보인다', (tester) async {

@@ -9,13 +9,16 @@
 --   registrations   신청자는 테이블에 직접 못 닿는다 — 아래 submit/lookup/update/cancel 함수로만.
 --                   운영자는 전부.
 --   room_plans      운영자만. 집회별 방배정(방·참석자·배정) 문서. 저장은 save_room_plan — 버전 검사.
---   운영자 = auth.users 에 있고 public.admins 에도 있는 사람.
+--   운영자 = auth.users 에 있고 public.admins 에도 있는 사람 (전체 운영자).
+--   집회별 운영자 = public.gathering_admins 에 그 집회로 등록된 사람. 그 집회의 설정·신청·방배정만
+--   건드릴 수 있고 새 집회를 만들거나 지우지 못한다. 판정은 public.manages(집회id) 하나로 한다.
 --   가입 신청 = auth.users 에만 있는 사람. 누구나 가입(대시보드에서 가입 켜 둠)할 수 있지만
 --   기존 운영자가 approve_admin 으로 승인하기 전엔 아무 데이터에도 못 닿는다.
 --
 -- 함수가 던지는 에러 메시지(앱이 이 문자열로 안내 문구를 고른다)
 --   CLOSED  INVALID_PHONE  INVALID_PIN  INVALID_PEOPLE  INVALID_TEXT  INVALID_QUOTED
 --   ALREADY_REGISTERED  TOO_MANY_ATTEMPTS  NOT_EDITABLE  FORBIDDEN  NOT_FOUND  CONFLICT
+--   NO_ACCOUNT (집회 운영자로 등록하려는 이메일의 계정이 없음)
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -63,6 +66,15 @@ alter table public.gatherings add column if not exists hidden_fields text[] not 
 alter table public.gatherings add column if not exists required_fields text[] not null default '{birthYear,gender}';
 alter table public.gatherings add column if not exists minister_notice_on boolean not null default true;
 alter table public.gatherings add column if not exists minister_notice text;
+
+-- 집회별 운영자. 이 집회의 설정·신청·방배정만 만질 수 있다 (새 집회는 못 만든다).
+-- 전체 운영자(public.admins)는 모든 집회를 관리하므로 여기 없어도 된다.
+create table if not exists public.gathering_admins (
+  gathering_id uuid not null references public.gatherings on delete cascade,
+  user_id uuid not null references auth.users on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (gathering_id, user_id)
+);
 
 create table if not exists public.registrations (
   id uuid primary key default gen_random_uuid(),
@@ -126,12 +138,36 @@ create trigger touch before update on public.registrations
 -- 권한 (RLS)
 -- ---------------------------------------------------------------------------
 
+-- 전체 운영자 (모든 집회 + 계정 승인 + 새 집회 만들기).
 create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.admins where user_id = auth.uid())
 $$;
 
+-- 이 집회를 관리하는가 = 전체 운영자이거나 이 집회의 운영자.
+create or replace function public.manages(p_gathering uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select public.is_admin() or exists (
+    select 1 from public.gathering_admins
+     where gathering_id = p_gathering and user_id = auth.uid())
+$$;
+
+-- 관리자 앱에 들어올 수 있는 사람인가 (전체 운영자 또는 어느 집회든 운영자).
+create or replace function public.can_manage() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select public.is_admin() or exists (
+    select 1 from public.gathering_admins where user_id = auth.uid())
+$$;
+
+-- 내가 운영자로 등록된 집회들. 전체 운영자는 목록을 가릴 필요가 없어 빈 결과를 받는다
+-- (앱은 is_admin 이 true 면 전부 보여준다).
+create or replace function public.my_gatherings() returns setof uuid
+language sql stable security definer set search_path = '' as $$
+  select gathering_id from public.gathering_admins where user_id = auth.uid()
+$$;
+
 alter table public.admins enable row level security;           -- 정책 없음 = API 로는 아무도 못 봄
+alter table public.gathering_admins enable row level security; -- 정책 없음 — 아래 함수로만 드나든다
 alter table public.gatherings enable row level security;
 alter table public.registrations enable row level security;
 alter table public.lookup_failures enable row level security;  -- 정책 없음
@@ -141,21 +177,33 @@ drop policy if exists "누구나 읽기" on public.gatherings;
 create policy "누구나 읽기" on public.gatherings
   for select using (true);
 
+-- 새 집회를 만들고 지우는 건 전체 운영자만. 집회별 운영자는 자기 집회를 고칠 수만 있다.
 drop policy if exists "운영자 쓰기" on public.gatherings;
-create policy "운영자 쓰기" on public.gatherings
-  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "전체 운영자만 만들기" on public.gatherings;
+create policy "전체 운영자만 만들기" on public.gatherings
+  for insert to authenticated with check (public.is_admin());
+
+drop policy if exists "맡은 집회 고치기" on public.gatherings;
+create policy "맡은 집회 고치기" on public.gatherings
+  for update to authenticated using (public.manages(id)) with check (public.manages(id));
+
+drop policy if exists "전체 운영자만 삭제" on public.gatherings;
+create policy "전체 운영자만 삭제" on public.gatherings
+  for delete to authenticated using (public.is_admin());
 
 drop policy if exists "운영자만" on public.registrations;
 create policy "운영자만" on public.registrations
-  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+  for all to authenticated
+  using (public.manages(gathering_id)) with check (public.manages(gathering_id));
 
 drop policy if exists "운영자만" on public.room_plans;
 create policy "운영자만" on public.room_plans
-  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+  for all to authenticated
+  using (public.manages(gathering_id)) with check (public.manages(gathering_id));
 
 -- 테이블 권한을 명시한다. Supabase 의 "새 테이블 자동 공개" 설정이 켜져 있든 꺼져 있든 같게 동작하도록.
-revoke all on public.admins, public.gatherings, public.registrations, public.lookup_failures,
-  public.room_plans
+revoke all on public.admins, public.gathering_admins, public.gatherings, public.registrations,
+  public.lookup_failures, public.room_plans
   from anon, authenticated;
 grant select on public.gatherings to anon, authenticated;
 grant insert, update, delete on public.gatherings to authenticated;
@@ -333,7 +381,8 @@ language plpgsql security definer set search_path = '' as $$
 declare
   ph text;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.manages((select gathering_id from public.registrations where id = p_registration))
+  then raise exception 'FORBIDDEN'; end if;
   if coalesce(p_pin, '') !~ '^[0-9]{4}$' then raise exception 'INVALID_PIN'; end if;
 
   update public.registrations
@@ -355,7 +404,7 @@ declare
   ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g');
   new_id uuid;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
   if ph !~ '^01[0-9]{8,9}$' then raise exception 'INVALID_PHONE'; end if;
   if coalesce(p_pin, '') !~ '^[0-9]{4}$' then raise exception 'INVALID_PIN'; end if;
   perform public._check_input(p_people, p_depositor, p_memo, p_quoted);
@@ -377,7 +426,7 @@ language plpgsql set search_path = '' as $$
 declare
   v int;
 begin
-  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if not public.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
   if p_version = 0 then
     insert into public.room_plans (gathering_id, data) values (p_gathering, p_data)
     on conflict (gathering_id) do nothing
@@ -390,6 +439,44 @@ begin
   end if;
   if v is null then raise exception 'CONFLICT'; end if;
   return v;
+end $$;
+
+-- 이 집회의 운영자 목록. 그 집회를 관리하는 사람만 볼 수 있다.
+create or replace function public.gathering_admin_list(p_gathering uuid)
+returns table (user_id uuid, email text, created_at timestamptz)
+language sql stable security definer set search_path = '' as $$
+  select a.user_id, u.email::text, a.created_at
+    from public.gathering_admins a
+    join auth.users u on u.id = a.user_id
+   where a.gathering_id = p_gathering and public.manages(p_gathering)
+   order by a.created_at
+$$;
+
+-- 이메일로 계정을 찾아 이 집회의 운영자로 등록한다. 계정이 없으면 NO_ACCOUNT
+-- (먼저 운영자 웹에서 가입해야 한다. 전체 운영자 승인은 없어도 이 집회는 쓸 수 있다).
+create or replace function public.add_gathering_admin(p_gathering uuid, p_email text)
+returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare
+  uid uuid;
+begin
+  if not public.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  select id into uid from auth.users
+   where lower(email) = lower(trim(coalesce(p_email, '')));
+  if uid is null then raise exception 'NO_ACCOUNT'; end if;
+  insert into public.gathering_admins (gathering_id, user_id) values (p_gathering, uid)
+  on conflict do nothing;
+  return uid;
+end $$;
+
+create or replace function public.remove_gathering_admin(p_gathering uuid, p_user uuid)
+returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  delete from public.gathering_admins
+   where gathering_id = p_gathering and user_id = p_user;
+  if not found then raise exception 'NOT_FOUND'; end if;
 end $$;
 
 -- 승인을 기다리는 가입 신청. 운영자가 아니면 빈 목록.
@@ -426,6 +513,10 @@ end $$;
 -- 함수 실행 권한도 명시한다 (Postgres 기본값은 "누구나 실행 가능").
 revoke execute on function
   public._touch(),
+  public.add_gathering_admin(uuid, text),
+  public.remove_gathering_admin(uuid, uuid),
+  public.gathering_admin_list(uuid),
+  public.my_gatherings(),
   public._assert_open(uuid),
   public._check_input(jsonb, text, text, int),
   public._verify(uuid, text, text),
@@ -440,6 +531,7 @@ revoke execute on function
 
 grant execute on function
   public.is_admin(),  -- RLS 정책 안에서 불리므로 모두에게 필요
+  public.manages(uuid),
   public.submit_registration(uuid, text, text, jsonb, text, text, int),
   public.lookup_registration(uuid, text, text),
   public.update_registration(uuid, text, text, jsonb, text, text, int),
@@ -452,7 +544,12 @@ grant execute on function
   public.save_room_plan(uuid, jsonb, int),
   public.admin_requests(),
   public.approve_admin(uuid),
-  public.reject_admin(uuid)
+  public.reject_admin(uuid),
+  public.add_gathering_admin(uuid, text),
+  public.remove_gathering_admin(uuid, uuid),
+  public.gathering_admin_list(uuid),
+  public.my_gatherings(),
+  public.can_manage()
   to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -467,11 +564,23 @@ on conflict (id) do update
       file_size_limit = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;
 
+-- 파일 경로가 '<집회id>/...' 라 첫 칸으로 그 집회를 맡았는지 본다.
+-- 집회 id 모양이 아니면 null 이 되고, 그때는 전체 운영자만 통과한다.
 drop policy if exists "집회 이미지: 운영자 관리" on storage.objects;
 create policy "집회 이미지: 운영자 관리" on storage.objects
   for all to authenticated
-  using (bucket_id = 'gathering-images' and public.is_admin())
-  with check (bucket_id = 'gathering-images' and public.is_admin());
+  using (
+    bucket_id = 'gathering-images'
+    and public.manages(
+      case when split_part(name, '/', 1) ~ '^[0-9a-fA-F-]{36}$'
+           then split_part(name, '/', 1)::uuid end)
+  )
+  with check (
+    bucket_id = 'gathering-images'
+    and public.manages(
+      case when split_part(name, '/', 1) ~ '^[0-9a-fA-F-]{36}$'
+           then split_part(name, '/', 1)::uuid end)
+  );
 
 -- ---------------------------------------------------------------------------
 -- 존은 대문자로 통일 ('a존' → 'A존'). 앱은 이제 대문자로만 저장하고, 이건 예전 데이터 정리용.

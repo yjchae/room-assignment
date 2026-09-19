@@ -72,6 +72,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
 
   List<String> errors = [];
   bool saving = false;
+
+  /// 이 집회에 등록된 운영자. null = 아직/못 불러옴.
+  List<GatheringAdmin>? admins;
+  final adminEmail = TextEditingController();
+  bool addingAdmin = false;
+
+  /// 로그인한 사람이 전체 운영자인가 (집회 삭제는 전체 운영자만).
+  bool fullAdmin = false;
   ImageKind? uploading;
   String? imageInfo;
 
@@ -79,7 +87,64 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   void initState() {
     super.initState();
     final c = current.value;
-    if (c != null) _fill(c.copy());
+    if (c != null) {
+      _fill(c.copy());
+      _loadAdmins();
+    }
+  }
+
+  Future<void> _loadAdmins() async {
+    final c = current.value;
+    if (c == null || !remote.signedIn) return;
+    try {
+      final scope = await remote.scope();
+      final list = await remote.gatheringAdmins(c.id);
+      if (mounted) {
+        setState(() {
+          fullAdmin = scope.full;
+          admins = list;
+        });
+      }
+    } catch (e) {
+      debugPrint('운영자 목록을 불러오지 못했습니다: $e');
+    }
+  }
+
+  Future<void> _addAdmin() async {
+    final c = current.value;
+    final email = adminEmail.text.trim();
+    if (c == null || email.isEmpty) return;
+    setState(() => addingAdmin = true);
+    try {
+      await remote.addGatheringAdmin(c.id, email);
+      adminEmail.clear();
+      await _loadAdmins();
+      _snack('$email 님을 이 집회의 운영자로 등록했습니다.');
+    } catch (e) {
+      _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => addingAdmin = false);
+    }
+  }
+
+  Future<void> _removeAdmin(GatheringAdmin a) async {
+    final c = current.value;
+    if (c == null) return;
+    final ok = await confirmDialog(
+      context,
+      title: '운영자 해제',
+      body: '${a.email} 님은 이 집회를 더 이상 열 수 없게 됩니다.',
+      action: '해제',
+      danger: true,
+    );
+    if (!ok) return;
+    try {
+      await remote.removeGatheringAdmin(c.id, a.userId);
+      await _loadAdmins();
+      _snack('${a.email} 님을 해제했습니다.');
+    } catch (e) {
+      _snack(errorText(e));
+    }
   }
 
   void _fill(Gathering x) {
@@ -860,7 +925,71 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ],
                   ),
                 ]),
-                _card('집회 삭제', [
+                _card('이 집회의 운영자', [
+                  const Text(
+                    '여기 등록한 사람은 이 집회의 설정·신청·방배정만 다룰 수 있습니다. '
+                    '새 집회를 만들거나 다른 집회를 열 수는 없습니다.\n'
+                    '먼저 운영자 웹에서 [가입 신청]으로 계정을 만든 뒤, 그 이메일을 넣으세요.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.6,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (admins == null)
+                    const Text(
+                      '불러오는 중…',
+                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                    )
+                  else if (admins!.isEmpty)
+                    const Text(
+                      '등록된 운영자가 없습니다. (전체 운영자는 모든 집회를 관리합니다.)',
+                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                    )
+                  else
+                    for (final a in admins!)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading: const Icon(
+                          Icons.person_outline,
+                          size: 20,
+                          color: AppColors.textMuted,
+                        ),
+                        title: Text(a.email),
+                        trailing: TextButton(
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.danger,
+                          ),
+                          onPressed: () => _removeAdmin(a),
+                          child: const Text('해제'),
+                        ),
+                      ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: adminEmail,
+                          decoration: const InputDecoration(
+                            labelText: '운영자 이메일',
+                            hintText: 'helper@example.com',
+                          ),
+                          onSubmitted: (_) => addingAdmin ? null : _addAdmin(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: addingAdmin ? null : _addAdmin,
+                        icon: const Icon(Icons.person_add_alt, size: 18),
+                        label: Text(addingAdmin ? '등록 중…' : '운영자 등록'),
+                      ),
+                    ],
+                  ),
+                ]),
+                if (fullAdmin)
+                  _card('집회 삭제', [
                   const Text(
                     '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),

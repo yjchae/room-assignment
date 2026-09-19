@@ -596,6 +596,9 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
   List<Gathering> list = [];
   Map<String, ({int total, int confirmed})> counts = {};
 
+  /// 로그인한 사람의 권한. 집회별 운영자는 맡은 집회만 보고, 새 집회는 못 만든다.
+  AdminScope scope = (full: false, gatherings: <String>{});
+
   @override
   void initState() {
     super.initState();
@@ -615,7 +618,13 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       error = null;
     });
     try {
+      scope = await remote.scope();
       list = await remote.gatherings();
+      // 집회별 운영자에게는 맡은 집회만 보여준다 (집회 설정 자체는 누구나 읽을 수 있지만,
+      // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).
+      if (!scope.full) {
+        list = [for (final g in list) if (scope.gatherings.contains(g.id)) g];
+      }
       counts = remote.signedIn ? await remote.registrationCounts() : {};
     } catch (e) {
       error = errorText(e);
@@ -867,11 +876,13 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
           ),
           const AdminButton(),
           const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: offline || loading ? null : _create,
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('새 집회'),
-          ),
+          // 새 집회는 전체 운영자만 만든다 (서버 RLS 도 같이 막는다).
+          if (scope.full)
+            FilledButton.icon(
+              onPressed: offline || loading ? null : _create,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('새 집회'),
+            ),
           const SizedBox(width: 16),
         ],
       ),
@@ -890,9 +901,11 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                     ),
                   ),
                 if (list.isEmpty && !offline)
-                  const EmptyNotice(
+                  EmptyNotice(
                     icon: Icons.event_note_outlined,
-                    text: '아직 집회가 없습니다. [새 집회]로 시작하세요.',
+                    text: scope.full
+                        ? '아직 집회가 없습니다. [새 집회]로 시작하세요.'
+                        : '맡은 집회가 없습니다. 집회 담당자에게 운영자 등록을 요청하세요.',
                   ),
                 Wrap(
                   spacing: 16,

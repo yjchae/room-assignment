@@ -248,6 +248,76 @@ select t.ok(public.is_admin(), '승인된 b 는 운영자다');
 set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
 -- ===========================================================================
+-- 집회별 운영자: 맡은 집회만, 새 집회는 못 만든다
+-- ===========================================================================
+-- d 는 가입만 한 계정 (전체 운영자 승인 없음). 1번 집회의 운영자로만 등록한다.
+reset role;
+insert into auth.users (id, email) values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'd@x');
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select t.err($q$select public.add_gathering_admin('00000000-0000-0000-0000-000000000001', 'none@x')$q$,
+             'NO_ACCOUNT');
+select t.ok(public.add_gathering_admin('00000000-0000-0000-0000-000000000001', ' D@X ')
+              = 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  '이메일로 찾아 집회 운영자로 등록한다 (공백·대소문자 무시)');
+select public.add_gathering_admin('00000000-0000-0000-0000-000000000001', 'd@x');  -- 두 번 넣어도 된다
+select t.ok((select count(*) from public.gathering_admin_list('00000000-0000-0000-0000-000000000001')) = 1,
+  '집회 운영자 목록이 보인다');
+
+set request.jwt.claim.sub = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+select t.ok(not public.is_admin(), 'd 는 전체 운영자가 아니다');
+select t.ok(public.can_manage(), 'd 는 관리자 앱에 들어올 수 있다');
+select t.ok((select array_agg(x) from public.my_gatherings() x)
+              = array['00000000-0000-0000-0000-000000000001'::uuid],
+  '내가 맡은 집회만 돌려준다');
+
+-- 맡은 집회: 신청·방배정이 보이고 고칠 수 있다
+select t.ok((select count(*) from public.registrations
+              where gathering_id = '00000000-0000-0000-0000-000000000001') > 0,
+  '맡은 집회의 신청이 보인다');
+select t.ok((select count(*) from public.registrations
+              where gathering_id = '00000000-0000-0000-0000-000000000002') = 0,
+  '안 맡은 집회의 신청은 안 보인다');
+select t.ok(public.save_room_plan('00000000-0000-0000-0000-000000000001',
+              '{"rooms":[2]}', (select version from public.room_plans
+                                 where gathering_id = '00000000-0000-0000-0000-000000000001')) > 0,
+  '맡은 집회의 방배정을 저장한다');
+select t.err($q$select public.save_room_plan('00000000-0000-0000-0000-000000000004', '{}', 0)$q$,
+             'FORBIDDEN');
+select t.err($q$select public.admin_add_registration('00000000-0000-0000-0000-000000000004', '01012340000', '1234', '[{"name":"x"}]', null, null, 0)$q$,
+             'FORBIDDEN');
+do $$ begin
+  update public.gatherings set place = '여기' where id = '00000000-0000-0000-0000-000000000001';
+  perform t.ok(found, '맡은 집회 설정은 고친다');
+  update public.gatherings set place = '저기' where id = '00000000-0000-0000-0000-000000000002';
+  perform t.ok(not found, '안 맡은 집회 설정은 못 고친다');
+  delete from public.gatherings where id = '00000000-0000-0000-0000-000000000001';
+  perform t.ok(not found, '집회 삭제는 전체 운영자만');
+end $$;
+select t.err($q$insert into public.gatherings (name, start_date, end_date) values ('새', '2026-01-01', '2026-01-02')$q$,
+             'row-level security');
+-- 계정 승인은 전체 운영자만
+select t.ok((select count(*) from public.admin_requests()) = 0, '집회 운영자는 가입 신청을 못 본다');
+select t.err($q$select public.approve_admin('dddddddd-dddd-dddd-dddd-dddddddddddd')$q$, 'FORBIDDEN');
+-- 이미지도 맡은 집회 폴더만
+select t.err($q$insert into storage.objects (bucket_id, name) values ('gathering-images', '00000000-0000-0000-0000-000000000004/p.jpg')$q$,
+             'row-level security');
+insert into storage.objects (bucket_id, name)
+values ('gathering-images', '00000000-0000-0000-0000-000000000001/p.jpg');
+select t.ok((select count(*) from storage.objects
+              where name = '00000000-0000-0000-0000-000000000001/p.jpg') = 1,
+  '맡은 집회 폴더에는 이미지를 올린다');
+
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select public.remove_gathering_admin('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd');
+select t.err($q$select public.remove_gathering_admin('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd')$q$,
+             'NOT_FOUND');
+set request.jwt.claim.sub = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+select t.ok(not public.can_manage(), '빼고 나면 관리자 앱에 못 들어온다');
+select t.ok((select count(*) from public.registrations) = 0, '빼고 나면 신청도 안 보인다');
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+-- ===========================================================================
 -- 다시 신청자: 확정 후엔 못 고치고, 운영자가 PIN 을 바꾸면 잠금이 풀린다
 -- ===========================================================================
 set role anon;

@@ -28,7 +28,8 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 **서버는 Supabase 하나다.** 테이블은 `gatherings`(집회 설정), `registrations`(신청), `room_plans`(방배정), `admins`.
 - 방배정은 집회마다 `room_plans` 행 하나에 `Event` JSON 문서 전체를 저장한다(`lib/store.dart`). 요구사항·설계 이유는 `PLAN.md`(방배정)·`PLAN_GATHERING.md`(집회관리)에 있고, 처음 기획(로컬 JSON·로컬 잠금)에서 달라진 점은 `PLAN_GATHERING.md` §10 에 모아 두었다.
-- 권한은 RLS 가 막는다. 신청자는 `registrations` 테이블에 직접 닿지 못하고 `submit_/lookup_/update_/cancel_registration` RPC(휴대폰+PIN)로만 드나든다. 운영자 = `auth.users` 에 있으면서 `admins` 에도 있는 사람.
+- 권한은 RLS 가 막는다. 신청자는 `registrations` 테이블에 직접 닿지 못하고 `submit_/lookup_/update_/cancel_registration` RPC(휴대폰+PIN)로만 드나든다.
+- **운영자는 두 종류다.** 전체 운영자 = `admins` 에 있는 사람(모든 집회 + 계정 승인 + 새 집회 만들기·삭제). 집회별 운영자 = `gathering_admins` 에 그 집회로 등록된 사람(그 집회의 설정·신청·방배정만). 판정은 SQL 함수 `manages(집회id)` 하나로 한다 — RLS 정책도 운영자 RPC(`save_room_plan`·`admin_add_registration`·`reset_pin`)도 이걸 부른다. 등록은 집회 설정 화면의 [이 집회의 운영자] 카드에서 이메일로 한다(`add_gathering_admin`, 계정이 없으면 `NO_ACCOUNT`). 앱은 `remote.scope()` 로 범위를 읽어 집회 목록과 [새 집회]·[집회 삭제]를 가린다.
 - `lib/config.dart` 에는 publishable 키만 둔다. 저장소가 공개라서 service_role 키, 실명·실제 전화번호가 든 데이터는 커밋하지 않는다.
 
 **웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
