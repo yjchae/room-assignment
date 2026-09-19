@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:room_assignment/gathering.dart';
 import 'package:room_assignment/main.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/screens/assign.dart';
@@ -127,6 +128,105 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('301'), findsOneWidget);
     expect(find.textContaining('개 방 배정'), findsOneWidget);
+  });
+
+  testWidgets('홈스테이 배정: 가정이 신청한 기간을 보여주고 며칠만 넣는다', (tester) async {
+    current.value = Gathering(
+      id: 'h1',
+      name: '홈스테이',
+      kind: GatheringKind.homestay,
+      start: DateTime(2026, 1, 1),
+      end: DateTime(2026, 1, 4),
+    );
+    addTearDown(() => current.value = null);
+    store.event.rooms
+      ..clear()
+      ..add(
+        Room(
+          id: 'h',
+          roomNo: '김호스트',
+          capacity: 4,
+          registrationId: 'r1',
+          hostFrom: DateTime(2026, 1, 1),
+          hostTo: DateTime(2026, 1, 3), // 2박까지만 받는 집
+        ),
+      );
+    store.event.attendees.add(
+      Attendee(
+        id: 'k1',
+        name: '아이하나',
+        gender: 'M',
+        age: 12,
+        checkIn: DateTime(2026, 1, 1),
+        checkOut: DateTime(2026, 1, 4), // 3박
+      ),
+    );
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('아이하나'));
+    await tester.tap(tile('김호스트'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('개 방 배정'));
+    await tester.pumpAndSettle();
+
+    // 가정이 신청한 기간과 정원이 보인다
+    expect(find.text('김호스트 가정에 배정'), findsOneWidget);
+    expect(find.text('받을 수 있는 기간'), findsOneWidget);
+    expect(find.text('01-01(목) ~ 01-03(토)'), findsOneWidget);
+    expect(find.text('0 / 4명'), findsOneWidget);
+    // 기본값은 "가정이 받는 기간 ∩ 아이 일정" — 3박 아이가 2박만 들어간다
+    expect(find.text('2026-01-03'), findsOneWidget);
+    expect(find.text('2박'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '이 기간만 배정'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // 앞 2박은 이 집에, 남은 1박은 미배정 조각으로
+    final placed = store.event.attendees.firstWhere((a) => a.roomId == 'h');
+    expect(placed.checkOut, DateTime(2026, 1, 3));
+    expect(store.unassigned.single.checkIn, DateTime(2026, 1, 3));
+    expect(store.event.attendees.every((a) => a.personId == 'k1'), isTrue);
+  });
+
+  testWidgets('홈스테이 배정: [전체 기간 배정]은 아이 일정을 그대로 넣는다', (tester) async {
+    current.value = Gathering(
+      id: 'h1',
+      name: '홈스테이',
+      kind: GatheringKind.homestay,
+      start: DateTime(2026, 1, 1),
+      end: DateTime(2026, 1, 4),
+    );
+    addTearDown(() => current.value = null);
+    store.event.rooms
+      ..clear()
+      ..add(Room(id: 'h', roomNo: '김호스트', capacity: 4));
+    store.event.attendees.add(
+      Attendee(
+        id: 'k1',
+        name: '아이하나',
+        gender: 'M',
+        age: 12,
+        checkIn: DateTime(2026, 1, 1),
+        checkOut: DateTime(2026, 1, 4),
+      ),
+    );
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('아이하나'));
+    await tester.tap(tile('김호스트'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('개 방 배정'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '전체 기간 배정'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // 나누지 않고 한 명 그대로
+    expect(store.event.attendees, hasLength(1));
+    expect(store.event.attendees.single.roomId, 'h');
+    expect(store.event.attendees.single.checkOut, DateTime(2026, 1, 4));
   });
 
   testWidgets('방 타일에 들어있는 그룹이 표시된다', (tester) async {

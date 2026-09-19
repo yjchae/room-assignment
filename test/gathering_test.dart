@@ -643,6 +643,79 @@ void main() {
     });
   });
 
+  // 홈스테이를 넣느라 공용 코드(Attendee·Store·신청 가져오기)를 건드렸다.
+  // 일반 집회가 그대로인지 여기서 못 박는다.
+  group('일반 집회: 홈스테이 변경의 사이드 이펙트 없음', () {
+    final g = sample()..fee = FeeRule();
+
+    test('신청 가져오기는 예전 그대로다 (방·기타는 유지, 취소는 제거)', () {
+      final s = tmpStore();
+      final regs = [
+        reg('r1', RegStatus.confirmed, [person('아빠', 1985), person('딸', 2012)]),
+      ];
+      s.syncRegistrations(g, regs);
+      final dad = s.event.attendees.firstWhere((a) => a.name == '아빠');
+      dad
+        ..roomId = '301'
+        ..note = '알레르기';
+      // 다시 불러도 방·기타는 그대로, 사람도 그대로
+      final again = s.syncRegistrations(g, regs);
+      expect((again.added, again.updated, again.removed), (0, 0, 0));
+      expect((dad.roomId, dad.note), ('301', '알레르기'));
+      expect(dad.splitOf, isNull); // 새 칸은 기본이 null
+      expect(s.event.rooms, isEmpty); // 일반 집회는 방이 저절로 생기지 않는다
+
+      // 취소하면 빠진다
+      regs[0].status = RegStatus.cancelled;
+      expect(s.syncRegistrations(g, regs).removed, 2);
+    });
+
+    test('신청 취소·삭제는 참석자만 뺀다 (방은 건드리지 않는다)', () {
+      final s = tmpStore();
+      s.event.rooms.add(Room(id: 'R', roomNo: '301', capacity: 4));
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [person('아빠', 1985)]),
+      ]);
+      s.event.attendees.single.roomId = 'R';
+      expect(s.wouldLoseRoom('r1').single.name, '아빠');
+      final n = s.removeRegistration('r1');
+      expect((n.people, n.rooms), (1, 0)); // 방은 그대로
+      expect(s.event.rooms, hasLength(1));
+    });
+
+    test('참석자 일정을 운영자가 고치면 가져오기가 되돌리지 않는다', () {
+      final s = tmpStore();
+      final regs = [
+        reg('r1', RegStatus.confirmed, [person('아빠', 1985)]),
+      ];
+      s.syncRegistrations(g, regs);
+      final dad = s.event.attendees.single;
+      dad
+        ..checkOut = DateTime(2026, 10, 10)
+        ..editedByAdmin = true; // 참석자 수정 창이 하는 일
+      expect(s.syncConflicts(g, regs).edited.single.id, dad.id);
+      s.syncRegistrations(g, regs); // keepAdminEdits 기본값
+      expect(dad.checkOut, DateTime(2026, 10, 10));
+      // 운영자 수정을 버리기로 하면 신청 일정으로 돌아온다
+      s.syncRegistrations(g, regs, keepAdminEdits: false);
+      expect(dad.checkOut, end);
+    });
+
+    test('나눈 조각은 신청 가져오기가 지우지 않는다', () {
+      final s = tmpStore();
+      final regs = [
+        reg('r1', RegStatus.confirmed, [person('아빠', 1985)]),
+      ];
+      s.syncRegistrations(g, regs);
+      final dad = s.event.attendees.single;
+      final later = s.splitStay(dad, DateTime(2026, 10, 10))!;
+      expect(later.registrationId, isNull); // 신청과 끊어 둔다
+      s.syncRegistrations(g, regs);
+      expect(s.event.attendees, hasLength(2));
+      expect(later.checkIn, DateTime(2026, 10, 10));
+    });
+  });
+
   group('홈스테이: 신청 → 가정(방)', () {
     final g = homestay();
 
@@ -741,6 +814,132 @@ void main() {
         rooms: true,
       );
       expect(copied.rooms.single.registrationId, isNull);
+    });
+
+    test('기간을 나누면 뒤쪽이 미배정으로 떨어지고, 정원도 제 기간만 찬다', () {
+      final s = Store()
+        ..event = Event(
+          name: 'x',
+          startDate: DateTime(2026, 10, 9),
+          endDate: DateTime(2026, 10, 12), // 3박
+          rooms: [
+            Room(id: 'A', roomNo: '김호스트', capacity: 1),
+            Room(id: 'B', roomNo: '박호스트', capacity: 1),
+          ],
+        );
+      final kid = Attendee(
+        id: 'k1',
+        name: '아이',
+        gender: 'M',
+        age: 12,
+        roomId: 'A',
+        checkIn: DateTime(2026, 10, 9),
+        checkOut: DateTime(2026, 10, 12),
+      );
+      s.event.attendees.add(kid);
+      final a = s.event.rooms.first, b = s.event.rooms.last;
+      expect(occupancyByNight(s.occupantsOf(a), s.event.nights), [1, 1, 1]);
+
+      final later = s.splitStay(kid, DateTime(2026, 10, 11))!;
+      expect(kid.checkOut, DateTime(2026, 10, 11)); // 앞쪽은 2박으로 줄고
+      expect((later.checkIn, later.checkOut), (
+        DateTime(2026, 10, 11),
+        DateTime(2026, 10, 12),
+      ));
+      expect(later.roomId, isNull); // 뒤쪽은 미배정
+      expect(later.personId, kid.personId); // 같은 사람
+      expect(s.unassigned.single.id, later.id);
+      expect(s.partsOf(kid), hasLength(2));
+      // 앞쪽 집은 이제 마지막 밤을 차지하지 않는다 — 그 밤은 다른 집에 줄 수 있다
+      expect(occupancyByNight(s.occupantsOf(a), s.event.nights), [1, 1, 0]);
+
+      s.assignAll([later], 'B');
+      expect(occupancyByNight(s.occupantsOf(b), s.event.nights), [0, 0, 1]);
+      expect(s.peakOccupancy(a), 1); // 정원 1인 집이 넘치지 않는다
+      expect(s.peakOccupancy(b), 1);
+
+      // 경계 밖 날짜로는 나눌 수 없다
+      expect(s.splitStay(later, DateTime(2026, 10, 9)), isNull);
+      expect(s.splitStay(later, DateTime(2026, 10, 12)), isNull);
+
+      // 나눈 흔적은 저장을 거쳐도 남는다
+      final back = Event.fromJson(s.event.toJson());
+      expect(
+        back.attendees.map((x) => x.personId).toSet(),
+        {kid.id},
+      );
+    });
+
+    test('가정이 신청한 기간이 방에 실린다', () {
+      final s = tmpStore();
+      // 10/9~10/11 집회에서 10/10 하루만 받겠다고 신청한 가정
+      final r = homeReg('1', '김호스트')
+        ..people.first.days = [DateTime(2026, 10, 10)];
+      s.syncHomestayRooms(g, [r]);
+      final room = s.event.rooms.single;
+      expect(room.hostFrom, DateTime(2026, 10, 10));
+      expect(room.hostTo, DateTime(2026, 10, 11));
+      // 날짜를 안 고른 가정은 집회 전체
+      s.syncHomestayRooms(g, [r, homeReg('2', '이호스트')]);
+      final all = s.event.rooms.firstWhere((x) => x.roomNo == '이호스트');
+      expect((all.hostFrom, all.hostTo), (start, end));
+      // 저장을 거쳐도 남는다
+      expect(
+        Event.fromJson(s.event.toJson()).rooms.first.hostFrom,
+        DateTime(2026, 10, 10),
+      );
+    });
+
+    test('기간을 골라 배정하면 그만큼만 들어가고 나머지는 미배정으로 남는다', () {
+      final s = Store()
+        ..event = Event(
+          name: 'x',
+          startDate: DateTime(2026, 10, 9),
+          endDate: DateTime(2026, 10, 13), // 4박
+          rooms: [Room(id: 'A', roomNo: '김호스트', capacity: 4)],
+          attendees: [
+            Attendee(
+              id: 'k1',
+              name: '아이',
+              gender: 'M',
+              age: 12,
+              checkIn: DateTime(2026, 10, 9),
+              checkOut: DateTime(2026, 10, 13),
+            ),
+          ],
+        );
+      // 가운데 2박만 이 집에
+      final placed = s.assignRange(
+        [s.event.attendees.single],
+        'A',
+        DateTime(2026, 10, 10),
+        DateTime(2026, 10, 12),
+      );
+      expect(placed, hasLength(1));
+      expect((placed.single.checkIn, placed.single.checkOut), (
+        DateTime(2026, 10, 10),
+        DateTime(2026, 10, 12),
+      ));
+      expect(placed.single.roomId, 'A');
+      // 앞 1박·뒤 1박은 미배정 조각으로 남는다
+      expect(s.event.attendees, hasLength(3));
+      expect(s.unassigned.map((a) => a.checkIn).toList()..sort(), [
+        DateTime(2026, 10, 9),
+        DateTime(2026, 10, 12),
+      ]);
+      expect(s.event.attendees.every((a) => a.personId == 'k1'), isTrue);
+      expect(
+        occupancyByNight(s.occupantsOf(s.event.rooms.single), s.event.nights),
+        [0, 1, 1, 0],
+      );
+
+      // 일정과 안 겹치는 기간은 건너뛴다 (엉뚱한 배정을 만들지 않는다)
+      final before = s.event.attendees.length;
+      expect(
+        s.assignRange(s.unassigned, 'A', DateTime(2026, 11, 1), DateTime(2026, 11, 2)),
+        isEmpty,
+      );
+      expect(s.event.attendees, hasLength(before));
     });
 
     test('배정 결과는 조회 응답에서 읽는다', () {

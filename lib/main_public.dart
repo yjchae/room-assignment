@@ -1384,6 +1384,11 @@ class _LookupPageState extends State<LookupPage> {
             ),
         ],
       ),
+      if (r.status != RegStatus.cancelled)
+        _Section(
+          title: '참석 일정',
+          children: [for (final l in q.lines) _StayRow(l)],
+        ),
       if (g.isHomestay && r.status == RegStatus.confirmed)
         _Section(
           title: '우리 집에 배정된 참석자',
@@ -1460,6 +1465,91 @@ class _LookupPageState extends State<LookupPage> {
       ),
     ];
   }
+}
+
+/// 참석하는 날 한 칸. 주제 태그(_Tag)와 달리 '#'을 붙이지 않는다.
+class _DayChip extends StatelessWidget {
+  const _DayChip(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: AppColors.brandSoft,
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(
+      text,
+      style: const TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+        color: AppColors.brand,
+        fontFeatures: _tabular,
+      ),
+    ),
+  );
+}
+
+/// 신청한 사람 한 명의 참석 일정. 전체 참석이면 날짜를 늘어놓지 않고 '전체 참석'.
+class _StayRow extends StatelessWidget {
+  const _StayRow(this.line);
+  final QuoteLine line;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                line.person.name.trim().isEmpty
+                    ? '(이름 없음)'
+                    : line.person.name,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Text(
+              line.full ? '전체 참석' : line.stay,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: line.full ? AppColors.ok : AppColors.brand,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (line.days.isEmpty)
+          const Text(
+            '참석하는 날이 없습니다.',
+            style: TextStyle(fontSize: 12.5, color: AppColors.danger),
+          )
+        else if (line.full)
+          Text(
+            '${mdw(line.days.first)} ~ ${mdw(line.days.last)}'
+            ' · ${line.days.length}일',
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: AppColors.textMuted,
+              fontFeatures: _tabular,
+            ),
+          )
+        else
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [for (final d in line.days) _DayChip(mdw(d))],
+          ),
+      ],
+    ),
+  );
 }
 
 /// 우리 집에 배정된 참석자 한 줄. 연락처는 눌러서 바로 걸 수 있다.

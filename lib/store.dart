@@ -279,6 +279,7 @@ class Store extends ChangeNotifier {
     var added = 0, updated = 0;
     for (final r in want.values) {
       final room = have[r.id];
+      final (from, to) = homeWindowOf(g, r);
       if (room == null) {
         event.rooms.add(
           Room(
@@ -287,12 +288,19 @@ class Store extends ChangeNotifier {
             capacity: homeCapacityOf(r),
             note: fmtPhone(r.phone),
             registrationId: r.id,
+            hostFrom: from,
+            hostTo: to,
           ),
         );
         added++;
-      } else if (room.roomNo != r.applicant) {
-        room.roomNo = r.applicant;
-        updated++;
+      } else {
+        // 이 칸이 생기기 전에 만든 가정은 비어 있다 — 그때만 채운다.
+        room.hostFrom ??= from;
+        room.hostTo ??= to;
+        if (room.roomNo != r.applicant) {
+          room.roomNo = r.applicant;
+          updated++;
+        }
       }
     }
     var removed = 0;
@@ -583,6 +591,73 @@ class Store extends ChangeNotifier {
     commit();
   }
 
+  /// [a] 의 일정을 [at] 날을 경계로 둘로 나눈다. 앞쪽은 지금 방에 그대로 두고,
+  /// [at] 부터의 뒤쪽이 **미배정 참석자**로 새로 생긴다 — 그 기간만 다른 방(가정)에 배정하면 된다.
+  /// 경계가 기간 밖이면 아무것도 하지 않고 null.
+  ///
+  /// 정원·보드·자동배정은 손대지 않는다: 나뉜 조각도 제 일정을 가진 보통 참석자라
+  /// 기존 계산이 그대로 맞는다. 화면에서는 [Attendee.personId] 로 다시 한 사람으로 묶는다.
+  Attendee? splitStay(Attendee a, DateTime at) {
+    final cut = dateOnly(at);
+    if (!cut.isAfter(dateOnly(a.checkIn)) || !cut.isBefore(dateOnly(a.checkOut))) {
+      return null;
+    }
+    final later = Attendee.fromJson({
+      ...a.toJson(),
+      'id': newId(),
+      'roomId': null,
+      // 신청에서 온 사람을 나눠도 뒤 조각은 신청과 잇지 않는다 —
+      // 다음 [신청에서 가져오기] 때 일정이 통째로 되돌아가면 안 된다.
+      'registrationId': null,
+      'checkIn': cut.toIso8601String(),
+      'checkOut': a.checkOut.toIso8601String(),
+    })..splitOf = a.personId;
+    if (a.stayNights case final ns?) {
+      later.stayNights = [for (final n in ns) if (!n.isBefore(cut)) n];
+      a.stayNights = [for (final n in ns) if (n.isBefore(cut)) n];
+    }
+    a
+      ..checkOut = cut
+      ..editedByAdmin = true; // 가져오기가 나눈 일정을 되돌리지 않게
+    event.attendees.add(later);
+    commit();
+    return later;
+  }
+
+  /// [people] 을 [from]~[to] 기간만 [roomId] 방(가정)에 넣는다.
+  /// 그 사람 일정보다 짧으면 앞뒤를 미배정 조각으로 떼어내고 가운데만 배정한다
+  /// ([splitStay] 를 그대로 쓴다). 일정이 하나도 안 겹치는 사람은 건너뛴다.
+  /// 배정된 조각들을 돌려준다.
+  List<Attendee> assignRange(
+    Iterable<Attendee> people,
+    String? roomId,
+    DateTime from,
+    DateTime to,
+  ) {
+    final f = dateOnly(from), t = dateOnly(to);
+    final out = <Attendee>[];
+    for (final a in [...people]) {
+      if (!t.isAfter(dateOnly(a.checkIn)) || !f.isBefore(dateOnly(a.checkOut))) {
+        continue; // 기간이 이 사람 일정과 안 겹친다
+      }
+      var part = a;
+      // 시작이 늦으면 앞쪽을 떼어낸다 — 뒤 조각이 배정 대상.
+      part = splitStay(part, f) ?? part;
+      // 끝이 이르면 뒤쪽을 떼어낸다 — 앞 조각이 배정 대상.
+      splitStay(part, t);
+      part.roomId = roomId;
+      out.add(part);
+    }
+    if (out.isNotEmpty) commit();
+    return out;
+  }
+
+  /// 같은 사람의 조각들 (나누지 않았으면 자기 자신 하나).
+  List<Attendee> partsOf(Attendee a) => [
+    for (final x in event.attendees)
+      if (x.personId == a.personId) x,
+  ];
+
   void deleteAttendees(Iterable<Attendee> people) {
     final ids = people.map((a) => a.id).toSet();
     // 신청에서 온 사람은 지웠다는 걸 기억한다. 안 그러면 다음 [신청에서 가져오기]에 말없이 되살아난다.
@@ -592,6 +667,21 @@ class Store extends ChangeNotifier {
     event.attendees.removeWhere((a) => ids.contains(a.id));
     commit();
   }
+}
+
+/// 홈스테이 가정이 신청서에서 고른 "받을 수 있는 기간" (처음 날 ~ 마지막 날 다음날).
+/// 날짜를 안 골랐으면 집회 전체 기간.
+/// 마지막으로 고른 날은 돌아가는 날이라 밤이 아니다 — 참석자 일정([attendeeOf])과 같은 규칙으로 센다.
+/// 하루만 고른 가정은 그날 밤 재워 주는 것으로 본다.
+(DateTime, DateTime) homeWindowOf(Gathering g, Registration r) {
+  final days = [for (final p in r.people) ...p.daysIn(g.start, g.end)]..sort();
+  if (days.isEmpty) return (dateOnly(g.start), dateOnly(g.end));
+  final nights = nightsOf(days);
+  final last = nights.lastOrNull ?? days.last;
+  return (
+    nights.firstOrNull ?? days.first,
+    DateTime(last.year, last.month, last.day + 1),
+  );
 }
 
 /// 홈스테이 방 정원의 기본값. 신청서에 '수용 인원'을 안 적었거나 숫자가 아닐 때.

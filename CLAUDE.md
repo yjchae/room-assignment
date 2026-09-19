@@ -49,6 +49,8 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - 신청자는 `lookup_registration` 이 같이 돌려주는 `assigned`(`schema.sql` 의 `_assigned`)로 자기 집에 배정된 사람을 본다. 운영자 메모는 빼고 준다.
 - 화면은 같은 걸 쓰고 이름만 바꾼다(`방 관리 → 가정 관리`). 홈스테이의 [신청에서 가져오기]는 참석자 화면이 아니라 **가정 관리** 화면에 있다.
 
+**기간을 나눈 참석자** (`Attendee.splitOf`): 한 사람이 기간별로 다른 방(홈스테이는 다른 집)에 묵으면 참석자 행이 조각으로 나뉜다. `Store.splitStay`(경계 날짜로 자르기)·`assignRange`(고른 기간만 배정, 나머지는 미배정 조각)가 만들고, 같은 사람은 `Attendee.personId` 로 묶어 화면에서 한 줄로 그린다. 조각도 제 일정을 가진 보통 참석자라 정원·보드·자동배정은 손댈 필요가 없다. 나뉜 조각은 `registrationId` 를 떼고 원본에 `editedByAdmin` 을 붙여 [신청에서 가져오기]가 되돌리지 않게 한다.
+
 **일정표** (`Gathering.schedule`): `{date, time, title}` 목록을 `gatherings.schedule` 에 담는다. 집회 설정에서 날짜별로 적고, 신청 웹 집회 페이지에 보인다. 기간 밖 날짜의 항목은 화면에 안 보이지만 지우지도 않는다.
 
 **신청 → 참석자** (`Store.syncRegistrations`): 확정된 신청의 사람을 사람 id 로 맞추기 때문에 몇 번을 불러도 결과가 같다. 1박 이상 묵는 사람만 가져오고, 가져올 때 `roomId`·`note` 는 건드리지 않는다. `Attendee.registrationId` 가 null 이면 붙여넣기나 직접 추가로 들어온 사람이라 동기화 대상에서 빠진다. 운영자가 고친 사람은 `editedByAdmin` 으로, 지운 사람은 `Event.deletedIds` 로 기억해 두었다가 `syncConflicts()` 로 어느 쪽 내용을 쓸지 묻는다.

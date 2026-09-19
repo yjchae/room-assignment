@@ -88,6 +88,10 @@ class Room {
   /// 신청 조회에 "우리 집에 배정된 사람"을 돌려줄 때 이 값으로 찾는다 (schema.sql `_assigned`).
   String? registrationId;
 
+  /// 홈스테이에서 이 가정이 신청서에 적은 "받을 수 있는 기간". null = 집회 전체.
+  /// 배정할 때 이 기간을 보여 주고 며칠을 넣을지 고른다.
+  DateTime? hostFrom, hostTo;
+
   Room({
     required this.id,
     required this.roomNo,
@@ -97,6 +101,8 @@ class Room {
     this.note,
     this.slot,
     this.registrationId,
+    this.hostFrom,
+    this.hostTo,
   });
 
   /// "301" -> 3. 숫자가 아니면 null.
@@ -121,6 +127,8 @@ class Room {
     'note': note,
     'slot': slot,
     if (registrationId != null) 'registrationId': registrationId,
+    if (hostFrom != null) 'hostFrom': hostFrom!.toIso8601String(),
+    if (hostTo != null) 'hostTo': hostTo!.toIso8601String(),
   };
 
   factory Room.fromJson(Map<String, dynamic> j) => Room(
@@ -132,6 +140,12 @@ class Room {
     note: j['note'] as String?,
     slot: (j['slot'] as num?)?.toInt(),
     registrationId: j['registrationId'] as String?,
+    hostFrom: j['hostFrom'] == null
+        ? null
+        : dateOnly(DateTime.parse('${j['hostFrom']}')),
+    hostTo: j['hostTo'] == null
+        ? null
+        : dateOnly(DateTime.parse('${j['hostTo']}')),
   );
 }
 
@@ -163,6 +177,13 @@ class Attendee {
 
   /// 운영자가 참석자 화면에서 직접 고쳤다. 신청에서 다시 가져올 때 덮어쓸지 묻는 데 쓴다.
   bool editedByAdmin = false;
+
+  /// 기간을 나눠 다른 방(홈스테이는 다른 집)에 묵는 같은 사람이면 원래 참석자 id.
+  /// null = 안 나눈 사람. 나뉜 조각은 저마다 일정·방을 따로 갖고, 정원도 제 기간만 차지한다.
+  String? splitOf;
+
+  /// 같은 사람을 묶는 id. 나뉜 조각들은 이 값이 같다 (화면에서 한 줄로 합쳐 보여준다).
+  String get personId => splitOf ?? id;
 
   Attendee({
     required this.id,
@@ -215,6 +236,7 @@ class Attendee {
     'extra': extra,
     'registrationId': registrationId,
     if (editedByAdmin) 'edited': true,
+    if (splitOf != null) 'splitOf': splitOf,
   };
 
   factory Attendee.fromJson(Map<String, dynamic> j) => Attendee(
@@ -234,7 +256,9 @@ class Attendee {
         .toList(),
     extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
     registrationId: j['registrationId'] as String?,
-  )..editedByAdmin = j['edited'] == true;
+  )
+    ..editedByAdmin = j['edited'] == true
+    ..splitOf = j['splitOf'] as String?;
 }
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -261,7 +285,12 @@ Event copyEvent(
     e.rooms = [
       // 신청 연결은 푼다 — 새 집회엔 그 신청이 없다 (참석자의 registrationId 와 같은 이유).
       for (final r in src.rooms)
-        Room.fromJson({...r.toJson(), 'registrationId': null}),
+        Room.fromJson({
+          ...r.toJson(),
+          'registrationId': null,
+          'hostFrom': null,
+          'hostTo': null,
+        }),
     ];
   }
   if (attendees) {
@@ -275,6 +304,7 @@ Event copyEvent(
           'age': a.age == 0 ? 0 : a.age + years, // 0 = 모름
           'checkIn': e.startDate.toIso8601String(),
           'checkOut': e.endDate.toIso8601String(),
+          'splitOf': null,
         })..stayNights = null,
     ];
   }

@@ -626,6 +626,56 @@ void main() {
       expect(find.text('신청 내용 수정'), findsNothing);
     });
 
+    testWidgets('조회: 부분 참석은 날짜가, 전체 참석은 전참 표시가 나온다', (tester) async {
+      // 회비가 없는 집회 — 금액표가 없어서 참석 일정 칸에서만 날짜를 볼 수 있다.
+      final free = sample()..fee = FeeRule();
+      fake.gs
+        ..clear()
+        ..add(free);
+      fake.regs.add(
+        Registration(
+          id: 'r1',
+          gatheringId: 'g1',
+          phone: '01012345678',
+          people: [
+            Person(id: 'a', name: '홍길동', gender: 'M', birthYear: 1985),
+            Person(
+              id: 'b',
+              name: '홍딸',
+              gender: 'F',
+              birthYear: 2012,
+              days: [DateTime(2026, 10, 10), DateTime(2026, 10, 11)],
+            ),
+          ],
+          createdAt: DateTime(2026, 9, 10),
+        ),
+      );
+      fake.pins['r1'] = '1234';
+      setView(tester, const Size(400, 1600));
+      await pumpPage(tester, LookupPage(gathering: free));
+      await tester.enterText(
+        find.widgetWithText(TextField, '휴대폰번호'),
+        '01012345678',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '1234',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '조회'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      expect(find.text('참석 일정'), findsOneWidget);
+      // 전체 참석자는 날짜를 늘어놓지 않고 기간 한 줄
+      expect(find.text('전체 참석'), findsOneWidget);
+      expect(find.text('10-09(금) ~ 10-11(일) · 3일'), findsOneWidget);
+      // 부분 참석자는 고른 날짜가 그대로
+      expect(find.text('10-10(토)'), findsOneWidget);
+      expect(find.text('10-11(일)'), findsOneWidget);
+      expect(find.text('10-09(금)'), findsNothing); // 안 고른 날
+      expect(find.text('1박'), findsOneWidget);
+    });
+
     testWidgets('조회: 확정된 신청은 수정·취소 버튼이 없다', (tester) async {
       fake.regs.add(
         pendingReg()
@@ -688,8 +738,10 @@ void main() {
       expect(updates.single.map((p) => p.name), ['홍길동', '홍딸', '홍막내']);
       // 사람 id 는 그대로 — 관리자 앱이 이 id 로 참석자를 맞춘다
       expect(updates.single.take(2).map((p) => p.id), ['a', 'b']);
-      // 조회 화면의 금액표에 반영 ("홍막내  영유아 · 전체" 한 줄)
-      expect(find.textContaining('홍막내'), findsOneWidget);
+      // 조회 화면의 금액표("홍막내  영유아 · 전체")와 참석 일정에 각각 한 줄씩
+      expect(find.textContaining('홍막내'), findsNWidgets(2));
+      expect(find.text('참석 일정'), findsOneWidget);
+      expect(find.text('전체 참석'), findsNWidgets(3));
     });
   });
 
@@ -949,6 +1001,94 @@ void main() {
       await tester.pumpAndSettle();
       expect(store.event.rooms.map((r) => r.roomNo), ['김호스트', '박호스트']);
       expect(store.event.rooms.last.registrationId, isNull);
+    });
+
+    testWidgets('참석자: 홈스테이는 통계 대신 가정·기간 그래프가 나온다', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(homestay());
+      current.value = homestay();
+      store.event
+        ..startDate = DateTime(2026, 10, 9)
+        ..endDate = DateTime(2026, 10, 12)
+        ..rooms.add(
+          Room(id: 'h1', roomNo: '김호스트', capacity: 3, registrationId: 'h-r1'),
+        )
+        ..attendees.addAll([
+          Attendee(
+            id: 'k1',
+            name: '아이하나',
+            gender: 'F',
+            age: 12,
+            roomId: 'h1',
+            checkIn: DateTime(2026, 10, 9),
+            checkOut: DateTime(2026, 10, 12),
+          ),
+          Attendee(
+            id: 'k2',
+            name: '아이둘',
+            gender: 'M',
+            age: 10,
+            checkIn: DateTime(2026, 10, 10),
+            checkOut: DateTime(2026, 10, 11),
+          ),
+        ]);
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: AttendeesScreen()));
+      expect(tester.takeException(), isNull);
+
+      // 날짜가 맨 위 컬럼 (묵는 밤 = 9·10·11일)
+      expect(find.text('9'), findsOneWidget);
+      expect(find.text('10'), findsOneWidget);
+      expect(find.text('11'), findsOneWidget);
+      // 아이마다 배정된 집이 막대에 적힌다
+      expect(find.text('아이하나  여 12세'), findsOneWidget);
+      expect(find.text('김호스트'), findsOneWidget);
+      expect(find.text('미배정'), findsOneWidget); // 아직 집이 없는 아이
+      // 홈스테이에서는 위쪽 통계·날짜 칩을 감춘다
+      expect(find.textContaining('합계 '), findsNothing);
+      expect(find.textContaining('전참 '), findsNothing);
+      expect(find.text('존'), findsNothing);
+      expect(find.text('2 / 2명'), findsOneWidget);
+    });
+
+    testWidgets('참석자: 기간을 나눈 아이는 한 줄에 두 집으로 보인다', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(homestay());
+      current.value = homestay();
+      store.event
+        ..startDate = DateTime(2026, 10, 9)
+        ..endDate = DateTime(2026, 10, 12)
+        ..rooms.addAll([
+          Room(id: 'A', roomNo: '김호스트', capacity: 4),
+          Room(id: 'B', roomNo: '박호스트', capacity: 4),
+        ])
+        ..attendees.add(
+          Attendee(
+            id: 'k1',
+            name: '아이하나',
+            gender: 'F',
+            age: 12,
+            roomId: 'A',
+            checkIn: DateTime(2026, 10, 9),
+            checkOut: DateTime(2026, 10, 12),
+          ),
+        );
+      // 10-11 밤부터는 다른 집으로
+      final later = store.splitStay(store.event.attendees.first, DateTime(2026, 10, 11))!;
+      later.roomId = 'B';
+
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: AttendeesScreen()));
+      expect(tester.takeException(), isNull);
+
+      // 한 사람이므로 이름 줄은 하나 (조각 수 ·2 가 붙는다)
+      expect(find.textContaining('아이하나  여 12세  ·2'), findsOneWidget);
+      expect(find.text('1 / 1명'), findsOneWidget);
+      // 막대는 집마다 하나씩
+      expect(find.text('김호스트'), findsOneWidget);
+      expect(find.text('박호스트'), findsOneWidget);
     });
 
     testWidgets('집회 설정: 일정표를 적어 저장하면 서버로 간다', (tester) async {

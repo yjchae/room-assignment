@@ -407,6 +407,8 @@ String errorText(Object e) {
         'PIN을 여러 번 틀려 30분간 조회가 잠겼습니다. 잠시 후 다시 시도하거나 담당자에게 문의하세요.',
     'NOT_EDITABLE': '입금이 확인됐거나 취소된 신청은 바꿀 수 없습니다. 담당자에게 문의하세요.',
     'FORBIDDEN': '운영자만 할 수 있습니다.',
+    // 로그인 없이(anon) 운영자 전용 테이블을 건드렸다 — 세션이 끊겼거나 로그인 전이다.
+    'permission denied for table': '로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인한 뒤 집회를 다시 여세요.',
     'NOT_FOUND': '신청을 찾지 못했습니다.',
     'registrations_active_phone': '같은 번호로 진행 중인 다른 신청이 있어 되돌릴 수 없습니다.',
     'invalid input syntax for type uuid': '잘못된 링크입니다. 받은 링크를 다시 확인하세요.',

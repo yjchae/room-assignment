@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../auto_assign.dart';
+import '../gathering.dart' show mdw;
 import '../main.dart';
 import '../models.dart';
 import '../store.dart';
@@ -759,6 +760,10 @@ class _AssignScreenState extends State<AssignScreen> {
     bool confirm = true,
   }) async {
     if (rooms.isEmpty) return;
+    // 홈스테이는 가정 한 곳에 "며칠을" 넣을지부터 고른다.
+    if (current.value?.isHomestay == true && rooms.length == 1) {
+      return _assignHomestay(chosen, rooms.single);
+    }
 
     var plan = distribute(store.event, chosen, rooms);
     var overflow = false;
@@ -861,6 +866,151 @@ class _AssignScreenState extends State<AssignScreen> {
       );
     }
   }
+
+  /// 홈스테이 배정: 그 가정이 신청한 기간을 보여 주고 며칠을 넣을지 고른다.
+  /// [전체 기간 배정] 은 고른 아이들의 일정을 그대로(나누지 않고) 이 집에 넣는다.
+  Future<void> _assignHomestay(List<Attendee> chosen, Room room) async {
+    if (chosen.isEmpty) return;
+    final e = store.event;
+    final openFrom = room.hostFrom ?? dateOnly(e.startDate);
+    final openTo = room.hostTo ?? dateOnly(e.endDate);
+    // 기본값 = 가정이 받을 수 있는 기간과 아이들 일정이 겹치는 만큼.
+    var from = chosen
+        .map((a) => dateOnly(a.checkIn))
+        .fold(openFrom, (x, y) => y.isAfter(x) ? y : x);
+    var to = chosen
+        .map((a) => dateOnly(a.checkOut))
+        .fold(openTo, (x, y) => y.isBefore(x) ? y : x);
+    if (!to.isAfter(from)) {
+      from = openFrom;
+      to = openTo;
+    }
+
+    final used = store.peakOccupancy(room);
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text('${room.label} 가정에 배정'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _line('받을 수 있는 기간', '${mdw(openFrom)} ~ ${mdw(openTo)}'),
+                _line(
+                  '정원',
+                  '$used / ${room.capacity}명'
+                      '${room.gender == null ? '' : ' · ${genderLabel(room.gender!)}'}',
+                ),
+                _line('배정할 아이', '${chosen.length}명'),
+                const Divider(height: 24),
+                const Text(
+                  '며칠을 이 집에서 묵나요?',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('들어가는 날'),
+                  trailing: Text(fmtDate(from)),
+                  onTap: () async {
+                    final d = await pickDate(context, from);
+                    if (d == null) return;
+                    setLocal(() {
+                      from = d;
+                      if (!to.isAfter(d)) to = d.add(const Duration(days: 1));
+                    });
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('나오는 날'),
+                  subtitle: Text(
+                    '${to.difference(from).inDays}박',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  trailing: Text(fmtDate(to)),
+                  onTap: () async {
+                    final d = await pickDate(context, to);
+                    if (d != null && d.isAfter(from)) setLocal(() => to = d);
+                  },
+                ),
+                TextButton(
+                  onPressed: () => setLocal(() {
+                    from = openFrom;
+                    to = openTo;
+                  }),
+                  child: const Text('이 가정이 신청한 기간 그대로'),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  '고른 기간만 이 집에 넣습니다. 아이의 남는 기간은 미배정으로 남아 '
+                  '다른 집에 넣을 수 있습니다.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cancel'),
+              child: const Text('취소'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context, 'all'),
+              child: const Text('전체 기간 배정'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'range'),
+              child: const Text('이 기간만 배정'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || choice == 'cancel') return;
+
+    final String done;
+    if (choice == 'all') {
+      // 아이 일정을 그대로 — 나누지 않는다.
+      store.assignAll(chosen, room.id);
+      done = '${chosen.length}명을 ${room.label} 가정에 전체 기간으로 배정했습니다.';
+    } else {
+      final placed = store.assignRange(chosen, room.id, from, to);
+      done = placed.isEmpty
+          ? '고른 기간에 묵는 아이가 없습니다. 아이 일정을 확인하세요.'
+          : '${placed.length}명을 ${room.label} 가정에 '
+                '${mdw(from)}~${mdw(to)} (${to.difference(from).inDays}박) 배정했습니다.';
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(done)));
+    setState(() => selected.removeAll(chosen.map((a) => a.id)));
+  }
+
+  /// 배정 창의 '항목 — 값' 한 줄.
+  Widget _line(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 130,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _setStay(List<Attendee> chosen) async {
     var ci = chosen.first.checkIn;

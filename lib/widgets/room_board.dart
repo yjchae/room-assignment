@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../gathering.dart' show mdw;
 import '../main.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -51,10 +52,15 @@ class RoomTile extends StatelessWidget {
     final groups = store.groupSummary(room);
     final note = room.note ?? '';
 
+    final homestay = current.value?.isHomestay == true;
+    // 홈스테이는 "언제 받을 수 있는 집인지"가 배정의 첫 기준이라 툴팁에 같이 적는다.
+    final window = homestay && room.hostFrom != null && room.hostTo != null
+        ? '\n받는 기간 ${mdw(room.hostFrom!)} ~ ${mdw(room.hostTo!)}'
+        : '';
     return Tooltip(
       message:
-          '${room.label}${current.value?.isHomestay == true ? '' : '호'}'
-          '  $used/${room.capacity}  ${st.label}'
+          '${room.label}${homestay ? '' : '호'}'
+          '  $used/${room.capacity}  ${st.label}$window'
           '\n${groups.isEmpty ? '비어 있음' : groups}'
           '${note.isEmpty ? '' : '\n$note'}',
       waitDuration: const Duration(milliseconds: 400),

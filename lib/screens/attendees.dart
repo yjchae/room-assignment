@@ -34,6 +34,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   @override
   void initState() {
     super.initState();
+    // 홈스테이는 "누가 어느 집에" 가 먼저다.
+    if (current.value?.isHomestay == true) sortKey = 'room';
     _loadRegs();
   }
 
@@ -57,6 +59,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   Widget build(BuildContext context) {
     final e = store.event;
     final g = current.value;
+    final homestay = g?.isHomestay == true;
     final days = [
       for (
         var d = dateOnly(e.startDate);
@@ -74,7 +77,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     // 하는데, 방이 필요 없어 참석자에는 없으므로 날짜를 골랐을 때만 따로 만들어 보탠다.
     final regDays = <String, List<DateTime>>{};
     final dayOnly = <Attendee>[];
-    if (g != null) {
+    // 홈스테이의 신청자는 아이가 아니라 재워 줄 가정이다 — 참석자 명단에 끼면 안 된다.
+    if (g != null && !homestay) {
       final have = {for (final a in e.attendees) a.id};
       for (final r in regs ?? const <Registration>[]) {
         if (r.status != RegStatus.confirmed) continue;
@@ -179,11 +183,19 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                   ),
                   const SizedBox(width: 8),
                 ],
-                Text('${list.length} / ${people.length}명'),
+                Text(
+                  homestay
+                      // 기간을 나눈 아이는 조각이 여럿이라 사람 수로 센다.
+                      ? '${list.map((a) => a.personId).toSet().length} / '
+                            '${people.map((a) => a.personId).toSet().length}명'
+                      : '${list.length} / ${people.length}명',
+                ),
               ],
             ),
           ),
-          if (everyone.isNotEmpty) ...[
+          // 홈스테이는 날짜·존·셀 통계가 뜻이 없다 (아이들은 신청이 아니라 명단으로 들어온다).
+          // 대신 아래 표가 누가 어느 집에서 언제 묵는지를 보여준다.
+          if (everyone.isNotEmpty && !homestay) ...[
             // 가장 큰 기준 = 날짜. 합계(기간 전체 인원) · 전참(모든 날) · 하루씩.
             Align(
               alignment: Alignment.centerLeft,
@@ -243,10 +255,36 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           const Divider(height: 1),
           Expanded(
             child: list.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
-                      '참석자가 없습니다. 신청은 [신청·입금]에서 추가하고, 엑셀 명단은 [붙여넣기 등록]으로 넣으세요.',
+                      homestay
+                          ? '참석자가 없습니다. 엑셀 명단은 [붙여넣기 등록]으로 넣고, [가정 배정]에서 집에 배치하세요.'
+                          : '참석자가 없습니다. 신청은 [신청·입금]에서 추가하고, 엑셀 명단은 [붙여넣기 등록]으로 넣으세요.',
                     ),
+                  )
+                : homestay
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+                        child: Text(
+                          '칸 하나가 하룻밤입니다. 막대에 적힌 이름이 그날 묵는 집이고, '
+                          '마지막 날은 돌아가는 날이라 칸이 없습니다.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: _HomestayChart(
+                          people: list,
+                          nights: nights,
+                          onTap: (a) => attendeeDialog(context, a),
+                        ),
+                      ),
+                    ],
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.only(bottom: 80),
@@ -352,6 +390,232 @@ int naturalCompare(String a, String b) {
 }
 
 /// 존·셀 카드 + 나이×성별 표. 칸을 누르면 그 사람들만 아래 목록에 남는다.
+/// 홈스테이 그래프: 맨 위가 날짜(집회 첫날~마지막 밤), 왼쪽이 아이 이름,
+/// 가운데 막대가 "며칠부터 며칠까지 누구 집" 이다. 날짜가 많으면 가로로 민다.
+/// 일정이 중간에 끊긴 아이는 막대도 끊어서 그린다.
+class _HomestayChart extends StatelessWidget {
+  const _HomestayChart({
+    required this.people,
+    required this.nights,
+    required this.onTap,
+  });
+  final List<Attendee> people;
+
+  /// 묵는 밤들 (집회 첫날 ~ 마지막 날 전날). 칸 하나 = 하룻밤.
+  final List<DateTime> nights;
+  final void Function(Attendee) onTap;
+
+  /// 한 사람 = 한 줄. 기간을 나눠 여러 집에 묵는 아이는 조각이 여럿이라 같은 줄에 이어 그린다.
+  List<List<Attendee>> get _rows {
+    final by = <String, List<Attendee>>{};
+    for (final a in people) {
+      by.putIfAbsent(a.personId, () => []).add(a);
+    }
+    for (final parts in by.values) {
+      parts.sort((x, y) => x.checkIn.compareTo(y.checkIn));
+    }
+    return by.values.toList();
+  }
+
+  static const _name = 150.0, _cell = 38.0, _rowH = 34.0;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: SizedBox(
+      width: _name + _cell * nights.length + 16,
+      child: Column(
+        children: [
+          _header(),
+          const Divider(height: 1),
+          Expanded(
+            child: Builder(
+              builder: (context) {
+                final rows = _rows;
+                return ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 80),
+                  itemCount: rows.length,
+                  itemBuilder: (context, i) => _row(rows[i], i.isOdd),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _header() => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 8, 4, 6),
+    child: Row(
+      children: [
+        const SizedBox(width: _name, child: _Th('참석자')),
+        for (final n in nights)
+          SizedBox(
+            width: _cell,
+            child: Column(
+              children: [
+                Text(
+                  // 달이 바뀌는 날은 '11/1' 로 적어 어느 달인지 알아보게 한다.
+                  n.day == 1 ? '${n.month}/1' : '${n.day}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: tabular,
+                  ),
+                ),
+                Text(
+                  _weekday(n),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget _row(List<Attendee> parts, bool striped) {
+    final first = parts.first;
+    return Container(
+      height: _rowH,
+      color: striped ? AppColors.surface : null,
+      padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: _name,
+            child: InkWell(
+              onTap: () => onTap(first),
+              child: Text(
+                '${first.name}  ${genderLabel(first.gender)}'
+                '${first.age > 0 ? ' ${first.age}세' : ''}'
+                '${parts.length > 1 ? '  ·${parts.length}' : ''}'
+                '${parts.every((x) => _outside(x, nights)) ? '  [기간 밖]' : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13.5),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: _cell * nights.length,
+            child: Stack(
+              children: [
+                // 날짜 칸 눈금 — 막대가 어느 날에 걸쳐 있는지 읽기 쉽게.
+                Row(
+                  children: [
+                    for (var i = 0; i < nights.length; i++)
+                      Container(
+                        width: _cell,
+                        decoration: const BoxDecoration(
+                          border: Border(
+                            right: BorderSide(color: AppColors.border),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                // 조각마다 제 기간·제 방으로 그린다. 누르면 그 조각을 고친다.
+                for (final a in parts)
+                  for (final (from, to) in _runs(_mask(a)))
+                    Positioned(
+                      left: from * _cell + 2,
+                      top: 6,
+                      width: (to - from + 1) * _cell - 4,
+                      height: _rowH - 12,
+                      child: GestureDetector(
+                        onTap: () => onTap(a),
+                        child: _bar(a, store.roomById(a.roomId), from, to),
+                      ),
+                    ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bar(Attendee a, Room? room, int from, int to) {
+    final label = room?.label ?? '미배정';
+    return Tooltip(
+      message:
+          '${a.name}  ${mdw(nights[from])} ~ '
+          '${mdw(DateTime(nights[to].year, nights[to].month, nights[to].day + 1))}'
+          '  ${to - from + 1}박  $label',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: room == null ? AppColors.fill : AppColors.brandSoft,
+          borderRadius: BorderRadius.circular(Radii.control),
+          border: Border.all(
+            color: room == null ? AppColors.border : AppColors.brand,
+          ),
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: room == null ? AppColors.textFaint : AppColors.brand,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 이 조각이 차지하는 밤. 집회 기간과 하나도 안 겹치면(일정이 기간 밖) 빈 막대로 둔다 —
+  /// 정원 계산은 이런 사람을 모든 밤 차지로 세지만([stayMask]), 그림까지 전 기간을 칠하면
+  /// "전 일정을 이 집에 배정한 것"처럼 보여서 오해를 부른다. 대신 이름 옆에 [기간 밖]을 적는다.
+  List<bool> _mask(Attendee a) => [for (final n in nights) a.staysOn(n)];
+
+  /// 일정이 집회 기간 밖이라 막대를 하나도 못 그리는 조각.
+  static bool _outside(Attendee a, List<DateTime> nights) =>
+      !nights.any(a.staysOn);
+
+  /// 묵는 밤 표시 → 이어진 구간들 [(시작칸, 끝칸)]. 중간에 빠진 밤이 있으면 구간이 나뉜다.
+  static List<(int, int)> _runs(List<bool> mask) {
+    final out = <(int, int)>[];
+    int? from;
+    for (var i = 0; i < mask.length; i++) {
+      if (mask[i]) {
+        from ??= i;
+      } else if (from != null) {
+        out.add((from, i - 1));
+        from = null;
+      }
+    }
+    if (from != null) out.add((from, mask.length - 1));
+    return out;
+  }
+
+  static String _weekday(DateTime d) =>
+      const ['월', '화', '수', '목', '금', '토', '일'][d.weekday - 1];
+}
+
+class _Th extends StatelessWidget {
+  const _Th(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: const TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      color: AppColors.textMuted,
+    ),
+  );
+}
+
 class _StatsPanel extends StatelessWidget {
   const _StatsPanel({
     required this.people,
@@ -714,7 +978,9 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
   final zone = TextEditingController(text: a.zone ?? '');
   final note = TextEditingController(text: a.note ?? '');
   var gender = a.gender;
+  var checkIn = a.checkIn, checkOut = a.checkOut;
   final messenger = ScaffoldMessenger.of(context);
+  final homestay = current.value?.isHomestay == true;
   // 사용자 정의 항목: 이름 -> 입력칸
   final extras = {
     for (final f in store.event.customFields)
@@ -773,6 +1039,59 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
                   controller: note,
                   decoration: const InputDecoration(labelText: '기타'),
                 ),
+                const Divider(height: 24),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    homestay ? '묵는 기간 (이 집에 있는 동안)' : '묵는 기간',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('체크인'),
+                  trailing: Text(fmtDate(checkIn)),
+                  onTap: () async {
+                    final d = await pickDate(context, checkIn);
+                    if (d == null) return;
+                    setLocal(() {
+                      checkIn = d;
+                      if (!checkOut.isAfter(d)) {
+                        checkOut = d.add(const Duration(days: 1));
+                      }
+                    });
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('체크아웃'),
+                  subtitle: Text(
+                    '${checkOut.difference(checkIn).inDays}박',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  trailing: Text(fmtDate(checkOut)),
+                  onTap: () async {
+                    final d = await pickDate(context, checkOut);
+                    if (d != null && d.isAfter(checkIn)) {
+                      setLocal(() => checkOut = d);
+                    }
+                  },
+                ),
+                if (checkOut.difference(checkIn).inDays > 1)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.call_split, size: 18),
+                      label: Text(homestay ? '기간 나누기 (다른 집으로)' : '기간 나누기'),
+                      onPressed: () => Navigator.pop(context, 'split'),
+                    ),
+                  ),
                 if (extras.isNotEmpty) const Divider(height: 24),
                 for (final f in store.event.customFields)
                   Row(
@@ -837,6 +1156,10 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
   );
 
   if (action == null || action == 'cancel') return;
+  if (action == 'split') {
+    if (!context.mounted) return;
+    return _splitDialog(context, a);
+  }
   if (action == 'delete') {
     if (!context.mounted) return;
     final ok = await confirmDialog(
@@ -883,8 +1206,15 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
       a.phone != opt(phone) ||
       a.cell != opt(cell) ||
       a.zone != opt(zone) ||
+      // 일정도 신청에서 오는 항목이다 — 여기서 고쳤으면 가져오기가 되돌리지 않게 표시한다.
+      a.checkIn != checkIn ||
+      a.checkOut != checkOut ||
       !mapEquals(a.extra, extraValues);
+  // 일정을 고치면 띄엄띄엄 묵던 밤 목록은 버린다 (운영자가 정한 기간이 이긴다).
+  if (a.checkIn != checkIn || a.checkOut != checkOut) a.stayNights = null;
   a
+    ..checkIn = checkIn
+    ..checkOut = checkOut
     ..name = n
     ..gender = gender
     ..age = ageN
@@ -895,6 +1225,82 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
     ..extra = extraValues;
   if (changed) a.editedByAdmin = true;
   store.commit();
+}
+
+/// 참석자의 일정을 날짜로 잘라 뒤쪽을 미배정으로 떼어낸다 — 그 기간만 다른 방(가정)에 보낼 때.
+Future<void> _splitDialog(BuildContext context, Attendee a) async {
+  final homestay = current.value?.isHomestay == true;
+  final messenger = ScaffoldMessenger.of(context);
+  var cut = a.checkIn.add(const Duration(days: 1));
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setLocal) => AlertDialog(
+        title: Text('${a.name} 기간 나누기'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                homestay
+                    ? '이 날부터는 다른 집에서 묵습니다. 뒤쪽 기간은 미배정으로 떨어져 나오고, '
+                          '[가정 배정]에서 다른 집에 넣으면 됩니다.'
+                    : '이 날부터를 따로 떼어냅니다. 뒤쪽 기간은 미배정이 됩니다.',
+                style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('나누는 날'),
+                trailing: Text(fmtDate(cut)),
+                onTap: () async {
+                  final d = await showDatePicker(
+                    context: context,
+                    initialDate: cut,
+                    firstDate: a.checkIn.add(const Duration(days: 1)),
+                    lastDate: a.checkOut.subtract(const Duration(days: 1)),
+                  );
+                  if (d != null) setLocal(() => cut = dateOnly(d));
+                },
+              ),
+              Text(
+                '${fmtDate(a.checkIn)} ~ ${fmtDate(cut)}  '
+                '(${cut.difference(a.checkIn).inDays}박) '
+                '${store.roomById(a.roomId)?.label ?? '미배정'}\n'
+                '${fmtDate(cut)} ~ ${fmtDate(a.checkOut)}  '
+                '(${a.checkOut.difference(cut).inDays}박) 미배정',
+                style: const TextStyle(fontSize: 13, height: 1.6),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('나누기'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (ok != true) return;
+  final later = store.splitStay(a, cut);
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text(
+        later == null
+            ? '그 날짜로는 나눌 수 없습니다.'
+            : '${a.name} 님을 나눴습니다. ${fmtDate(cut)}부터는 미배정입니다 — '
+                  '[${homestay ? '가정' : '방'} 배정]에서 넣어 주세요.',
+      ),
+    ),
+  );
 }
 
 /// 참석자에 새 항목(예: 교회)을 만든다. 만든 이름을 돌려준다.
