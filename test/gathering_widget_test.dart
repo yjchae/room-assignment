@@ -241,6 +241,56 @@ class FakeRemote extends Remote {
       )
       .firstOrNull;
 
+  // 스탭 페이지. 서버(_my_duties·save_duty_items)와 같은 규칙만 흉내 낸다 —
+  // 신청의 사람 id 가 담당구역의 personIds 에 있으면 그 구역이 내 것이다.
+  @override
+  Future<({String name, List<StaffDuty> duties})?> lookupDuties(
+    String gatheringId,
+    String phone,
+    String pin,
+  ) async {
+    final r = await lookup(gatheringId, phone, pin);
+    if (r == null || r.status == RegStatus.cancelled) return null;
+    final mine = r.people.map((p) => p.id).toSet();
+    final plan = plans[gatheringId];
+    final attendees = [
+      for (final a in (plan?['attendees'] as List? ?? [])) a as Map,
+    ];
+    return (
+      name: r.applicant,
+      duties: [
+        for (final d in (plan?['duties'] as List? ?? []))
+          if ((d as Map)['personIds'] is List &&
+              (d['personIds'] as List).any(mine.contains))
+            (
+              duty: Duty.fromJson(Map<String, dynamic>.from(d)),
+              members: [
+                for (final a in attendees)
+                  if ((d['personIds'] as List).contains(a['id'])) '${a['name']}',
+              ],
+            ),
+      ],
+    );
+  }
+
+  @override
+  Future<bool> saveDutyItems(
+    String gatheringId,
+    String phone,
+    String pin, {
+    required String dutyId,
+    required List<DutyTask> items,
+  }) async {
+    final me = await lookupDuties(gatheringId, phone, pin);
+    if (me == null || !me.duties.any((d) => d.duty.id == dutyId)) return false;
+    for (final d in (plans[gatheringId]!['duties'] as List)) {
+      if ((d as Map)['id'] == dutyId) {
+        d['items'] = [for (final t in items) t.toJson()];
+      }
+    }
+    return true;
+  }
+
   @override
   Future<Registration?> cancelMine(
     String gatheringId,
@@ -516,6 +566,146 @@ void main() {
       final p = (fake.lastSubmit!['people'] as List<Person>).single;
       expect((p.minister, p.church), (true, '신촌하나교회'));
       expect(find.text(Gathering.defaultMinisterNotice), findsOneWidget);
+    });
+
+    testWidgets('스탭 칸은 켠 집회에만 나오고, 필수면 체크해야 신청된다', (tester) async {
+      setView(tester, const Size(400, 2400));
+      await pumpPage(tester, ApplyPage(gathering: sample()));
+      expect(find.text('스탭으로 신청합니다'), findsNothing); // 기본은 안 받음
+
+      final g = sample()
+        ..requiredFields = ['staff']
+        ..shownFields = ['staff'];
+      await pumpPage(tester, ApplyPage(gathering: g));
+      await tester.enterText(field('이름 *'), '김스탭');
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      expect(find.text('스탭 신청에 체크해야 합니다'), findsOneWidget);
+      expect(fake.lastSubmit, isNull);
+
+      await tester.tap(find.text('스탭으로 신청합니다 *'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      expect((fake.lastSubmit!['people'] as List<Person>).single.staff, isTrue);
+    });
+
+    testWidgets('스탭 페이지: 내 담당구역만 보이고, 할 일을 적어 저장한다', (tester) async {
+      // 스탭 김스탭(사람 id 'p-staff')이 '주방'에 배정돼 있다. '차량'은 남의 구역.
+      fake.regs.add(
+        Registration(
+          id: 'r-staff',
+          gatheringId: 'g1',
+          phone: '01012345678',
+          people: [
+            Person(
+              id: 'p-staff',
+              name: '김스탭',
+              gender: 'M',
+              birthYear: 1990,
+              staff: true,
+            ),
+          ],
+          status: RegStatus.confirmed,
+          createdAt: DateTime(2026, 9, 10),
+        ),
+      );
+      fake.pins['r-staff'] = '1234';
+      fake.plans['g1'] = Event(
+        name: 'x',
+        startDate: DateTime(2026, 10, 9),
+        endDate: DateTime(2026, 10, 11),
+        attendees: [
+          Attendee(
+            id: 'p-staff',
+            name: '김스탭',
+            gender: 'M',
+            age: 36,
+            checkIn: DateTime(2026, 10, 9),
+            checkOut: DateTime(2026, 10, 11),
+          )..staff = true,
+        ],
+        duties: [
+          Duty(id: 'd1', name: '주방', tasks: '배식', personIds: ['p-staff']),
+          Duty(id: 'd2', name: '차량', personIds: ['남']),
+        ],
+      ).toJson();
+
+      setView(tester, const Size(400, 1600));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1', staff: true));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '휴대폰번호'),
+        '01012345678',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '1234',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '내 담당구역 보기'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('주방'), findsOneWidget);
+      expect(find.text('차량'), findsNothing); // 남의 구역은 안 보인다
+      expect(find.textContaining('함께 맡은 사람: 김스탭'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, '행 추가'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '구분'), '준비물');
+      await tester.enterText(find.widgetWithText(TextField, '내용'), '국자');
+      await tester.enterText(find.widgetWithText(TextField, '수량'), '2');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(find.text('저장했습니다.'), findsOneWidget);
+
+      final saved = Event.fromJson(fake.plans['g1']!).duties.first;
+      expect(saved.name, '주방');
+      expect(
+        (saved.items.single.kind, saved.items.single.content, saved.items.single.qty),
+        ('준비물', '국자', '2'),
+      );
+    });
+
+    testWidgets('스탭 페이지: 담당구역이 없으면 안내하고, PIN 이 틀리면 막는다', (tester) async {
+      fake.regs.add(
+        Registration(
+          id: 'r-x',
+          gatheringId: 'g1',
+          phone: '01099990000',
+          people: [Person(id: 'p-x', name: '박참석', gender: 'M', birthYear: 1990)],
+          status: RegStatus.confirmed,
+          createdAt: DateTime(2026, 9, 10),
+        ),
+      );
+      fake.pins['r-x'] = '1234';
+      setView(tester, const Size(400, 1200));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1', staff: true));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '휴대폰번호'),
+        '01099990000',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '9999',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '내 담당구역 보기'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('맞지 않습니다'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '1234',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '내 담당구역 보기'));
+      await tester.pumpAndSettle();
+      expect(find.text('담당구역이 없습니다'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('운영자가 끈 출생연도·셀·존은 신청서에 없고, 금액은 성인으로', (tester) async {

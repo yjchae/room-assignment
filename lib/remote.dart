@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
 import 'gathering.dart';
+import 'models.dart' show Duty, DutyTask;
 
 /// 화면은 이 전역만 부른다. 테스트는 [Remote] 를 상속한 가짜로 바꿔 끼운다.
 Remote remote = Remote();
@@ -395,6 +396,50 @@ class Remote {
     await _db.rpc('cancel_registration', params: _key(gatheringId, phone, pin)),
   );
 
+  // --- 스탭 페이지 (담당구역 할 일, 로그인 없음) --------------------------------
+
+  /// 휴대폰+PIN 으로 내 담당구역과 할 일을 읽는다. 틀리면 null, 맡은 구역이 없으면 빈 목록.
+  Future<({String name, List<StaffDuty> duties})?> lookupDuties(
+    String gatheringId,
+    String phone,
+    String pin,
+  ) async {
+    final j = await _db.rpc(
+      'lookup_duties',
+      params: _key(gatheringId, phone, pin),
+    );
+    if (j is! Map) return null;
+    return (
+      name: '${j['name'] ?? ''}',
+      duties: [
+        for (final d in (j['duties'] as List? ?? []))
+          if (d is Map)
+            (
+              duty: Duty.fromJson(Map<String, dynamic>.from(d)),
+              members: [for (final m in (d['members'] as List? ?? [])) '$m'],
+            ),
+      ],
+    );
+  }
+
+  /// 내 담당구역의 할 일 표를 통째로 저장한다. 휴대폰+PIN 이 틀리면 false.
+  Future<bool> saveDutyItems(
+    String gatheringId,
+    String phone,
+    String pin, {
+    required String dutyId,
+    required List<DutyTask> items,
+  }) async =>
+      await _db.rpc(
+        'save_duty_items',
+        params: {
+          ..._key(gatheringId, phone, pin),
+          'p_duty': dutyId,
+          'p_items': [for (final t in items) t.toJson()],
+        },
+      ) !=
+      null;
+
   Map<String, dynamic> _key(String gatheringId, String phone, String pin) => {
     'p_gathering': gatheringId,
     'p_phone': digitsOnly(phone),
@@ -415,6 +460,9 @@ class Remote {
 
   Registration? _reg(Object? j) => j is Map ? Registration.fromRow(j) : null;
 }
+
+/// 스탭 페이지가 보는 내 담당구역 한 곳. [members] 는 같이 배정된 사람 이름.
+typedef StaffDuty = ({Duty duty, List<String> members});
 
 /// 운영자 가입 신청 한 건 ([Remote.adminRequests]).
 typedef AdminRequest = ({String id, String email, String name, DateTime at});
@@ -455,11 +503,12 @@ String errorText(Object e) {
     'INVALID_PEOPLE': '참석자는 1~20명까지 입력할 수 있습니다.',
     'INVALID_TEXT': '입금자명은 50자, 메모는 1000자까지입니다.',
     'INVALID_QUOTED': '금액을 계산하지 못했습니다. 새로고침 후 다시 시도하세요.',
+    'INVALID_ITEMS': '할 일은 200줄까지 적을 수 있습니다. 줄을 줄여서 저장하세요.',
     'ALREADY_REGISTERED': '이 번호로 이미 신청하셨습니다. [신청 조회]에서 수정하세요.',
     'TOO_MANY_ATTEMPTS':
         'PIN을 여러 번 틀려 30분간 조회가 잠겼습니다. 잠시 후 다시 시도하거나 담당자에게 문의하세요.',
     'NOT_EDITABLE': '입금이 확인됐거나 취소된 신청은 바꿀 수 없습니다. 담당자에게 문의하세요.',
-    'FORBIDDEN': '이 집회를 맡은 운영자만 할 수 있습니다.',
+    'FORBIDDEN': '권한이 없습니다. 맡은 담당구역이 맞는지, 이 집회의 운영자인지 확인하세요.',
     'NO_ACCOUNT':
         '그 이메일로 가입한 계정이 없습니다. 먼저 운영자 웹에서 [가입 신청]을 하도록 안내한 뒤 다시 등록하세요.',
     // 로그인 없이(anon) 운영자 전용 테이블을 건드렸다 — 세션이 끊겼거나 로그인 전이다.

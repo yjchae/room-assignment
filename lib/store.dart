@@ -149,7 +149,7 @@ class Store extends ChangeNotifier {
       stayNights: gap ? nights : null,
       extra: {...p.extra},
       registrationId: r.id,
-    );
+    )..staff = p.staff;
   }
 
   /// [syncRegistrations] 를 하면 지워질 사람 중 방이 배정된 사람. 지우기 전에 운영자에게 보여준다.
@@ -231,6 +231,7 @@ class Store extends ChangeNotifier {
           ..checkOut = w.checkOut
           ..stayNights = w.stayNights
           ..extra = w.extra
+          ..staff = w.staff
           ..registrationId = w.registrationId
           ..editedByAdmin = false;
         updated++;
@@ -378,6 +379,7 @@ class Store extends ChangeNotifier {
       a.checkIn == b.checkIn &&
       a.checkOut == b.checkOut &&
       listEquals(a.stayNights, b.stayNights) &&
+      a.staff == b.staff &&
       a.registrationId == b.registrationId &&
       mapEquals(a.extra, b.extra);
 
@@ -669,6 +671,44 @@ class Store extends ChangeNotifier {
       people.where((a) => a.registrationId != null).map((a) => a.id),
     );
     event.attendees.removeWhere((a) => ids.contains(a.id));
+    // 조각이 하나도 안 남은 사람만 담당구역에서 뺀다 (기간을 나눈 사람은 조각 하나를 지워도 남는다).
+    final gone = people
+        .map((a) => a.personId)
+        .where((p) => !event.attendees.any((a) => a.personId == p))
+        .toSet();
+    for (final d in event.duties) {
+      d.personIds.removeWhere(gone.contains);
+    }
+    commit();
+  }
+
+  // --- 담당구역 ---
+
+  /// 담당구역에 배정된 사람들 (참석자 목록 순서, 이미 없는 사람은 뺀다).
+  List<Attendee> membersOf(Duty d) => [
+    for (final a in event.attendees)
+      if (a.splitOf == null && d.personIds.contains(a.personId)) a,
+  ];
+
+  /// 이 사람이 맡은 담당구역.
+  List<Duty> dutiesOf(Attendee a) => [
+    for (final d in event.duties)
+      if (d.personIds.contains(a.personId)) d,
+  ];
+
+  void addDuty(Duty d) {
+    event.duties.add(d);
+    commit();
+  }
+
+  void deleteDuty(Duty d) {
+    event.duties.removeWhere((x) => x.id == d.id);
+    commit();
+  }
+
+  /// [d] 의 배정 인원을 [personIds] 로 바꾼다.
+  void setDutyMembers(Duty d, Iterable<String> personIds) {
+    d.personIds = personIds.toSet().toList();
     commit();
   }
 }

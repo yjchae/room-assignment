@@ -19,6 +19,7 @@
 --   CLOSED  INVALID_PHONE  INVALID_PIN  INVALID_PEOPLE  INVALID_TEXT  INVALID_QUOTED
 --   ALREADY_REGISTERED  TOO_MANY_ATTEMPTS  NOT_EDITABLE  FORBIDDEN  NOT_FOUND  CONFLICT
 --   NO_ACCOUNT (집회 운영자로 등록하려는 이메일의 계정이 없음)  NO_SUCH_ADMIN (이미 해제된 운영자)
+--   INVALID_ITEMS (스탭이 보낸 담당구역 할 일 표가 너무 크거나 배열이 아님)
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -49,6 +50,7 @@ create table if not exists public.gatherings (
   bank jsonb,                                -- {bank, account, holder}
   form_fields text[] not null default '{}',  -- 사용자 정의 항목
   hidden_fields text[] not null default '{}',  -- 신청서에서 뺀 기본 항목: birthYear, gender, cell, zone, minister
+  shown_fields text[] not null default '{}',   -- 기본이 '안 받음'인 기본 항목 중 켠 것: staff
   required_fields text[] not null default '{birthYear,gender}',  -- 신청서에서 꼭 채워야 하는 기본 항목
   open boolean not null default false,
   deadline date,                             -- 이 날(한국 시간)까지 신청 받음
@@ -64,6 +66,8 @@ alter table public.gatherings add constraint gatherings_kind_check
 alter table public.gatherings add column if not exists schedule jsonb not null default '[]';
 alter table public.gatherings add column if not exists hidden_fields text[] not null default '{}';
 alter table public.gatherings add column if not exists required_fields text[] not null default '{birthYear,gender}';
+-- 나중에 생긴 기본 항목(staff)은 여기에 담는다. 없으면 신청서에 안 나오므로 예전 집회가 그대로 있다.
+alter table public.gatherings add column if not exists shown_fields text[] not null default '{}';
 alter table public.gatherings add column if not exists minister_notice_on boolean not null default true;
 alter table public.gatherings add column if not exists minister_notice text;
 
@@ -297,6 +301,27 @@ language sql stable security definer set search_path = '' as $$
      and a->>'roomId' = r->>'id'
 $$;
 
+-- 이 신청의 사람들이 맡은 담당구역. 없으면 빈 배열.
+-- 신청서의 people[].id 가 곧 참석자의 personId 라 (lib/store.dart attendeeOf) 신청 한 건만 보면 된다.
+-- 같이 일하는 사람은 이름만 준다 — 연락처·운영자 메모는 신청자에게 줄 내용이 아니다.
+create or replace function public._my_duties(p_gathering uuid, p_people jsonb)
+returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'id', d->>'id', 'name', d->>'name', 'tasks', d->>'tasks',
+           'capacity', d->'capacity', 'items', coalesce(d->'items', '[]'::jsonb),
+           'members', coalesce((
+             select jsonb_agg(a->>'name')
+               from jsonb_array_elements(p.data->'attendees') a
+              where a->>'splitOf' is null
+                and d->'personIds' ? (a->>'id')), '[]'::jsonb)) order by d->>'name'), '[]'::jsonb)
+    from public.room_plans p,
+         lateral jsonb_array_elements(p.data->'duties') d
+   where p.gathering_id = p_gathering
+     and exists (select 1 from jsonb_array_elements(p_people) x
+                  where d->'personIds' ? (x->>'id'))
+$$;
+
 -- ---------------------------------------------------------------------------
 -- 신청 웹이 부르는 함수
 -- ---------------------------------------------------------------------------
@@ -372,6 +397,59 @@ begin
   update public.registrations set status = 'cancelled' where id = r.id
   returning * into r;
   return to_jsonb(r) - 'pin_hash' - 'admin_memo';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 스탭 페이지가 부르는 함수 (신청 웹과 같은 관문: 휴대폰 + PIN)
+-- ---------------------------------------------------------------------------
+
+-- 내 담당구역과 할 일. 휴대폰+PIN 이 틀리면 null, 맡은 구역이 없으면 duties 가 빈 배열.
+-- 취소한 신청은 들어갈 수 없다.
+create or replace function public.lookup_duties(p_gathering uuid, p_phone text, p_pin text)
+returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  r public.registrations := public._verify(p_gathering, p_phone, p_pin);
+begin
+  if r.id is null or r.status = 'cancelled' then return null; end if;
+  return jsonb_build_object(
+    'name', coalesce(r.people->0->>'name', ''),
+    'duties', public._my_duties(p_gathering, r.people));
+end $$;
+
+-- 내가 맡은 담당구역의 할 일 표를 통째로 바꾼다. 바뀐 표를 돌려준다.
+-- 구역 하나의 items 만 건드리므로 다른 구역·방배정은 스탭이 덮어쓸 수 없다.
+-- ponytail: 버전 검사를 하지 않는다 — 같은 구역을 둘이 동시에 고치면 나중 저장이 이긴다.
+-- 문제가 되면 save_room_plan 처럼 p_version 을 받아 CONFLICT 를 던지면 된다.
+create or replace function public.save_duty_items(
+  p_gathering uuid, p_phone text, p_pin text, p_duty text, p_items jsonb
+) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  r public.registrations := public._verify(p_gathering, p_phone, p_pin);
+  idx int;
+begin
+  if r.id is null or r.status = 'cancelled' then return null; end if;
+  if p_items is null or jsonb_typeof(p_items) <> 'array'
+     or jsonb_array_length(p_items) > 200 or length(p_items::text) > 20000 then
+    raise exception 'INVALID_ITEMS';
+  end if;
+  -- 내가 배정된 구역인지 본다 (_my_duties 와 같은 규칙).
+  if not exists (select 1 from jsonb_array_elements(public._my_duties(p_gathering, r.people)) d
+                  where d->>'id' = p_duty) then
+    raise exception 'FORBIDDEN';
+  end if;
+
+  select i - 1 into idx
+    from public.room_plans p, lateral jsonb_array_elements(p.data->'duties') with ordinality t(e, i)
+   where p.gathering_id = p_gathering and e->>'id' = p_duty;
+  if idx is null then raise exception 'NOT_FOUND'; end if;
+
+  update public.room_plans
+     set data = jsonb_set(data, array['duties', idx::text, 'items'], p_items),
+         version = version + 1, updated_at = now()
+   where gathering_id = p_gathering;
+  return p_items;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -537,6 +615,7 @@ revoke execute on function
   public._check_input(jsonb, text, text, int),
   public._verify(uuid, text, text),
   public._assigned(uuid, uuid),
+  public._my_duties(uuid, jsonb),
   public.reset_pin(uuid, text),
   public.admin_add_registration(uuid, text, text, jsonb, text, text, int),
   public.save_room_plan(uuid, jsonb, int),
@@ -551,7 +630,9 @@ grant execute on function
   public.submit_registration(uuid, text, text, jsonb, text, text, int),
   public.lookup_registration(uuid, text, text),
   public.update_registration(uuid, text, text, jsonb, text, text, int),
-  public.cancel_registration(uuid, text, text)
+  public.cancel_registration(uuid, text, text),
+  public.lookup_duties(uuid, text, text),
+  public.save_duty_items(uuid, text, text, text, jsonb)
   to anon, authenticated;
 
 grant execute on function

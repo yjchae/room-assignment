@@ -16,3 +16,6 @@ const adminSiteUrl = '${publicSiteUrl}admin/';
 
 /// 카톡으로 공유할 신청 링크.
 String applyLink(String gatheringId) => '$publicSiteUrl?g=$gatheringId';
+
+/// 스탭에게 줄 담당구역 링크. 배정된 사람만 자기 구역을 본다 (lib/main_public.dart StaffPage).
+String staffLink(String gatheringId) => '${applyLink(gatheringId)}&staff=1';

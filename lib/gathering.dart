@@ -140,6 +140,7 @@ class Person {
     this.cell,
     String? zone,
     this.minister = false,
+    this.staff = false,
     this.church,
     Map<String, String>? extra,
   }) : id = id ?? newPersonId(),
@@ -167,6 +168,9 @@ class Person {
 
   /// 신청서의 "사역자" 체크.
   bool minister;
+
+  /// 신청서의 "스탭으로 신청합니다" 체크. 운영자가 담당구역을 배정할 때 본다.
+  bool staff;
 
   /// 사역자가 섬기는 교회 이름. 사역자를 체크하면 필수.
   String? church;
@@ -211,6 +215,7 @@ class Person {
     'cell': cell,
     'zone': zone,
     if (minister) 'minister': true,
+    if (staff) 'staff': true,
     if (church != null) 'church': church,
     'extra': extra,
   };
@@ -234,6 +239,7 @@ class Person {
     cell: _str(j['cell']),
     zone: _str(j['zone']),
     minister: j['minister'] == true,
+    staff: j['staff'] == true,
     church: _str(j['church']),
     extra: {
       if (j['extra'] is Map)
@@ -320,6 +326,7 @@ class Gathering {
     Bank? bank,
     List<String>? formFields,
     List<String>? hiddenFields,
+    List<String>? shownFields,
     List<String>? requiredFields,
     this.open = false,
     this.deadline,
@@ -332,6 +339,7 @@ class Gathering {
        bank = bank ?? Bank(),
        formFields = formFields ?? [],
        hiddenFields = hiddenFields ?? [],
+       shownFields = shownFields ?? [],
        requiredFields = requiredFields ?? [...defaultRequiredFields];
 
   /// 이 칸이 생기기 전 집회의 필수 항목 (서버 기본값과 같다).
@@ -361,8 +369,17 @@ class Gathering {
   /// 출생연도를 빼면 모두 성인 금액으로 계산한다.
   List<String> hiddenFields;
 
+  /// 기본이 '안 받음'인 기본 항목. 켠 집회에서만 신청서에 나온다 ([shownFields]).
+  /// 나중에 생긴 칸을 여기 두면 이미 신청 받는 집회의 신청서가 말없이 바뀌지 않는다.
+  static const optInFields = {'staff'};
+
+  /// 운영자가 켠, 기본이 '안 받음'인 기본 항목: 'staff'.
+  List<String> shownFields;
+
   /// 신청서에 [field] 칸이 나오는가.
-  bool asks(String field) => !hiddenFields.contains(field);
+  bool asks(String field) => optInFields.contains(field)
+      ? shownFields.contains(field)
+      : !hiddenFields.contains(field);
 
   /// 운영자가 필수로 정한 기본 항목. 신청서에 나오는 칸만 뜻이 있다 ([requires]).
   /// 선택 항목을 비우면 출생연도는 성인 금액, 성별은 '' = 모름으로 들어간다.
@@ -446,6 +463,7 @@ class Gathering {
     'bank': bank.toJson(),
     'form_fields': formFields,
     'hidden_fields': hiddenFields,
+    'shown_fields': shownFields,
     'required_fields': requiredFields,
     'open': open,
     'deadline': deadline == null ? null : ymd(deadline!),
@@ -470,6 +488,7 @@ class Gathering {
     bank: Bank.fromJson(r['bank']),
     formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
     hiddenFields: [for (final f in (r['hidden_fields'] as List? ?? [])) '$f'],
+    shownFields: [for (final f in (r['shown_fields'] as List? ?? [])) '$f'],
     requiredFields: r['required_fields'] is List
         ? [for (final f in r['required_fields'] as List) '$f']
         : null,

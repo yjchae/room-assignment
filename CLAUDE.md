@@ -32,7 +32,7 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - **운영자는 두 종류다.** 전체 운영자 = `admins` 에 있는 사람(모든 집회 + 계정 승인 + 새 집회 만들기·삭제). 집회별 운영자 = `gathering_admins` 에 그 집회로 등록된 사람(그 집회의 설정·신청·방배정만). 판정은 SQL 함수 `manages(집회id)` 하나로 한다 — RLS 정책도 운영자 RPC(`save_room_plan`·`admin_add_registration`·`reset_pin`)도 이걸 부른다. 등록은 집회 설정 화면의 [이 집회의 운영자] 카드에서 이메일로 한다(`add_gathering_admin`, 계정이 없으면 `NO_ACCOUNT`). 앱은 `remote.scope()` 로 범위를 읽어 집회 목록과 [새 집회]·[집회 삭제]를 가린다.
 - `lib/config.dart` 에는 publishable 키만 둔다. 저장소가 공개라서 service_role 키, 실명·실제 전화번호가 든 데이터는 커밋하지 않는다.
 
-**웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
+**웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `models.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `widgets/duty_tasks.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
 
 **회비 계산은 `gathering.dart` 의 `quote()` 하나뿐이다.** 신청 웹·조회·관리자 화면·참석자 가져오기가 모두 이 함수를 부른다. 따로 계산하면 금액이 어긋난다.
 
@@ -51,6 +51,23 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - 화면은 같은 걸 쓰고 이름만 바꾼다(`방 관리 → 가정 관리`). 홈스테이의 [신청에서 가져오기]는 참석자 화면이 아니라 **가정 관리** 화면에 있다.
 
 **기간을 나눈 참석자** (`Attendee.splitOf`): 한 사람이 기간별로 다른 방(홈스테이는 다른 집)에 묵으면 참석자 행이 조각으로 나뉜다. `Store.splitStay`(경계 날짜로 자르기)·`assignRange`(고른 기간만 배정, 나머지는 미배정 조각)가 만들고, 같은 사람은 `Attendee.personId` 로 묶어 화면에서 한 줄로 그린다. 조각도 제 일정을 가진 보통 참석자라 정원·보드·자동배정은 손댈 필요가 없다. 나뉜 조각은 `registrationId` 를 떼고 원본에 `editedByAdmin` 을 붙여 [신청에서 가져오기]가 되돌리지 않게 한다.
+
+**신청서 기본 항목**: 운영자가 칸마다 [안 받음 | 선택 | 필수]를 정한다. 보통 칸은 뺀 목록(`hidden_fields`)으로,
+나중에 생긴 칸(`Gathering.optInFields` = 지금은 `staff`)은 켠 목록(`shown_fields`)으로 관리한다 — 기본이 '안 받음'이라
+이미 신청 받는 집회의 신청서가 말없이 바뀌지 않는다. 판정은 `asks()`·`requires()`, 설정 화면의 세그먼트는
+`setFieldMode()` 하나가 고친다. 스탭 체크(`Person.staff`)는 확정하면 `Attendee.staff` 로 따라온다.
+
+**담당구역** (`Event.duties`, `lib/screens/duties.dart`): 스탭이 맡을 일(주방·차량…)을 만들고 참석자를 배정한다.
+방배정 문서 안에 살아서 서버 변경이 없고 백업에 따라온다. 배정은 **구역이 사람 목록을 든다**(`Duty.personIds`,
+`Attendee.personId` 기준) — 한 사람이 여러 구역을 맡을 수 있어서 방배정(`Attendee.roomId`)과 반대다.
+`store.membersOf`/`dutiesOf`/`setDutyMembers` 로 읽고 고친다. 요구사항은 `PLAN_GATHERING.md` §15.
+
+**스탭 페이지** (`main_public.dart` 의 `StaffPage`, 링크 `?g=<집회id>&staff=1` = `staffLink()`): 담당구역을 맡은 스탭이
+휴대폰+PIN(신청 조회와 같은 관문)으로 들어와 그 구역의 할 일(`Duty.items`, 구분·내용·수량·체크)을 적는다.
+신청자는 `room_plans` 에 못 닿으므로 RPC `lookup_duties`·`save_duty_items` 로만 드나든다 — 판정은 신청의
+`people[].id` 가 `Duty.personIds` 에 있는지 하나. `save_duty_items` 는 그 구역의 `items` 한 칸만 바꾸므로
+스탭이 다른 구역·방배정을 덮어쓸 수 없다(버전 검사는 하지 않는다). 표는 `widgets/duty_tasks.dart` 의
+`DutyTaskTable` 한 벌을 스탭 페이지와 운영자 [구역 할일] 화면이 같이 쓴다. 요구사항은 `PLAN_GATHERING.md` §16.
 
 **일정표** (`Gathering.schedule`): `{date, time, title}` 목록을 `gatherings.schedule` 에 담는다. 집회 설정에서 날짜별로 적고, 신청 웹 집회 페이지에 보인다. 기간 밖 날짜의 항목은 화면에 안 보이지만 지우지도 않는다.
 

@@ -24,7 +24,9 @@ class QuoteTable extends StatelessWidget {
           _Row(
             l.person.name.trim().isEmpty ? '(이름 없음)' : l.person.name,
             won(l.amount),
-            sub: '${l.group.label} · ${l.stay}',
+            sub:
+                '${l.group.label} · ${l.stay}'
+                '${l.person.staff ? ' · 스탭' : ''}',
           ),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 6),

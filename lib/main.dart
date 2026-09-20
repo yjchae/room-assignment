@@ -8,6 +8,8 @@ import 'models.dart';
 import 'remote.dart';
 import 'screens/assign.dart';
 import 'screens/attendees.dart';
+import 'screens/duties.dart';
+import 'screens/duty_tasks_screen.dart';
 import 'screens/auto_assign_screen.dart';
 import 'screens/gathering_settings.dart';
 import 'screens/gatherings.dart';
@@ -27,7 +29,11 @@ final current = ValueNotifier<Gathering?>(null);
 final tabIndex = ValueNotifier<int>(0);
 
 /// 탭 번호. 다른 화면에서 탭을 넘길 때 숫자 대신 이걸 쓴다.
-const settingsTab = 0, registrationsTab = 1, assignTab = 4;
+const settingsTab = 0,
+    registrationsTab = 1,
+    assignTab = 4,
+    dutiesTab = 7,
+    dutyTasksTab = 8;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,6 +73,8 @@ class Shell extends StatelessWidget {
     3 => AttendeesScreen(),
     assignTab => AssignScreen(),
     5 => AutoAssignScreen(),
+    dutiesTab => DutiesScreen(),
+    dutyTasksTab => DutyTasksScreen(),
     _ => StatusScreen(),
   };
 
@@ -78,6 +86,8 @@ class Shell extends StatelessWidget {
     (Icons.assignment_ind_outlined, '방배정'),
     (Icons.shuffle, '자동배정'),
     (Icons.space_dashboard_outlined, '현황'),
+    (Icons.checklist_outlined, '담당구역'),
+    (Icons.fact_check_outlined, '구역 할일'),
   ];
 
   /// 홈스테이는 방이 곧 가정이다. 메뉴 이름만 바꾸고 화면은 그대로 쓴다.
@@ -146,7 +156,7 @@ class Shell extends StatelessWidget {
   }
 }
 
-/// 왼쪽 메뉴. 하는 순서대로 [준비 | 배정] 두 묶음.
+/// 왼쪽 메뉴. 하는 순서대로 [준비 | 배정 | 스탭] 세 묶음.
 class _SideNav extends StatelessWidget {
   const _SideNav(this.index);
   final int index;
@@ -155,6 +165,7 @@ class _SideNav extends StatelessWidget {
   static const _groups = [
     ('준비', [0, 1, 2, 3]),
     ('배정', [4, 5, 6]),
+    ('스탭', [dutiesTab, dutyTasksTab]),
   ];
 
   @override
@@ -207,12 +218,16 @@ class _SideNav extends StatelessWidget {
                     color: on ? AppColors.brand : AppColors.textMuted,
                   ),
                   const SizedBox(width: 10),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: on ? AppColors.text : AppColors.textMuted,
+                  // 메뉴 폭이 고정이라 긴 이름은 자른다 (넘치면 RenderFlex 가 죽는다).
+                  Expanded(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: on ? AppColors.text : AppColors.textMuted,
+                      ),
                     ),
                   ),
                 ],

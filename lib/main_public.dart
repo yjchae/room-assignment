@@ -1,5 +1,5 @@
 /// 신청 웹 (휴대폰 브라우저). 빌드: flutter build web -t lib/main_public.dart
-/// 링크: <신청 웹 주소>?g=<집회id>
+/// 링크: 신청 <신청 웹 주소>?g=<집회id> · 스탭 <신청 웹 주소>?g=<집회id>&staff=1
 ///
 /// 운영자 쪽 코드(store.dart, screens/)는 가져오지 않는다 — 신청 웹 번들에 들어갈 이유가 없다.
 /// 여기서 가져오는 파일(gathering · remote · theme · quote_table)은 dart:io 금지 (웹 빌드가 깨짐).
@@ -13,8 +13,10 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'gathering.dart';
+import 'models.dart';
 import 'remote.dart';
 import 'theme.dart';
+import 'widgets/duty_tasks.dart';
 import 'widgets/quote_table.dart';
 
 const _tabular = [FontFeature.tabularFigures()];
@@ -27,19 +29,27 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('서버 준비 실패: $e');
   }
-  runApp(PublicApp(gatheringId: Uri.base.queryParameters['g']));
+  runApp(
+    PublicApp(
+      gatheringId: Uri.base.queryParameters['g'],
+      staff: Uri.base.queryParameters['staff'] == '1',
+    ),
+  );
 }
 
 class PublicApp extends StatelessWidget {
-  const PublicApp({super.key, this.gatheringId});
+  const PublicApp({super.key, this.gatheringId, this.staff = false});
   final String? gatheringId;
+
+  /// 스탭 링크(`&staff=1`)로 들어왔다. 집회 페이지 대신 담당구역 할 일 페이지가 뜬다.
+  final bool staff;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: '집회 신청',
+    title: staff ? '스탭 담당구역' : '집회 신청',
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme().copyWith(visualDensity: VisualDensity.standard),
-    home: GatheringPage(id: gatheringId),
+    home: staff ? StaffPage(id: gatheringId) : GatheringPage(id: gatheringId),
   );
 }
 
@@ -435,6 +445,7 @@ class _PersonForm {
       church = TextEditingController(text: p?.church ?? ''),
       gender = p?.gender,
       minister = p?.minister ?? false,
+      staff = p?.staff ?? false,
       relation = p?.relation ?? (applicant ? '본인' : '자녀') {
     if (p != null) {
       for (final e in p.extra.entries) {
@@ -454,7 +465,7 @@ class _PersonForm {
   final TextEditingController name, birth, cell, zone, church;
   final extras = <String, TextEditingController>{};
   String? gender;
-  bool minister;
+  bool minister, staff;
   String relation;
 
   /// 참석하는 날. null = 전체 참석.
@@ -492,6 +503,7 @@ class _PersonForm {
       cell: t(cell),
       zone: t(zone),
       minister: g.asks('minister') && minister,
+      staff: g.asks('staff') && staff,
       church: g.asks('minister') && minister ? t(church) : null,
       extra: {
         for (final e in extras.entries)
@@ -800,6 +812,20 @@ class _ApplyPageState extends State<ApplyPage> {
             ],
           ),
         ],
+        if (g.asks('staff'))
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(_label('스탭으로 신청합니다', 'staff')),
+            subtitle: tried && g.requires('staff') && !f.staff
+                ? const Text(
+                    '스탭 신청에 체크해야 합니다',
+                    style: TextStyle(fontSize: 12, color: AppColors.danger),
+                  )
+                : null,
+            value: f.staff,
+            onChanged: (v) => setState(() => f.staff = v ?? false),
+          ),
         if (g.asks('minister'))
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
@@ -932,8 +958,11 @@ class _ApplyPageState extends State<ApplyPage> {
     final genderOk =
         !g.requires('gender') || forms.every((f) => f.gender != null);
     final daysOk = forms.every((f) => f.full || f.days!.isNotEmpty);
+    // 체크 칸이 필수면 체크해야 신청된다 (스탭만 받는 집회).
+    final staffOk = !g.requires('staff') || forms.every((f) => f.staff);
     if (!formOk ||
         !genderOk ||
+        !staffOk ||
         !daysOk ||
         (!editing && !widget.admin && !consent)) {
       setState(() => serverError = '빨간 표시된 칸을 확인하세요.');
@@ -1788,4 +1817,246 @@ class _BankBox extends StatelessWidget {
       ],
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// 스탭 페이지 — 내 담당구역의 할 일 (링크: ?g=<집회id>&staff=1)
+// ---------------------------------------------------------------------------
+
+/// 담당구역을 맡은 스탭이 휴대폰+PIN(신청할 때 정한 것)으로 들어와 할 일을 적는다.
+/// 배정된 구역이 없으면 볼 것이 없다 — 운영자가 [담당구역]에서 배정해야 보인다.
+class StaffPage extends StatefulWidget {
+  const StaffPage({super.key, this.id});
+  final String? id;
+
+  @override
+  State<StaffPage> createState() => _StaffPageState();
+}
+
+class _StaffPageState extends State<StaffPage> {
+  final phone = TextEditingController();
+  final pin = TextEditingController();
+  Gathering? g;
+  String? name;
+  List<StaffDuty>? duties;
+  String? error;
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGathering();
+  }
+
+  Future<void> _loadGathering() async {
+    final id = widget.id?.trim() ?? '';
+    if (id.isEmpty) {
+      setState(() => error = '잘못된 링크입니다. 받은 링크를 다시 확인하세요.');
+      return;
+    }
+    try {
+      final x = await remote.gathering(id);
+      if (!mounted) return;
+      setState(() {
+        g = x;
+        if (x == null) error = '집회를 찾지 못했습니다. 받은 링크를 다시 확인하세요.';
+      });
+    } catch (e) {
+      if (mounted) setState(() => error = errorText(e));
+    }
+  }
+
+  Future<void> _login() async {
+    if (!validPhone(phone.text) || !RegExp(r'^\d{4}$').hasMatch(pin.text)) {
+      setState(() => error = '휴대폰번호와 PIN 4자리를 입력하세요.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final r = await remote.lookupDuties(g!.id, phone.text, pin.text);
+      setState(() {
+        duties = r?.duties;
+        name = r?.name;
+        if (r == null) error = '휴대폰번호나 PIN이 맞지 않습니다. 5번 틀리면 30분간 잠깁니다.';
+      });
+    } catch (e) {
+      setState(() => error = errorText(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: Text(g?.name ?? '스탭'),
+      shape: const Border(bottom: BorderSide(color: AppColors.border)),
+    ),
+    body: _Narrow(
+      children: g == null && error == null
+          ? const [Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))]
+          : duties == null
+          ? _form()
+          : _view(duties!),
+    ),
+  );
+
+  List<Widget> _form() => [
+    _Section(
+      title: '스탭 담당구역',
+      children: [
+        const Text(
+          '신청할 때 쓴 휴대폰번호와 PIN으로 들어옵니다. 배정된 담당구역의 할 일을 적을 수 있습니다.',
+          style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: phone,
+          keyboardType: TextInputType.phone,
+          enabled: g != null,
+          decoration: const InputDecoration(labelText: '휴대폰번호'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: pin,
+          keyboardType: TextInputType.number,
+          obscureText: true,
+          maxLength: 4,
+          enabled: g != null,
+          decoration: const InputDecoration(labelText: 'PIN (숫자 4자리)'),
+          onSubmitted: (_) => busy || g == null ? null : _login(),
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+          ),
+        FilledButton(
+          onPressed: busy || g == null ? null : _login,
+          child: Text(busy ? '확인 중…' : '내 담당구역 보기'),
+        ),
+      ],
+    ),
+  ];
+
+  List<Widget> _view(List<StaffDuty> list) => [
+    if (list.isEmpty)
+      _Section(
+        title: '담당구역이 없습니다',
+        children: [
+          Text(
+            '${name ?? ''} 님께 배정된 담당구역이 아직 없습니다. 담당자에게 문의하세요.',
+            style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+          ),
+        ],
+      )
+    else
+      for (final d in list)
+        _StaffDutyCard(
+          gatheringId: g!.id,
+          phone: phone.text,
+          pin: pin.text,
+          staffDuty: d,
+        ),
+  ];
+}
+
+/// 담당구역 하나 — 할 일 표를 고치고 [저장]으로 그 구역만 올린다.
+class _StaffDutyCard extends StatefulWidget {
+  const _StaffDutyCard({
+    required this.gatheringId,
+    required this.phone,
+    required this.pin,
+    required this.staffDuty,
+  });
+  final String gatheringId, phone, pin;
+  final StaffDuty staffDuty;
+
+  @override
+  State<_StaffDutyCard> createState() => _StaffDutyCardState();
+}
+
+class _StaffDutyCardState extends State<_StaffDutyCard> {
+  bool dirty = false, busy = false;
+  String? error, saved;
+
+  Duty get duty => widget.staffDuty.duty;
+
+  Future<void> _save() async {
+    setState(() {
+      busy = true;
+      error = null;
+      saved = null;
+    });
+    try {
+      final ok = await remote.saveDutyItems(
+        widget.gatheringId,
+        widget.phone,
+        widget.pin,
+        dutyId: duty.id,
+        items: duty.items,
+      );
+      setState(() {
+        dirty = !ok;
+        saved = ok ? '저장했습니다.' : null;
+        if (!ok) error = '휴대폰번호나 PIN이 맞지 않습니다. 새로고침 후 다시 들어오세요.';
+      });
+    } catch (e) {
+      setState(() => error = errorText(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final members = widget.staffDuty.members;
+    return _Section(
+      title: duty.name,
+      children: [
+        if ((duty.tasks ?? '').trim().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              duty.tasks!,
+              style: const TextStyle(fontSize: 13, height: 1.45),
+            ),
+          ),
+        Text(
+          '함께 맡은 사람: ${members.isEmpty ? '-' : members.join(', ')}',
+          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 12),
+        DutyTaskTable(
+          items: duty.items,
+          newId: newPersonId,
+          onChanged: () => setState(() {
+            dirty = true;
+            saved = null;
+          }),
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+          ),
+        if (saved != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              saved!,
+              style: const TextStyle(fontSize: 12, color: AppColors.ok),
+            ),
+          ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: busy || !dirty ? null : _save,
+          child: Text(busy ? '저장 중…' : '저장'),
+        ),
+      ],
+    );
+  }
 }

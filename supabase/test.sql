@@ -374,6 +374,58 @@ select t.err($q$select public.update_registration('00000000-0000-0000-0000-00000
 select t.ok(public.cancel_registration('00000000-0000-0000-0000-000000000001', '01099998888', '4444') ->> 'status' = 'cancelled',
   '마감 후에도 입금대기면 취소된다');
 
+-- ===========================================================================
+-- 스탭 페이지: 내 담당구역만 보이고, 그 구역의 할 일만 고칠 수 있다
+-- ===========================================================================
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select public.admin_add_registration('00000000-0000-0000-0000-000000000001', '01088881111', '1234',
+  '[{"id":"p-staff","name":"김스탭","staff":true}]', null, null, 0);
+select public.admin_add_registration('00000000-0000-0000-0000-000000000001', '01088882222', '1234',
+  '[{"id":"p-other","name":"박참석"}]', null, null, 0);
+-- 운영자가 담당구역을 만들고 사람을 배정한 상태 (신청서의 사람 id = 참석자 personId)
+select public.save_room_plan('00000000-0000-0000-0000-000000000001', jsonb_build_object(
+  'attendees', jsonb_build_array(
+    jsonb_build_object('id', 'p-staff', 'name', '김스탭'),
+    jsonb_build_object('id', 'p-other', 'name', '박참석')),
+  'duties', jsonb_build_array(
+    jsonb_build_object('id', 'd1', 'name', '주방', 'tasks', '배식',
+      'personIds', jsonb_build_array('p-staff')),
+    jsonb_build_object('id', 'd2', 'name', '차량',
+      'personIds', jsonb_build_array('p-other')))),
+  (select version from public.room_plans where gathering_id = '00000000-0000-0000-0000-000000000001'));
+
+set role anon;
+set request.jwt.claim.sub = '';
+
+-- 마감된 집회여도 스탭은 들어온다 (집회 기간에 쓰는 화면이라 _assert_open 을 보지 않는다)
+select t.ok(jsonb_array_length(public.lookup_duties('00000000-0000-0000-0000-000000000001', '01088881111', '1234') -> 'duties') = 1,
+  '내 담당구역만 보인다');
+select t.ok(public.lookup_duties('00000000-0000-0000-0000-000000000001', '01088881111', '1234') -> 'duties' -> 0 ->> 'name' = '주방',
+  '배정된 구역 이름이 보인다');
+select t.ok(public.lookup_duties('00000000-0000-0000-0000-000000000001', '01088881111', '1234') -> 'duties' -> 0 -> 'members' ? '김스탭',
+  '같이 맡은 사람 이름이 보인다');
+select t.ok(public.lookup_duties('00000000-0000-0000-0000-000000000001', '01088881111', '0000') is null, 'PIN 이 틀리면 null');
+select t.ok(jsonb_array_length(public.lookup_duties('00000000-0000-0000-0000-000000000001', '01012345678', '1234') -> 'duties') = 0,
+  '담당구역이 없으면 빈 목록');
+
+select public.save_duty_items('00000000-0000-0000-0000-000000000001', '01088881111', '1234', 'd1',
+  '[{"id":"t1","kind":"준비물","content":"국자","qty":"2","done":true}]');
+select t.ok(public.lookup_duties('00000000-0000-0000-0000-000000000001', '01088881111', '1234')
+              -> 'duties' -> 0 -> 'items' -> 0 ->> 'content' = '국자', '적은 할 일이 저장된다');
+select t.err($q$select public.save_duty_items('00000000-0000-0000-0000-000000000001', '01088881111', '1234', 'd2', '[]')$q$,
+             'FORBIDDEN');  -- 남의 구역
+select t.err($q$select public.save_duty_items('00000000-0000-0000-0000-000000000001', '01088881111', '1234', 'd1', '{"a":1}')$q$,
+             'INVALID_ITEMS');
+select t.ok(public.save_duty_items('00000000-0000-0000-0000-000000000001', '01088881111', '0000', 'd1', '[]') is null,
+  'PIN 이 틀리면 저장하지 않는다');
+select t.err($q$select public._my_duties('00000000-0000-0000-0000-000000000001', '[]')$q$, 'permission denied');
+
+-- 문서의 나머지는 그대로인지 본다 (신청자는 room_plans 를 직접 못 읽으므로 역할을 푼다)
 reset role;
+select t.ok((select data -> 'duties' -> 1 ->> 'name' from public.room_plans where gathering_id = '00000000-0000-0000-0000-000000000001') = '차량',
+  '다른 구역·방배정은 스탭이 건드리지 못한다');
+select t.ok((select data -> 'attendees' -> 0 ->> 'name' from public.room_plans where gathering_id = '00000000-0000-0000-0000-000000000001') = '김스탭',
+  '참석자 목록도 그대로다');
 \o
 \echo ALL OK

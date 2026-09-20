@@ -795,6 +795,18 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       color: AppColors.textMuted,
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '스탭 페이지 링크 — 담당구역을 맡은 사람만 자기 구역의 할 일을 봅니다.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  SelectableText(
+                    staffLink(cur.id),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   const Text(
                     '신청서 기본 항목',
@@ -803,7 +815,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   const Text(
                     '안 받음이면 신청서에 그 칸이 나오지 않고, 선택이면 비워도 신청됩니다. '
                     '출생연도를 안 받거나 비우면 성인 금액으로 계산하고, '
-                    '성별이 비면 참석자 성별이 "-"로 들어오니 방배정 전에 참석자 탭에서 채우세요.',
+                    '성별이 비면 참석자 성별이 "-"로 들어오니 방배정 전에 참석자 탭에서 채우세요. '
+                    '스탭신청은 체크 칸이라 필수로 두면 체크해야만 신청됩니다.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 8),
@@ -812,6 +825,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ('gender', '성별'),
                     ('cell', '셀'),
                     ('zone', '존'),
+                    ('staff', '스탭신청'),
                   ])
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -847,14 +861,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                                   : 'off',
                             },
                             showSelectedIcon: false,
-                            onSelectionChanged: (s) => setState(() {
-                              x.hiddenFields.remove(key);
-                              x.requiredFields.remove(key);
-                              if (s.first == 'off') x.hiddenFields.add(key);
-                              if (s.first == 'required') {
-                                x.requiredFields.add(key);
-                              }
-                            }),
+                            onSelectionChanged: (s) =>
+                                setState(() => setFieldMode(x, key, s.first)),
                           ),
                         ],
                       ),
@@ -1244,3 +1252,18 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
 String _size(int bytes) => bytes >= 1024 * 1024
     ? '${(bytes / 1024 / 1024).toStringAsFixed(1)}MB'
     : '${(bytes / 1024).round()}KB';
+
+/// 신청서 기본 항목 [key] 를 'off' / 'optional' / 'required' 로 맞춘다.
+/// 기본이 '안 받음'인 항목([Gathering.optInFields])은 켠 목록에, 나머지는 뺀 목록에 담긴다.
+void setFieldMode(Gathering g, String key, String mode) {
+  final optIn = Gathering.optInFields.contains(key);
+  g.hiddenFields.remove(key);
+  g.shownFields.remove(key);
+  g.requiredFields.remove(key);
+  if (mode == 'off') {
+    if (!optIn) g.hiddenFields.add(key);
+    return;
+  }
+  if (optIn) g.shownFields.add(key);
+  if (mode == 'required') g.requiredFields.add(key);
+}

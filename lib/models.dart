@@ -9,6 +9,9 @@ class Event {
   List<Room> rooms;
   List<Attendee> attendees;
 
+  /// 담당구역(스탭이 맡을 일). 방배정 문서 안에 같이 산다.
+  List<Duty> duties;
+
   /// 운영자가 직접 만든 참석자 항목 이름들 (예: '교회', '직분'). 순서 = 입력 화면 순서.
   /// 값은 [Attendee.extra] 에 같은 이름을 키로 들어간다.
   List<String> customFields;
@@ -22,9 +25,11 @@ class Event {
     required this.endDate,
     List<Room>? rooms,
     List<Attendee>? attendees,
+    List<Duty>? duties,
     List<String>? customFields,
   }) : rooms = rooms ?? [],
        attendees = attendees ?? [],
+       duties = duties ?? [],
        customFields = customFields ?? [];
 
   /// 숙박 밤 목록: startDate ~ endDate-1일. 정원 계산의 기준.
@@ -48,6 +53,7 @@ class Event {
     'endDate': endDate.toIso8601String(),
     'rooms': rooms.map((r) => r.toJson()).toList(),
     'attendees': attendees.map((a) => a.toJson()).toList(),
+    'duties': duties.map((d) => d.toJson()).toList(),
     'customFields': customFields,
     'deletedIds': deletedIds.toList(),
   };
@@ -62,8 +68,95 @@ class Event {
     attendees: (j['attendees'] as List? ?? [])
         .map((e) => Attendee.fromJson(e as Map<String, dynamic>))
         .toList(),
+    duties: (j['duties'] as List? ?? [])
+        .map((e) => Duty.fromJson(e as Map<String, dynamic>))
+        .toList(),
     customFields: (j['customFields'] as List? ?? []).map((e) => '$e').toList(),
   )..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'};
+}
+
+/// 담당구역의 할 일 한 줄. 스탭 페이지와 운영자 화면이 같은 표로 고친다.
+/// [qty] 는 문자열이다 — "3", "2박스", "넉넉히" 가 다 들어간다 (합계를 내지 않는다).
+class DutyTask {
+  String id, kind, content, qty;
+  bool done;
+
+  DutyTask({
+    required this.id,
+    this.kind = '',
+    this.content = '',
+    this.qty = '',
+    this.done = false,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'kind': kind,
+    'content': content,
+    'qty': qty,
+    if (done) 'done': true,
+  };
+
+  factory DutyTask.fromJson(Map j) => DutyTask(
+    id: '${j['id'] ?? ''}',
+    kind: '${j['kind'] ?? ''}',
+    content: '${j['content'] ?? ''}',
+    qty: '${j['qty'] ?? ''}',
+    done: j['done'] == true,
+  );
+}
+
+/// 담당구역 하나. 스탭이 맡는 일 한 덩어리 (주방·차량·등록대…).
+/// 한 사람이 여러 구역을 맡을 수 있어 배정은 구역 쪽이 들고 있다 (방배정과 다른 점).
+class Duty {
+  String id;
+  String name;
+
+  /// 이 구역이 해야 할 일. 여러 줄.
+  String? tasks;
+
+  /// 필요 인원. null = 정하지 않음 (정원 표시를 하지 않는다).
+  int? capacity;
+
+  /// 배정된 사람. [Attendee.personId] 를 담는다 — 기간을 나눈 조각이 아니라 사람 단위다.
+  List<String> personIds;
+
+  /// 할 일 표. 스탭이 스탭 페이지에서 채운다 ([tasks] 는 운영자가 적는 구역 설명).
+  List<DutyTask> items;
+
+  Duty({
+    required this.id,
+    required this.name,
+    this.tasks,
+    this.capacity,
+    List<String>? personIds,
+    List<DutyTask>? items,
+  }) : personIds = personIds ?? [],
+       items = items ?? [];
+
+  /// 체크한 할 일 수.
+  int get doneCount => items.where((t) => t.done).length;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    if (tasks != null) 'tasks': tasks,
+    if (capacity != null) 'capacity': capacity,
+    'personIds': personIds,
+    'items': items.map((t) => t.toJson()).toList(),
+  };
+
+  factory Duty.fromJson(Map<String, dynamic> j) => Duty(
+    id: j['id'] as String,
+    name: '${j['name'] ?? ''}',
+    tasks: j['tasks'] as String?,
+    capacity: (j['capacity'] as num?)?.toInt(),
+    personIds: [for (final e in j['personIds'] as List? ?? []) '$e'],
+    items: [
+      for (final e in j['items'] as List? ?? [])
+        if (e is Map) DutyTask.fromJson(e),
+    ],
+  );
 }
 
 /// 보드에서 같이 묶이는 단위 = 건물 + 층. 방 자리(slot)도 이 단위마다 따로 매긴다.
@@ -203,6 +296,9 @@ class Attendee {
   /// null = 붙여넣기·직접 추가한 사람.
   String? registrationId;
 
+  /// 신청서의 "스탭으로 신청합니다" 체크에서 왔다. 담당구역 배정 창의 [스탭만] 이 이걸 본다.
+  bool staff = false;
+
   /// 운영자가 참석자 화면에서 직접 고쳤다. 신청에서 다시 가져올 때 덮어쓸지 묻는 데 쓴다.
   bool editedByAdmin = false;
 
@@ -263,6 +359,7 @@ class Attendee {
       'stayNights': [for (final d in stayNights!) d.toIso8601String()],
     'extra': extra,
     'registrationId': registrationId,
+    if (staff) 'staff': true,
     if (editedByAdmin) 'edited': true,
     if (splitOf != null) 'splitOf': splitOf,
   };
@@ -285,6 +382,7 @@ class Attendee {
     extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
     registrationId: j['registrationId'] as String?,
   )
+    ..staff = j['staff'] == true
     ..editedByAdmin = j['edited'] == true
     ..splitOf = j['splitOf'] as String?;
 }
