@@ -534,6 +534,53 @@ void main() {
       expect((r.added, r.dayOnly), (1, 1));
     });
 
+    test('당일 집회: 참석자가 비어도 CSV 에 신청자가 나온다', () {
+      // 하루짜리 집회는 묵는 사람이 없어 syncRegistrations 가 참석자를 하나도 안 만든다.
+      // 화면과 CSV 가 같은 목록(everyone)을 봐야 신청자가 빠지지 않는다.
+      final oneDay = sample()
+        ..fee = FeeRule()
+        ..start = start
+        ..end = start;
+      final s = Store()
+        ..event = Event(name: 'x', startDate: start, endDate: start);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [
+          person('당일한', 1990, checkIn: start, checkOut: start),
+          person('당일두', 1995, gender: 'F', checkIn: start, checkOut: start),
+        ]),
+        reg('r2', RegStatus.pending, [
+          person('입금전', 1990, checkIn: start, checkOut: start),
+        ]),
+      ];
+      s.syncRegistrations(oneDay, regs);
+      expect(s.event.attendees, isEmpty, reason: '당일만 오는 사람은 방이 필요 없다');
+
+      final people = s.everyone(oneDay, regs);
+      expect(people.map((a) => a.name), ['당일한', '당일두'], reason: '확정된 신청만');
+
+      final lines = attendeesCsv(s.event, people).split('\r\n');
+      expect(lines.length, 3, reason: '머리글 + 2명');
+      expect(lines[1].startsWith('당일한,남,'), isTrue);
+      expect(lines[2].startsWith('당일두,여,'), isTrue);
+    });
+
+    test('CSV 는 방배정 참석자와 당일 신청자를 겹치지 않게 합친다', () {
+      final s = tmpStore();
+      final day = DateTime(2026, 10, 10);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [
+          person('자는사람', 1985),
+          person('당일', 1990, checkIn: day, checkOut: day),
+        ]),
+      ];
+      s.syncRegistrations(g, regs);
+      final people = s.everyone(g, regs);
+      expect(people.map((a) => a.name), ['자는사람', '당일']);
+      expect(s.everyone(g, regs).length, 2, reason: '여러 번 불러도 같다');
+      expect(s.everyone(g, null).length, 1, reason: '신청을 못 읽으면 참석자만');
+      expect(attendeesCsv(s.event, people).split('\r\n').length, 3);
+    });
+
     test('신청서의 추가 항목이 참석자 항목으로 생긴다', () {
       final s = tmpStore();
       s.syncRegistrations(g, [

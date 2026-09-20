@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../gathering.dart' show mdw, ymd, nightsOf, Registration, RegStatus;
+import '../gathering.dart' show mdw, ymd, Registration, RegStatus;
 import '../main.dart';
 import '../remote.dart';
 import '../theme.dart';
@@ -73,30 +73,27 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     final sel = view == 'full' || on != null ? view : 'total';
     final nights = e.nights;
 
-    // 확정된 신청에서 온 사람은 신청서의 참석일로 센다. 당일(0박)만 오는 사람도 식수에 들어가야
-    // 하는데, 방이 필요 없어 참석자에는 없으므로 날짜를 골랐을 때만 따로 만들어 보탠다.
-    final regDays = <String, List<DateTime>>{};
-    final dayOnly = <Attendee>[];
+    // 확정된 신청에서 온 사람은 신청서의 참석일로 센다.
     // 홈스테이의 신청자는 아이가 아니라 재워 줄 가정이다 — 참석자 명단에 끼면 안 된다.
+    final regDays = <String, List<DateTime>>{};
     if (g != null && !homestay) {
-      final have = {for (final a in e.attendees) a.id};
       for (final r in regs ?? const <Registration>[]) {
         if (r.status != RegStatus.confirmed) continue;
         for (final p in r.people) {
           final ds = p.daysIn(g.start, g.end);
-          if (ds.isEmpty) continue;
-          regDays[p.id] = ds;
-          if (nightsOf(ds).isEmpty && !have.contains(p.id)) {
-            dayOnly.add(store.attendeeOf(g, r, p));
-          }
+          if (ds.isNotEmpty) regDays[p.id] = ds;
         }
       }
     }
-    final visitors = {for (final a in dayOnly) a.id};
+    // 당일(0박)만 오는 사람은 방이 필요 없어 참석자에 없다 — CSV 내려받기와 같은 목록을 쓴다.
+    final everyone = store.everyone(g, regs);
+    final visitors = {
+      for (final a in everyone)
+        if (!e.attendees.any((x) => x.id == a.id)) a.id,
+    };
     bool comes(Attendee a, DateTime d) =>
         regDays[a.id]?.contains(d) ?? a.attendsOn(d, nights);
     bool full(Attendee a) => days.every((d) => comes(a, d));
-    final everyone = [...e.attendees, ...dayOnly];
     final people = [
       for (final a in everyone)
         if (switch (sel) {

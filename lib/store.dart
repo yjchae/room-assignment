@@ -152,6 +152,28 @@ class Store extends ChangeNotifier {
     )..staff = p.staff;
   }
 
+  /// 이 집회에 오는 사람 전체 — 방배정 참석자 + **당일(0박)만 오는 확정 신청자**.
+  /// 참석자 화면과 CSV 내려받기가 같은 목록을 보도록 여기 한 곳에서 만든다.
+  ///
+  /// 당일만 오는 사람은 방이 필요 없어 [syncRegistrations] 가 참석자로 넣지 않는다.
+  /// 그래서 하루짜리 집회는 참석자가 통째로 비어 있고, 여기서 보태지 않으면
+  /// 화면에는 보이는 사람이 CSV 에는 한 명도 안 나온다.
+  /// 홈스테이의 신청자는 재워 줄 가정이라 참석자 명단에 끼지 않는다.
+  List<Attendee> everyone(Gathering? g, Iterable<Registration>? regs) {
+    final out = [...event.attendees];
+    if (g == null || g.isHomestay || regs == null) return out;
+    final have = {for (final a in event.attendees) a.id};
+    for (final r in regs) {
+      if (r.status != RegStatus.confirmed) continue;
+      for (final p in r.people) {
+        final days = p.daysIn(g.start, g.end);
+        if (days.isEmpty || have.contains(p.id)) continue;
+        if (nightsOf(days).isEmpty) out.add(attendeeOf(g, r, p));
+      }
+    }
+    return out;
+  }
+
   /// [syncRegistrations] 를 하면 지워질 사람 중 방이 배정된 사람. 지우기 전에 운영자에게 보여준다.
   List<Attendee> syncWouldRemove(Gathering g, List<Registration> regs) {
     final want = _wanted(g, regs);
@@ -771,7 +793,9 @@ List<String> parseRoomRange(String input) {
 
 /// 참석자 목록 CSV (엑셀용, 줄바꿈 CRLF). 머리글은 붙여넣기 등록과 같은 이름이라
 /// 엑셀에서 복사해 [붙여넣기 등록]으로 되돌려 넣을 수 있다.
-String attendeesCsv(Event e) {
+/// [people] 을 주면 그 사람들을 적는다 — 화면과 같은 목록([Store.everyone])을 넘겨
+/// 당일(0박) 참석자가 빠지지 않게 한다.
+String attendeesCsv(Event e, [List<Attendee>? people]) {
   final rooms = {for (final r in e.rooms) r.id: r.label};
   String cell(Object? v) {
     var s = '${v ?? ''}';
@@ -788,7 +812,7 @@ String attendeesCsv(Event e) {
       '체크인',
       '체크아웃',
     ],
-    for (final a in e.attendees)
+    for (final a in people ?? e.attendees)
       [
         a.name,
         switch (a.gender) {

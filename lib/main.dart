@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'gathering.dart';
@@ -379,7 +380,8 @@ Future<void> _downloadBackup(BuildContext context) async {
       type: FileType.custom,
       allowedExtensions: ['json'],
     );
-    if (saved != null) {
+    // 웹은 바로 내려받고 저장 위치를 돌려주지 않는다(항상 null) — 그때도 안내한다.
+    if (saved != null || kIsWeb) {
       messenger.showSnackBar(const SnackBar(content: Text('백업 파일을 저장했습니다.')));
     }
   } catch (e) {
@@ -388,19 +390,28 @@ Future<void> _downloadBackup(BuildContext context) async {
 }
 
 /// 참석자 목록(방·일정 포함)을 CSV 로 내려받는다. 되살리기는 JSON 으로만 된다.
+/// 참석자 화면과 같은 목록을 적는다 — 당일(0박)만 오는 신청자는 참석자에 없어서
+/// 신청을 같이 읽어야 한다 (하루짜리 집회는 참석자가 통째로 비어 있다).
 Future<void> _downloadCsv(BuildContext context) async {
   final messenger = ScaffoldMessenger.of(context);
   final name = store.event.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  final g = current.value;
+  List<Registration>? regs;
+  try {
+    if (g != null && remote.signedIn) regs = await remote.registrations(g.id);
+  } catch (_) {
+    // 인터넷이 끊겨도 내려받기는 된다 — 그때는 방배정 참석자만 적는다.
+  }
   try {
     final saved = await FilePicker.saveFile(
       fileName: '${name}_참석자_${ymd(DateTime.now())}.csv',
       // BOM 이 있어야 엑셀이 한글을 UTF-8 로 읽는다.
-      bytes: utf8.encode('﻿${attendeesCsv(store.event)}'),
+      bytes: utf8.encode('﻿${attendeesCsv(store.event, store.everyone(g, regs))}'),
       mimeType: 'text/csv',
       type: FileType.custom,
       allowedExtensions: ['csv'],
     );
-    if (saved != null) {
+    if (saved != null || kIsWeb) {
       messenger.showSnackBar(const SnackBar(content: Text('CSV 파일을 저장했습니다.')));
     }
   } catch (e) {
