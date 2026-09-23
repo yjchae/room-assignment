@@ -766,26 +766,17 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                   const SizedBox(height: 8),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('시작일'),
-                    trailing: Text('${start.year}-${mdw(start)}'),
+                    title: const Text('기간'),
+                    trailing: Text(
+                      '${start.year}-${mdw(start)} ~ ${mdw(end)}',
+                    ),
                     onTap: () async {
-                      final d = await pickDate(context, start);
-                      if (d == null) return;
+                      final r = await pickRange(context, start, end);
+                      if (r == null) return;
                       setLocal(() {
-                        start = d;
-                        if (end.isBefore(start)) end = start;
+                        start = r.start;
+                        end = r.end;
                       });
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('종료일'),
-                    trailing: Text('${end.year}-${mdw(end)}'),
-                    onTap: () async {
-                      final d = await pickDate(context, end);
-                      if (d != null && !d.isBefore(start)) {
-                        setLocal(() => end = d);
-                      }
                     },
                   ),
                   Text(

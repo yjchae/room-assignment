@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'gathering.dart';
 import 'models.dart';
@@ -56,6 +57,10 @@ class App extends StatelessWidget {
       title: '집회관리',
       theme: buildAppTheme(),
       debugShowCheckedModeBanner: false,
+      // 달력·기본 버튼 문구를 한국어로.
+      locale: const Locale('ko'),
+      supportedLocales: const [Locale('ko')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       home: const Gate(),
     );
   }
@@ -252,6 +257,26 @@ Future<DateTime?> pickDate(BuildContext context, DateTime initial) async {
     lastDate: DateTime(initial.year + 3),
   );
   return d == null ? null : dateOnly(d);
+}
+
+/// 집회 기간 고르기. 달력에서 처음 누른 날이 시작일, 다음에 누른 날이 종료일이다
+/// (범위가 잡힌 뒤 또 누르면 다시 시작일부터 — Flutter 기본 동작).
+Future<DateTimeRange?> pickRange(
+  BuildContext context,
+  DateTime start,
+  DateTime end,
+) async {
+  final r = await showDateRangePicker(
+    context: context,
+    initialDateRange: DateTimeRange(start: start, end: end),
+    firstDate: DateTime(start.year - 2),
+    lastDate: DateTime(start.year + 3),
+    helpText: '집회 기간',
+    saveText: '확인',
+  );
+  return r == null
+      ? null
+      : DateTimeRange(start: dateOnly(r.start), end: dateOnly(r.end));
 }
 
 /// 방배정을 못 불러왔거나 저장이 실패·충돌했을 때 띄우는 경고 줄.

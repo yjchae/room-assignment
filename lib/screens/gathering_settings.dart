@@ -506,11 +506,20 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _dateButton('시작', x.start, (d) {
-                        x.start = d;
-                        if (x.end.isBefore(d)) x.end = d;
-                      }),
-                      _dateButton('종료', x.end, (d) => x.end = d),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.event, size: 18),
+                        label: Text(
+                          '${x.start.year}-${mdw(x.start)} ~ ${mdw(x.end)}',
+                        ),
+                        onPressed: () async {
+                          final r = await pickRange(context, x.start, x.end);
+                          if (r == null) return;
+                          setState(() {
+                            x.start = r.start;
+                            x.end = r.end;
+                          });
+                        },
+                      ),
                       Text(
                         stayLabel(x.nights),
                         style: const TextStyle(color: AppColors.textMuted),
@@ -1189,19 +1198,6 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     final (from, to) = a >= b ? (a, b) : (b, a);
     return '${mdw(daysBefore(start, from))} ~ ${mdw(daysBefore(start, to))} 신청분';
   }
-
-  Widget _dateButton(
-    String label,
-    DateTime d,
-    void Function(DateTime) onPick,
-  ) => OutlinedButton.icon(
-    icon: const Icon(Icons.event, size: 18),
-    label: Text('$label ${d.year}-${mdw(d)}'),
-    onPressed: () async {
-      final p = await pickDate(context, d);
-      if (p != null) setState(() => onPick(p));
-    },
-  );
 
   Widget _imageSlot(ImageKind kind, String? url, double w, double h) =>
       SizedBox(
