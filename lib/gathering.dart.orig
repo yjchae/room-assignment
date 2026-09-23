@@ -317,7 +317,6 @@ class Gathering {
     required this.end,
     List<String>? themes,
     List<ScheduleItem>? schedule,
-    List<DateTime>? offDays,
     this.place,
     this.address,
     this.notice,
@@ -336,7 +335,6 @@ class Gathering {
   }) : ministerNotice = ministerNotice ?? defaultMinisterNotice,
        themes = themes ?? [],
        schedule = schedule ?? [],
-       offDays = offDays ?? [],
        fee = fee ?? FeeRule(),
        bank = bank ?? Bank(),
        formFields = formFields ?? [],
@@ -360,11 +358,6 @@ class Gathering {
   /// 일정표. 기간 밖 날짜의 항목은 화면에 안 보이지만 지우지도 않는다
   /// (날짜를 잘못 바꿨다 되돌리면 그대로 살아 있게).
   List<ScheduleItem> schedule;
-
-  /// 운영자가 정한 일정 없는 날. 신청 웹에서 부분 참석 날짜로 고를 수 없다.
-  /// ponytail: 선택만 막는다 — 전체 참석·회비·숙박 계산은 그대로 시작일~종료일 전체로 센다.
-  List<DateTime> offDays;
-  bool isOff(DateTime d) => offDays.any((o) => _day(o) == _day(d));
   String? place, address, notice, posterUrl, backgroundUrl;
   FeeRule fee;
   Bank bank;
@@ -459,7 +452,6 @@ class Gathering {
       for (final s in schedule)
         {'date': ymd(s.date), 'time': s.time, 'title': s.title},
     ],
-    'off_days': [for (final d in offDays) ymd(d)],
     'place': place,
     'address': address,
     'notice': notice,
@@ -486,7 +478,6 @@ class Gathering {
     start: _date(r['start_date']) ?? DateTime.now(),
     end: _date(r['end_date']) ?? DateTime.now(),
     schedule: _scheduleIn(r['schedule']),
-    offDays: [for (final d in (r['off_days'] as List? ?? [])) ?_date(d)],
     themes: [for (final t in (r['themes'] as List? ?? [])) '$t'],
     place: _str(r['place']),
     address: _str(r['address']),

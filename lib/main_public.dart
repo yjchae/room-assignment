@@ -257,7 +257,8 @@ class _Schedule extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       for (final d in g.days)
-        if (g.scheduleOn(d) case final items when items.isNotEmpty)
+        if (g.scheduleOn(d) case final items
+            when items.isNotEmpty && !g.isOff(d))
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: Column(
@@ -872,6 +873,12 @@ class _ApplyPageState extends State<ApplyPage> {
   String? _need(String field, String? v, String error) =>
       g.requires(field) && (v ?? '').trim().isEmpty ? error : null;
 
+  static const _subStyle = TextStyle(
+    fontSize: 12,
+    height: 1.5,
+    color: AppColors.textMuted,
+  );
+
   Widget _schedule(_PersonForm f) {
     final days = g.days;
     return Column(
@@ -899,6 +906,19 @@ class _ApplyPageState extends State<ApplyPage> {
               dense: true,
               controlAffinity: ListTileControlAffinity.leading,
               title: Text(mdw(d)),
+              // 그날 일정을 보여 준다. 운영자가 끈 날(일정 없는 날)은 고를 수 없다.
+              enabled: !g.isOff(d),
+              subtitle: g.isOff(d)
+                  ? const Text('일정 없음', style: _subStyle)
+                  : g.scheduleOn(d).isEmpty
+                  ? null
+                  : Text(
+                      [
+                        for (final s in g.scheduleOn(d))
+                          '${s.time} ${s.title}'.trim(),
+                      ].join('\n'),
+                      style: _subStyle,
+                    ),
               value: f.days!.contains(d),
               onChanged: (v) => setState(() {
                 if (v == true) {

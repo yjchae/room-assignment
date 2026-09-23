@@ -38,6 +38,7 @@ create table if not exists public.gatherings (
   kind text not null default 'gathering'     -- 'gathering' | 'homestay' (lib/gathering.dart)
     check (kind in ('gathering', 'homestay')),
   schedule jsonb not null default '[]',      -- 일정표 [{date, time, title}]
+  off_days date[] not null default '{}',     -- 일정 없는 날 (신청 웹에서 못 고름)
   themes text[] not null default '{}',
   place text,
   address text,
@@ -64,6 +65,7 @@ alter table public.gatherings drop constraint if exists gatherings_kind_check;
 alter table public.gatherings add constraint gatherings_kind_check
   check (kind in ('gathering', 'homestay'));
 alter table public.gatherings add column if not exists schedule jsonb not null default '[]';
+alter table public.gatherings add column if not exists off_days date[] not null default '{}';
 alter table public.gatherings add column if not exists hidden_fields text[] not null default '{}';
 alter table public.gatherings add column if not exists required_fields text[] not null default '{birthYear,gender}';
 -- 나중에 생긴 기본 항목(staff)은 여기에 담는다. 없으면 신청서에 안 나오므로 예전 집회가 그대로 있다.

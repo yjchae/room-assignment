@@ -552,12 +552,11 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                 ]),
                 _card('일정표', [
                   const Text(
-                    '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.\n'
-                    '토글을 끈 날은 일정 없는 날로, 신청자가 부분 참석 날짜로 고를 수 없습니다.',
+                    '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.',
                     style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 4),
-                  for (final d in x.days) _scheduleDay(x, d),
+                  for (final d in x.days) _scheduleDay(d),
                 ]),
                 _card('이미지', [
                   Wrap(
@@ -1050,13 +1049,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   }
 
   /// 일정표의 하루 묶음: [날짜] 왼쪽, 오른쪽에 시간·내용 줄과 [줄 추가].
-  Widget _scheduleDay(Gathering x, DateTime d) {
-    // 끈 날(일정 없는 날)의 일정 줄은 숨기기만 한다 — 다시 켜면 그대로 돌아온다.
-    final off = x.isOff(d);
-    final mine = [
-      if (!off)
-        for (final l in lines) if (dateOnly(l.date) == dateOnly(d)) l,
-    ];
+  Widget _scheduleDay(DateTime d) {
+    final mine = [for (final l in lines) if (dateOnly(l.date) == dateOnly(d)) l];
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Row(
@@ -1076,27 +1070,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
               ),
             ),
           ),
-          Switch(
-            value: !off,
-            onChanged: (on) => setState(
-              () => on
-                  ? x.offDays.removeWhere((o) => dateOnly(o) == dateOnly(d))
-                  : x.offDays.add(dateOnly(d)),
-            ),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (off)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 10),
-                    child: Text(
-                      '일정 없음',
-                      style: TextStyle(color: AppColors.textMuted),
-                    ),
-                  ),
                 for (final l in mine)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
@@ -1131,7 +1108,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       ],
                     ),
                   ),
-                if (!off) TextButton.icon(
+                TextButton.icon(
                   onPressed: () =>
                       setState(() => lines.add(_Line(dateOnly(d), '', ''))),
                   icon: const Icon(Icons.add, size: 16),
