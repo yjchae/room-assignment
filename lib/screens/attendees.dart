@@ -109,20 +109,35 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
       ..sort(_cmp);
     return Scaffold(
       // 한 명씩 추가는 [신청·입금]의 [신청 추가]로 한다 — 입금 확인까지 거쳐야 해서.
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'paste',
-        onPressed: () async {
-          final messenger = ScaffoldMessenger.of(context);
-          final added = await pasteDialog(context);
-          if (added == null) return;
-          store.event.attendees.addAll(added);
-          store.commit();
-          messenger.showSnackBar(
-            SnackBar(content: Text('${added.length}명 등록됨')),
-          );
-        },
-        icon: const Icon(Icons.content_paste),
-        label: const Text('붙여넣기 등록'),
+      // 홈스테이는 아이들이 신청이 아니라 명단으로 들어오니 여기서 바로 추가한다.
+      floatingActionButton: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'paste',
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final added = await pasteDialog(context);
+              if (added == null) return;
+              store.event.attendees.addAll(added);
+              store.commit();
+              messenger.showSnackBar(
+                SnackBar(content: Text('${added.length}명 등록됨')),
+              );
+            },
+            icon: const Icon(Icons.content_paste),
+            label: const Text('붙여넣기 등록'),
+          ),
+          if (homestay) ...[
+            const SizedBox(width: 12),
+            FloatingActionButton.extended(
+              heroTag: 'one',
+              onPressed: () => attendeeDialog(context),
+              icon: const Icon(Icons.person_add_alt_1),
+              label: const Text('참석자 추가'),
+            ),
+          ],
+        ],
       ),
       body: Column(
         children: [
@@ -966,10 +981,22 @@ Future<bool?> _askKeepAdminEdits(
   );
 }
 
-/// 참석자 수정/삭제. 새로 받는 사람은 [신청·입금]의 [신청 추가]로 넣는다.
-Future<void> attendeeDialog(BuildContext context, Attendee a) async {
+/// 참석자 추가/수정/삭제. [a] 가 없으면 새로 추가한다 — 홈스테이만 쓴다(아이들은 신청이 아니라
+/// 운영자가 직접 넣는다). 보통 집회의 새 사람은 [신청·입금]의 [신청 추가]로 넣는다.
+Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
+  final isNew = draft == null;
+  final a =
+      draft ??
+      Attendee(
+        id: store.newId(),
+        name: '',
+        gender: 'M',
+        age: 0,
+        checkIn: store.event.startDate,
+        checkOut: store.event.endDate,
+      );
   final name = TextEditingController(text: a.name);
-  final age = TextEditingController(text: '${a.age}');
+  final age = TextEditingController(text: isNew ? '' : '${a.age}');
   final phone = TextEditingController(text: a.phone ?? '');
   final cell = TextEditingController(text: a.cell ?? '');
   final zone = TextEditingController(text: a.zone ?? '');
@@ -988,7 +1015,7 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setLocal) => AlertDialog(
-        title: const Text('참석자 수정'),
+        title: Text(isNew ? '참석자 추가' : '참석자 수정'),
         content: SizedBox(
           width: 360,
           child: SingleChildScrollView(
@@ -1080,7 +1107,7 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
                     }
                   },
                 ),
-                if (checkOut.difference(checkIn).inDays > 1)
+                if (!isNew && checkOut.difference(checkIn).inDays > 1)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
@@ -1135,10 +1162,11 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'delete'),
-            child: const Text('삭제', style: TextStyle(color: Colors.red)),
-          ),
+          if (!isNew)
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'delete'),
+              child: const Text('삭제', style: TextStyle(color: Colors.red)),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(context, 'cancel'),
             child: const Text('취소'),
@@ -1180,7 +1208,7 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
   if (!context.mounted) return;
   final save = await confirmDialog(
     context,
-    title: '참석자 수정',
+    title: isNew ? '참석자 추가' : '참석자 수정',
     body: "'$n' 님 정보를 저장합니다.",
     action: '저장',
   );
@@ -1220,7 +1248,11 @@ Future<void> attendeeDialog(BuildContext context, Attendee a) async {
     ..zone = opt(zone)
     ..note = opt(note)
     ..extra = extraValues;
-  if (changed) a.editedByAdmin = true;
+  if (isNew) {
+    store.event.attendees.add(a);
+  } else if (changed) {
+    a.editedByAdmin = true;
+  }
   store.commit();
 }
 
