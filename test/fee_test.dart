@@ -285,4 +285,93 @@ void main() {
     expect(r.lines.single.amount, 0);
     expect(r.total, 10000); // 그룹당 금액만
   });
+
+  group('당일 무료 날', () {
+    // 금~화 수양회, 일요일(10-11)이 당일 무료 날. 당일 1만 · 1박 3만.
+    final fri = DateTime(2026, 10, 9), sat = DateTime(2026, 10, 10);
+    final sun = DateTime(2026, 10, 11), mon = DateTime(2026, 10, 12);
+    final tue = DateTime(2026, 10, 13);
+    FeeRule rule({List<DateTime>? free}) => FeeRule(
+      perNight: {AgeGroup.adult: 30000},
+      dayOnly: {AgeGroup.adult: 10000},
+      perRegistration: 5000,
+      freeDays: free ?? [sun],
+    );
+    Person on(List<DateTime> days) =>
+        Person(name: '가', gender: 'M', birthYear: 1980, days: days);
+    Quote fq(List<Person> people, {FeeRule? f}) =>
+        q(f ?? rule(), people, from: fri, to: tue);
+    int amount(List<DateTime> days) => fq([on(days)]).lines.single.amount;
+
+    test('무료 날 당일만이면 0원, 가족당 금액도 없음', () {
+      final r = fq([
+        on([sun]),
+        on([sun]),
+      ]);
+      expect(r.lines.map((l) => l.amount), [0, 0]);
+      expect(r.total, 0);
+      expect(r.lines.first.stay, '당일(무료)');
+    });
+
+    test('무료 날을 끼고 1박 이상이면 보통 금액', () {
+      expect(amount([sat, sun]), 30000);
+      expect(amount([sun, mon]), 30000);
+      expect(amount([fri, sat, sun, mon, tue]), 120000);
+    });
+
+    test('무료 날 당일 + 다른 날 당일 = 다른 날 금액만, 가족당 금액 붙음', () {
+      expect(amount([sun, tue]), 10000);
+      expect(
+        fq([
+          on([sun]),
+          on([tue]),
+        ]).total,
+        10000 + 5000,
+      );
+    });
+
+    test('입금이 없는 신청인지는 무료 날로 정한다 (금액 0원이 아니라)', () {
+      expect(fq([on([sun])]).freeDayOnly, isTrue);
+      expect(fq([on([sun, tue])]).freeDayOnly, isFalse);
+      // 날짜를 아직 안 고른 사람이 섞여도 무료 날 신청, 가족당 금액 없음
+      final mixed = fq([on([sun]), on([])]);
+      expect((mixed.freeDayOnly, mixed.total), (true, 0));
+      // 100% 할인으로 0원이 된 신청은 아니다
+      final discounted = quote(
+        rule(),
+        start: fri,
+        end: tue,
+        people: [on([tue])],
+        appliedAt: DateTime(2026, 9, 10),
+        discount: const Discount(pct: 100),
+      );
+      expect((discounted.total, discounted.freeDayOnly), (0, false));
+    });
+
+    test('당일 금액이 원래 0원인 사람은 (무료) 표시가 붙지 않는다', () {
+      final infant = Person(name: '아기', gender: 'M', birthYear: 2025, days: [tue]);
+      final l = fq([infant]).lines.single;
+      expect((l.amount, l.stay), (0, '당일'));
+    });
+
+    test('같은 날짜가 두 번 들어와도 당일은 한 번', () {
+      expect(dayVisits([sun, sun, tue]), 2);
+    });
+
+    test('무료 날이 없으면 지금과 같다', () {
+      expect(
+        fq([
+          on([sun]),
+        ], f: rule(free: [])).total,
+        10000 + 5000,
+      );
+    });
+
+    test('JSON 왕복', () {
+      final back = FeeRule.fromJson(rule().toJson());
+      expect(back.isFreeDay(sun), isTrue);
+      expect(back.isFreeDay(sat), isFalse);
+      expect(FeeRule.fromJson({}).freeDays, isEmpty);
+    });
+  });
 }

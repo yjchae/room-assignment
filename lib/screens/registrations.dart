@@ -445,6 +445,21 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   }
 
   Future<void> _confirm(Registration r, Quote q) async {
+    // 무료 날 당일만인 신청은 금액·입금자 없이 바로 확정.
+    // ponytail: 무료 집회는 예전처럼 입금 확인 창을 거친다 — 같이 바꾸려면 freeFor(q) 로.
+    if (q.freeDayOnly) {
+      return _patch(
+        r,
+        {
+          'status': 'confirmed',
+          'paid': 0,
+          'paid_at': ymd(DateTime.now()),
+          'paid_ref': null,
+        },
+        '${r.applicant} 신청을 확정했습니다.',
+        then: _syncConfirmed,
+      );
+    }
     final amount = TextEditingController(text: '${q.total}');
     final dep = TextEditingController(text: r.depositorName);
     var date = dateOnly(DateTime.now());
@@ -595,8 +610,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       _snack('파일을 읽지 못했습니다. 은행에서 받은 입출금 내역 파일인지 확인하세요.');
       return;
     }
+    // 무료 날 당일만인 신청은 받을 돈이 없어 대조하지 않는다.
+    final g = current.value!;
     final result = matchDeposits(txs, regs!, {
-      for (final r in regs!) r.id: quotes[r.id]!.total,
+      for (final r in regs!)
+        if (!g.freeFor(quotes[r.id]!)) r.id: quotes[r.id]!.total,
     });
     if (!mounted) return;
     final picked = await showDialog<List<BankMatch>>(
@@ -1090,7 +1108,7 @@ class _RegRow extends StatelessWidget {
               SizedBox(
                 width: _wMoney,
                 child: Text(
-                  won(q.total),
+                  q.freeDayOnly ? '무료' : won(q.total),
                   textAlign: TextAlign.right,
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
@@ -1127,12 +1145,13 @@ class _RegRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 무료 날 당일만이라 0원인 신청도 무료 집회처럼 '대기/확정'.
                     RegStatusBadge(
                       r.status,
-                      free: current.value?.fee.isFree ?? false,
+                      free: current.value?.freeFor(q) ?? false,
                     ),
                     if (r.status == RegStatus.confirmed &&
-                        !(current.value?.fee.isFree ?? false))
+                        !(current.value?.freeFor(q) ?? false))
                       _PaidHow(r),
                   ],
                 ),
@@ -1196,6 +1215,7 @@ class _Detail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = r.createdAt;
+    final free = q.freeDayOnly;
     // 부분 참석자의 고른 날짜 (사람 id → "10-09(금) 10-10(토)").
     final days = {
       for (final l in q.lines)
@@ -1231,7 +1251,10 @@ class _Detail extends StatelessWidget {
                 ),
               ),
             ),
-            RegStatusBadge(r.status, free: current.value?.fee.isFree ?? false),
+            RegStatusBadge(
+              r.status,
+              free: current.value?.freeFor(q) ?? false,
+            ),
             IconButton(
               tooltip: '닫기',
               icon: const Icon(Icons.close),
@@ -1299,10 +1322,12 @@ class _Detail extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 16),
-        const SectionTitle('입금'),
-        const SizedBox(height: 6),
-        kv('입금자명', r.depositorName),
-        if (r.status == RegStatus.confirmed) ...[
+        if (!free) ...[
+          const SectionTitle('입금'),
+          const SizedBox(height: 6),
+          kv('입금자명', r.depositorName),
+        ],
+        if (r.status == RegStatus.confirmed && !free) ...[
           kv('입금액', won(r.paid)),
           if (diffText(r.paid, q.total) case final d?) kv('차액', d),
           if (r.paidAt != null) kv('입금일', ymd(r.paidAt!)),
@@ -1321,12 +1346,12 @@ class _Detail extends StatelessWidget {
               FilledButton.icon(
                 onPressed: busy ? null : onConfirm,
                 icon: const Icon(Icons.check, size: 18),
-                label: const Text('입금 확인'),
+                label: Text(free ? '확정' : '입금 확인'),
               )
             else
               OutlinedButton(
                 onPressed: busy ? null : onRevert,
-                child: const Text('입금대기로 되돌리기'),
+                child: Text(free ? '대기로 되돌리기' : '입금대기로 되돌리기'),
               ),
             if (r.status != RegStatus.cancelled)
               OutlinedButton(

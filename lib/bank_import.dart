@@ -173,7 +173,8 @@ String _norm(String s) =>
   ];
   final pending = [
     for (final r in regs)
-      if (r.status == RegStatus.pending) r,
+      // [totals] 에 없는 신청(무료 날 당일만 등 받을 돈이 없는 신청)은 대조하지 않는다.
+      if (r.status == RegStatus.pending && totals.containsKey(r.id)) r,
   ];
 
   // 0 = 다름, 1 = 비슷(한쪽이 다른 쪽을 품음), 2 = 같음(끝에 붙은 숫자 "홍길동0915" 는 무시)

@@ -260,6 +260,11 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       perRegistration: number(perReg.text, '가족당 금액') ?? 0,
       fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
+      // 일정 없는 날로 끈 날은 무료 날에서도 뺀다 (화면에선 꺼져 보이는데 0원으로 계산되지 않게).
+      freeDays: [
+        for (final d in x.fee.freeDays)
+          if (!x.isOff(d)) d,
+      ],
     );
     x.schedule = [
       for (final l in lines)
@@ -648,6 +653,40 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       ),
                     ),
                   ),
+                  // 하루짜리 집회는 그 하루가 곧 전체 참석이라 뜻이 없다.
+                  if (x.nights > 0) ...[
+                    const SizedBox(height: 20),
+                    const Text(
+                      '당일 무료인 날',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    const Text(
+                      '이 날 하루만 당일로 오면 무료입니다. 이 날을 포함해 1박 이상 묵으면 회비표대로 받습니다.',
+                      style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final d in x.days)
+                          FilterChip(
+                            label: Text(mdw(d)),
+                            tooltip: x.isOff(d) ? '일정 없는 날' : null,
+                            selected: x.fee.isFreeDay(d) && !x.isOff(d),
+                            onSelected: x.isOff(d)
+                                ? null
+                                : (on) => setState(
+                                    () => on
+                                        ? x.fee.freeDays.add(dateOnly(d))
+                                        : x.fee.freeDays.removeWhere(
+                                            (f) => dateOnly(f) == dateOnly(d),
+                                          ),
+                                  ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ]),
                 _card('할인', [
                   const Text(

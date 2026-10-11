@@ -35,6 +35,7 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 **웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `models.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `widgets/duty_tasks.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
 
 **회비 계산은 `gathering.dart` 의 `quote()` 하나뿐이다.** 신청 웹·조회·관리자 화면·참석자 가져오기가 모두 이 함수를 부른다. 따로 계산하면 금액이 어긋난다.
+당일 무료 날(`FeeRule.freeDays`, 회비 JSON 안 — 서버 변경 없음)은 그 날 **하루만 당일로** 오면 0원이고, 그 날을 끼고 1박이라도 묵으면 보통 금액이다(`PLAN_GATHERING.md` §18).
 
 **전역 상태** (`lib/main.dart`): `store`(방배정 `Store`, ChangeNotifier), `current`(열어 둔 `Gathering`), `tabIndex`. 탭 번호는 숫자 대신 `settingsTab`/`registrationsTab`/`assignTab` 상수로 쓴다. 서버 호출은 전부 `lib/remote.dart` 의 전역 `remote` 로 하고, 테스트는 여기에 `Remote` 를 상속한 가짜(`FakeRemote`, `PlanRemote`)를 끼운다.
 

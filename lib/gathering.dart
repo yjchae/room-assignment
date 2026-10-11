@@ -28,11 +28,13 @@ class FeeRule {
     this.perRegistration = 0,
     this.fullDiscountPct = 0,
     List<EarlyDiscount>? early,
+    List<DateTime>? freeDays,
   }) : full = full ?? {},
        perNight = perNight ?? {},
        dayOnly = dayOnly ?? {},
        minAge = minAge ?? {...defaultMinAge},
-       early = early ?? [];
+       early = early ?? [],
+       freeDays = freeDays ?? [];
 
   /// 전체 참석 정액. 키가 없으면 1박당 × 전체 박수.
   Map<AgeGroup, int> full;
@@ -54,6 +56,11 @@ class FeeRule {
 
   /// 사전등록 할인. 신청일이 집회 시작 며칠 전인지로 본다. 구간이 겹치면 큰 쪽 하나만.
   List<EarlyDiscount> early;
+
+  /// 당일 무료인 날. 이 날 하루만 당일로 오면 당일 금액을 받지 않는다.
+  /// 이 날을 끼고 1박이라도 묵으면 보통 금액 그대로다 ([quote]).
+  List<DateTime> freeDays;
+  bool isFreeDay(DateTime d) => freeDays.any((f) => _day(f) == _day(d));
 
   static const defaultMinAge = {
     AgeGroup.adult: 19,
@@ -101,6 +108,7 @@ class FeeRule {
       for (final e in early)
         {'fromDays': e.fromDays, 'toDays': e.toDays, 'pct': e.pct},
     ],
+    'freeDays': [for (final d in freeDays) ymd(d)],
   };
 
   factory FeeRule.fromJson(Object? json) {
@@ -120,6 +128,10 @@ class FeeRule {
               toDays: _int(e['toDays']),
               pct: _int(e['pct']),
             ),
+      ],
+      freeDays: [
+        for (final d in (j['freeDays'] is List ? j['freeDays'] as List : []))
+          ?_date(d),
       ],
     );
   }
@@ -435,6 +447,10 @@ class Gathering {
   /// 집회 기간 안에 적어 둔 일정이 하나라도 있는가.
   bool get hasSchedule => days.any((d) => scheduleOn(d).isNotEmpty);
 
+  /// 이 신청에 입금이 없는가 — 무료 집회이거나 무료 날 당일로만 오는 신청.
+  /// 할인으로 0원이 된 신청은 아니다 (입금 확인 흐름 그대로).
+  bool freeFor(Quote q) => fee.isFree || q.freeDayOnly;
+
   Quote quoteFor(
     List<Person> people,
     DateTime appliedAt, {
@@ -623,7 +639,14 @@ class Registration {
 // ---------------------------------------------------------------------------
 
 class QuoteLine {
-  const QuoteLine(this.person, this.group, this.days, this.full, this.amount);
+  const QuoteLine(
+    this.person,
+    this.group,
+    this.days,
+    this.full,
+    this.amount, {
+    this.freeDay = false,
+  });
   final Person person;
   final AgeGroup group;
 
@@ -632,17 +655,20 @@ class QuoteLine {
   final bool full;
   final int amount;
 
+  /// 무료 날 하루만 당일로 온다 (묵는 날 없이, 당일로 오는 날이 모두 무료 날).
+  final bool freeDay;
+
   /// 이 사람이 묵는 박수. 0 = 당일만.
   int get nights => nightsOf(days).length;
 
-  /// "전체" / "1박" / "당일" / "1박 + 당일"
+  /// "전체" / "1박" / "당일" / "1박 + 당일" / "당일(무료)"
   String get stay {
     if (full) return '전체';
     final visits = dayVisits(days);
     return [
       if (nights > 0) '$nights박',
       if (visits > 0) visits == 1 ? '당일' : '당일 $visits일',
-    ].join(' + ');
+    ].join(' + ') + (freeDay ? '(무료)' : '');
   }
 }
 
@@ -655,12 +681,18 @@ List<DateTime> nightsOf(List<DateTime> days) {
   ];
 }
 
-/// 앞뒤 날을 모두 안 고른 날 = 당일로만 오는 날의 수.
-int dayVisits(List<DateTime> days) {
+/// 앞뒤 날을 모두 안 고른 날 = 당일로만 오는 날.
+List<DateTime> dayVisitDays(List<DateTime> days) {
   final set = days.map(_day).toSet();
   bool has(DateTime d, int off) => set.contains(d.add(Duration(days: off)));
-  return set.where((d) => !has(d, -1) && !has(d, 1)).length;
+  return [
+    for (final d in set.toList()..sort())
+      if (!has(d, -1) && !has(d, 1)) DateTime(d.year, d.month, d.day),
+  ];
 }
+
+/// 당일로만 오는 날의 수.
+int dayVisits(List<DateTime> days) => dayVisitDays(days).length;
 
 /// 지정 할인. 운영자가 신청 1건에 비율([pct]%) 또는 금액([amount]원)으로 준다.
 class Discount {
@@ -688,6 +720,9 @@ class Quote {
   final Discount discount;
 
   int get subtotal => lines.fold(0, (s, l) => s + l.amount);
+
+  /// 무료 날 당일로만 오는 신청 (날짜를 아직 안 고른 사람은 빼고 본다). 입금이 없다.
+  bool get freeDayOnly => _freeDayOnly(lines);
 
   /// 할인 후 금액의 원 미만을 버리도록 계산한다 (할인액 쪽이 올림).
   int get earlyDiscount => subtotal - subtotal * (100 - earlyPct) ~/ 100;
@@ -721,6 +756,7 @@ class Quote {
 ///
 /// - 모든 날에 참석하면 전체 참석(정액), 아니면 부분 참석
 ///   (1박당 × 이어진 날 사이 박수 + 당일 × 앞뒤 없이 혼자 고른 날 수).
+/// - 혼자 고른 날이 당일 무료 날([FeeRule.freeDays])이면 그 날은 0원. 묵는 날은 그대로 받는다.
 /// - 일정은 집회 기간 안으로 잘라서 본다.
 /// - 부분 참석 금액은 전체 참석자가 내는 금액을 넘지 않는다.
 /// - 참석자가 없으면 그룹당 금액도 붙지 않는다 (빈 신청서에 금액이 뜨지 않게).
@@ -747,20 +783,28 @@ Quote quote(
     final fullPrice = fullBase * (100 - fullPct) ~/ 100;
 
     final isFull = days.length == allNights + 1;
+    final freeDay =
+        !isFull &&
+        days.isNotEmpty &&
+        nightsOf(days).isEmpty &&
+        days.every(fee.isFreeDay);
     final amount = isFull
         ? fullPrice
         : math.min(
-            nightly * nightsOf(days).length + day * dayVisits(days),
+            nightly * nightsOf(days).length +
+                day * dayVisitDays(days).where((d) => !fee.isFreeDay(d)).length,
             fullPrice,
           );
-    return QuoteLine(p, g, days, isFull, amount);
+    return QuoteLine(p, g, days, isFull, amount, freeDay: freeDay);
   }
 
   final lines = people.map(line).toList();
+  // 모두 무료 날 당일로만 오면 가족당 금액도 붙이지 않는다.
+  final freeOnly = _freeDayOnly(lines);
   return Quote(
     lines,
     lines.isEmpty ? 0 : fee.earlyPctOn(appliedAt, s).clamp(0, 100),
-    lines.isEmpty ? 0 : fee.perRegistration,
+    lines.isEmpty || freeOnly ? 0 : fee.perRegistration,
     lines.isEmpty
         ? Discount.none
         : Discount(
@@ -770,6 +814,10 @@ Quote quote(
           ),
   );
 }
+
+bool _freeDayOnly(List<QuoteLine> lines) =>
+    lines.any((l) => l.freeDay) &&
+    lines.every((l) => l.freeDay || l.days.isEmpty);
 
 // ---------------------------------------------------------------------------
 // 표시 도우미 (두 앱 공용)

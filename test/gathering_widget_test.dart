@@ -1434,8 +1434,11 @@ void main() {
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(tester.takeException(), isNull);
       expect(find.text('일정표'), findsOneWidget);
-      expect(find.text('10-09(금)'), findsOneWidget);
+      // 일정표의 날짜 칸 + 회비 카드의 당일 무료 칩
+      expect(find.text('10-09(금)'), findsNWidgets(2));
 
+      await tester.tap(find.widgetWithText(FilterChip, '10-10(토)'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(TextButton, '줄 추가').first);
       await tester.pumpAndSettle();
       await tester.enterText(find.widgetWithText(TextField, '19:30'), '19:30');
@@ -1449,6 +1452,7 @@ void main() {
         (saved.date, saved.time, saved.title),
         (DateTime(2026, 10, 9), '19:30', '개회예배'),
       );
+      expect(fake.gs.single.fee.freeDays, [DateTime(2026, 10, 10)]);
     });
 
     testWidgets('신청·입금: 로그인 전엔 로그인 안내', (tester) async {

@@ -413,6 +413,10 @@ class _FeeTable extends StatelessWidget {
                 '${mdw(daysBefore(g.start, e.toDays))} 신청 시 ${e.pct}%',
           if (f.perRegistration > 0)
             '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
+          if (n > 0)
+            for (final d in g.days)
+              if (f.isFreeDay(d) && !g.isOff(d))
+                '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).',
         ])
           Text(
             '· $line',
@@ -905,7 +909,11 @@ class _ApplyPageState extends State<ApplyPage> {
               contentPadding: EdgeInsets.zero,
               dense: true,
               controlAffinity: ListTileControlAffinity.leading,
-              title: Text(mdw(d)),
+              title: Text(
+                g.fee.isFreeDay(d) && !g.isOff(d)
+                    ? '${mdw(d)} · 당일 참석 무료'
+                    : mdw(d),
+              ),
               // 그날 일정을 보여 준다. 운영자가 끈 날(일정 없는 날)은 고를 수 없다.
               enabled: !g.isOff(d),
               subtitle: g.isOff(d)
@@ -1210,7 +1218,8 @@ class DonePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final free = gathering.fee.isFree;
+    // 무료 날 당일만이라 0원인 신청도 입금이 없으니 무료 집회처럼 보인다.
+    final free = gathering.freeFor(quote);
     return Scaffold(
       appBar: AppBar(
         title: const Text('신청 완료'),
@@ -1393,7 +1402,7 @@ class _LookupPageState extends State<LookupPage> {
     final q = g.quoteFor(r.people, r.createdAt, discount: r.discount);
     final pending = r.status == RegStatus.pending;
     final canEdit = pending && g.acceptingOn(DateTime.now());
-    final free = g.fee.isFree;
+    final free = g.freeFor(q);
     return [
       _Section(
         children: [
