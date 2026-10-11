@@ -595,10 +595,16 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   /// 은행에서 받은 입출금 내역으로 입금을 확인한다. 파일은 이 기기에서만 읽고 어디에도 올리지 않는다
   /// (남의 거래·실명이 들어 있다). 남는 건 맞춘 거래 한 줄(`paid_ref`)뿐이고, 그게 있으면 '자동'으로 보인다.
   Future<void> _importBank(Map<String, Quote> quotes) async {
-    final file = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['xls', 'xlsx', 'csv'],
-    );
+    final PlatformFile? file;
+    try {
+      file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['xls', 'xlsx', 'csv'],
+      );
+    } catch (e) {
+      _snack('파일 선택 창을 열지 못했습니다. ($e)');
+      return;
+    }
     if (file == null || !mounted) return;
     final List<BankTx> txs;
     try {
@@ -610,12 +616,22 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       _snack('파일을 읽지 못했습니다. 은행에서 받은 입출금 내역 파일인지 확인하세요.');
       return;
     }
+    if (txs.isEmpty) {
+      _snack('${file.name} 에서 입금 거래를 찾지 못했습니다. 입금액이 있는 행이 있는지 확인하세요.');
+      return;
+    }
     // 무료 날 당일만인 신청은 받을 돈이 없어 대조하지 않는다.
     final g = current.value!;
-    final result = matchDeposits(txs, regs!, {
-      for (final r in regs!)
-        if (!g.freeFor(quotes[r.id]!)) r.id: quotes[r.id]!.total,
-    });
+    final ({List<BankMatch> matches, List<BankTx> unmatched}) result;
+    try {
+      result = matchDeposits(txs, regs!, {
+        for (final r in regs!)
+          if (!g.freeFor(quotes[r.id]!)) r.id: quotes[r.id]!.total,
+      });
+    } catch (e) {
+      _snack('입금 대조 중 오류가 났습니다. ($e)');
+      return;
+    }
     if (!mounted) return;
     final picked = await showDialog<List<BankMatch>>(
       context: context,
@@ -1580,7 +1596,13 @@ class BankPreviewState extends State<BankPreview> {
                   ],
                   if (widget.unmatched.isNotEmpty)
                     ExpansionTile(
+                      // 맞춘 게 없으면 왜 안 맞았는지 바로 보이게 펼쳐 둔다.
+                      initiallyExpanded: widget.matches.isEmpty,
                       tilePadding: EdgeInsets.zero,
+                      subtitle: const Text(
+                        '입금자명이 신청자·입금자명과 다르거나, 신청한 날보다 앞선 거래입니다(앞선 거래는 대조하지 않습니다).',
+                        style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                      ),
                       title: Text(
                         '맞는 신청이 없는 입금 ${widget.unmatched.length}건',
                         style: const TextStyle(
