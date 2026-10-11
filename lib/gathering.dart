@@ -539,6 +539,7 @@ class Registration {
     this.status = RegStatus.pending,
     this.paid = 0,
     this.paidAt,
+    this.paidRef,
     this.adminMemo,
     this.discount = Discount.none,
     List<AssignedGuest>? assigned,
@@ -557,6 +558,10 @@ class Registration {
   RegStatus status;
   int paid;
   DateTime? paidAt;
+
+  /// 은행 내역으로 자동 확인한 근거 거래(`BankTx.ref`). null 이면 운영자가 손으로 확인한 것.
+  String? paidRef;
+  bool get autoPaid => paidRef != null;
 
   /// 홈스테이에서 이 가정에 배정된 참석자. `lookup_registration` 이 같이 돌려준다.
   /// 운영자 앱이 읽는 `registrations` 행에는 없어서 그때는 항상 비어 있다.
@@ -583,6 +588,7 @@ class Registration {
     status: RegStatus.parse(r['status']),
     paid: _int(r['paid']),
     paidAt: _date(r['paid_at']),
+    paidRef: _str(r['paid_ref']),
     adminMemo: _str(r['admin_memo']),
     discount: Discount(
       pct: _int(r['discount_pct']),

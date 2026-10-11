@@ -95,6 +95,7 @@ create table if not exists public.registrations (
     check (status in ('pending', 'confirmed', 'cancelled')),
   paid int not null default 0,
   paid_at date,
+  paid_ref text,                             -- 은행 내역으로 자동 확인한 근거 거래. null = 수동 확인
   admin_memo text,                           -- 신청자에게는 안 보인다
   -- 지정 할인 (운영자만 바꾼다. 신청자 조회에는 보인다)
   discount_pct int not null default 0 check (discount_pct between 0 and 100),
@@ -109,6 +110,7 @@ alter table public.registrations add column if not exists discount_pct int not n
 alter table public.registrations add column if not exists discount_amount int not null default 0
   check (discount_amount >= 0);
 alter table public.registrations add column if not exists discount_note text;
+alter table public.registrations add column if not exists paid_ref text;
 
 -- 휴대폰 1개 = 진행 중인 신청 1건. 취소한 사람은 다시 신청할 수 있다.
 create unique index if not exists registrations_active_phone

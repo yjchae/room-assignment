@@ -40,6 +40,9 @@ dependencies:
   file_picker: ^12.3.0
   image: ^4.9.2
   url_launcher: ^6.3.2
+  # 은행 입출금 내역(xlsx) 읽기. image 가 이미 끌어오는 것을 직접 쓴다.
+  archive: ^4.2.0
+  xml: ^7.0.1
 
 dev_dependencies:
   flutter_test:

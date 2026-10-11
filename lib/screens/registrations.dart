@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../bank_import.dart';
 import '../gathering.dart';
 import '../main.dart';
 import '../main_public.dart' show ApplyPage;
@@ -205,7 +207,13 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                 unit: '원',
                 color: AppColors.warn,
               ),
-              StatCard('입금 확인', _n(paidSum), unit: '원', color: AppColors.ok),
+              StatCard(
+                '입금 확인 (자동 ${active.where((r) => r.status == RegStatus.confirmed && r.autoPaid).length}'
+                ' · 수동 ${active.where((r) => r.status == RegStatus.confirmed && !r.autoPaid).length})',
+                _n(paidSum),
+                unit: '원',
+                color: AppColors.ok,
+              ),
             ],
           ),
         ),
@@ -262,6 +270,12 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                 icon: const Icon(Icons.done_all, size: 18),
                 label: Text('선택 ${checked.length}건 입금 확인'),
               ),
+              if (!g.fee.isFree)
+                OutlinedButton.icon(
+                  onPressed: busy ? null : () => _importBank(quotes),
+                  icon: const Icon(Icons.upload_file, size: 18),
+                  label: const Text('은행 내역 올리기'),
+                ),
             ],
           ),
         ),
@@ -337,6 +351,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                       'status': 'pending',
                       'paid': 0,
                       'paid_at': null,
+                      'paid_ref': null,
                     }, '입금대기로 되돌렸습니다.'),
                     onCancel: () => _cancel(selected),
                     onResetPin: () => _resetPin(selected),
@@ -514,6 +529,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         'status': 'confirmed',
         'paid': int.parse(digitsOnly(amount.text)),
         'paid_at': ymd(date),
+        'paid_ref': null,
         'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
       },
       '${r.applicant} 입금 확인했습니다.',
@@ -543,6 +559,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
             'status': 'confirmed',
             'paid': quotes[r.id]!.total,
             'paid_at': ymd(DateTime.now()),
+            'paid_ref': null,
           }),
         );
       } catch (_) {
@@ -556,6 +573,79 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       (fail == 0
               ? '${targets.length}건 입금 확인했습니다.'
               : '${targets.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.') +
+          added,
+    );
+  }
+
+  /// 은행에서 받은 입출금 내역으로 입금을 확인한다. 파일은 이 기기에서만 읽고 어디에도 올리지 않는다
+  /// (남의 거래·실명이 들어 있다). 남는 건 맞춘 거래 한 줄(`paid_ref`)뿐이고, 그게 있으면 '자동'으로 보인다.
+  Future<void> _importBank(Map<String, Quote> quotes) async {
+    final file = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['xls', 'xlsx', 'csv'],
+    );
+    if (file == null || !mounted) return;
+    final List<BankTx> txs;
+    try {
+      txs = parseBankFile(await file.readAsBytes(), file.name);
+    } on FormatException catch (e) {
+      _snack(e.message);
+      return;
+    } catch (_) {
+      _snack('파일을 읽지 못했습니다. 은행에서 받은 입출금 내역 파일인지 확인하세요.');
+      return;
+    }
+    final result = matchDeposits(txs, regs!, {
+      for (final r in regs!) r.id: quotes[r.id]!.total,
+    });
+    if (!mounted) return;
+    final picked = await showDialog<List<BankMatch>>(
+      context: context,
+      builder: (_) => BankPreview(
+        matches: result.matches,
+        unmatched: result.unmatched,
+        txCount: txs.length,
+      ),
+    );
+    if (picked == null || picked.isEmpty) return;
+    setState(() => busy = true);
+    var fail = 0;
+    for (final m in picked) {
+      final r = m.reg;
+      try {
+        _replace(
+          await remote.patchRegistration(
+            r.id,
+            r.status == RegStatus.confirmed
+                // 추가 입금: 먼저 받은 금액에 더하고 근거 거래를 덧붙인다.
+                ? {
+                    'paid': r.paid + m.tx.amount,
+                    'paid_ref': [...paidRefs(r), m.tx.ref].join('\n'),
+                  }
+                : {
+                    'status': 'confirmed',
+                    'paid': m.tx.amount,
+                    'paid_at': ymd(m.tx.at),
+                    'paid_ref': m.tx.ref,
+                  },
+          ),
+        );
+      } catch (_) {
+        fail++;
+      }
+    }
+    final added = _syncConfirmed();
+    if (!mounted) return;
+    setState(() => busy = false);
+    final off = picked.where((m) {
+      final r = regs!.firstWhere((x) => x.id == m.reg.id);
+      return r.paid != quotes[r.id]!.total;
+    }).length;
+    _snack(
+      (fail == 0
+              ? '은행 내역으로 ${picked.length}건 입금 확인했습니다.'
+              : '${picked.length - fail}건 확인, $fail건 실패. 새로고침 후 다시 시도하세요.') +
+          (off > 0 ? ' 금액이 다른 $off건은 목록에 차액이 표시됩니다.' : '') +
           added,
     );
   }
@@ -574,7 +664,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           '신청과 입금 내역이 서버에서 완전히 지워지고 되돌릴 수 없습니다. '
           '신청자가 조회해도 나오지 않습니다.'
           '${home ? '\n이 신청으로 만든 방(가정)도 지워집니다.'
-                '${losing > 0 ? ' 배정돼 있던 $losing명은 미배정으로 돌아갑니다.' : ''}' : ''}'
+                    '${losing > 0 ? ' 배정돼 있던 $losing명은 미배정으로 돌아갑니다.' : ''}' : ''}'
           '${!home && people > 0 ? '\n이 신청으로 들어온 참석자 $people명도 방배정에서 빠집니다.' : ''}',
       action: '삭제',
       danger: true,
@@ -1019,21 +1109,32 @@ class _RegRow extends StatelessWidget {
               ),
               SizedBox(
                 width: _wMoney,
-                child: Text(
-                  r.status == RegStatus.confirmed ? won(r.paid) : '—',
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontFeatures: _tabular),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      r.status == RegStatus.confirmed ? won(r.paid) : '—',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontFeatures: _tabular),
+                    ),
+                    if (diff != 0) _DiffText(r.paid, q.total),
+                  ],
                 ),
               ),
               const SizedBox(width: 12),
               SizedBox(
                 width: _wStatus,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: RegStatusBadge(
-                    r.status,
-                    free: current.value?.fee.isFree ?? false,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RegStatusBadge(
+                      r.status,
+                      free: current.value?.fee.isFree ?? false,
+                    ),
+                    if (r.status == RegStatus.confirmed &&
+                        !(current.value?.fee.isFree ?? false))
+                      _PaidHow(r),
+                  ],
                 ),
               ),
               SizedBox(
@@ -1203,7 +1304,11 @@ class _Detail extends StatelessWidget {
         kv('입금자명', r.depositorName),
         if (r.status == RegStatus.confirmed) ...[
           kv('입금액', won(r.paid)),
+          if (diffText(r.paid, q.total) case final d?) kv('차액', d),
           if (r.paidAt != null) kv('입금일', ymd(r.paidAt!)),
+          kv('확인 방법', r.autoPaid ? '자동 (은행 내역)' : '수동'),
+          for (final ref in paidRefs(r))
+            kv('근거 거래', ref.split('|').join(' · ')),
         ],
         if ((r.memo ?? '').isNotEmpty) kv('신청 메모', r.memo!),
         if ((r.adminMemo ?? '').isNotEmpty) kv('운영자 메모', r.adminMemo!),
@@ -1241,6 +1346,252 @@ class _Detail extends StatelessWidget {
               child: const Text('신청 삭제'),
             ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+/// 입금액 − 계산 금액. 더 내면 경고색, 덜 내면 빨강.
+class _DiffText extends StatelessWidget {
+  const _DiffText(this.paid, this.due);
+  final int paid, due;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = diffText(paid, due);
+    if (t == null) return const SizedBox.shrink();
+    return Text(
+      t,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        fontFeatures: _tabular,
+        color: paid > due ? AppColors.warnInk : AppColors.danger,
+      ),
+    );
+  }
+}
+
+/// 입금 확인 방법 태그: 자동(은행 내역) / 수동.
+class _PaidHow extends StatelessWidget {
+  const _PaidHow(this.r);
+  final Registration r;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    r.autoPaid ? '자동' : '수동',
+    style: TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      color: r.autoPaid ? AppColors.brand : AppColors.textMuted,
+    ),
+  );
+}
+
+/// 은행 내역 대조 미리보기. 확실한 건은 체크된 채, 확인이 필요한 건은 사유와 함께 체크 안 된 채로 보인다.
+/// 같은 입금을 두 신청에 쓸 수 없게, 한 줄을 고르면 같은 입금을 쓰는 다른 줄은 막는다.
+class BankPreview extends StatefulWidget {
+  const BankPreview({
+    super.key,
+    required this.matches,
+    required this.unmatched,
+    required this.txCount,
+  });
+  final List<BankMatch> matches;
+  final List<BankTx> unmatched;
+  final int txCount;
+
+  @override
+  State<BankPreview> createState() => BankPreviewState();
+}
+
+class BankPreviewState extends State<BankPreview> {
+  late final picked = {
+    for (final m in widget.matches)
+      if (m.issue == null) m,
+  };
+
+  String _at(DateTime t) =>
+      '${mdw(t)} ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Widget _row(BankMatch m) {
+    final taken = picked.any((p) => p != m && p.tx == m.tx);
+    final cell = TextStyle(fontSize: 13, fontFeatures: _tabular);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Checkbox(
+            value: picked.contains(m),
+            onChanged: taken
+                ? null
+                : (v) => setState(
+                    () => v == true ? picked.add(m) : picked.remove(m),
+                  ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  m.reg.applicant,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (m.issue != null)
+                  Text(
+                    taken ? '${m.issue} · 다른 신청에 쓴 입금' : m.issue!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.warnInk,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 96,
+            child: Text(won(m.due), textAlign: TextAlign.right, style: cell),
+          ),
+          SizedBox(
+            width: 96,
+            child: Text(
+              won(m.tx.amount),
+              textAlign: TextAlign.right,
+              style: cell.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          SizedBox(
+            width: 112,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: m.tx.amount == m.due
+                  ? const Text(
+                      '일치',
+                      style: TextStyle(fontSize: 12, color: AppColors.ok),
+                    )
+                  : _DiffText(m.tx.amount, m.due),
+            ),
+          ),
+          const SizedBox(width: 16),
+          SizedBox(
+            width: 150,
+            child: Text(
+              '${_at(m.tx.at)} · ${m.tx.name}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sure = [
+      for (final m in widget.matches)
+        if (m.issue == null) m,
+    ];
+    final check = [
+      for (final m in widget.matches)
+        if (m.issue != null) m,
+    ];
+    final head = const TextStyle(fontSize: 12, color: AppColors.textMuted);
+    return AlertDialog(
+      title: const Text('은행 내역으로 입금 확인'),
+      content: SizedBox(
+        width: 760,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '입금 ${widget.txCount}건 중 확실 ${sure.length} · 확인 필요 ${check.length} · '
+              '맞는 신청 없음 ${widget.unmatched.length}. '
+              '입금자명과 금액(계산 금액)을 같이 맞춰 봤습니다.',
+              style: const TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const SizedBox(width: 48),
+                Expanded(child: Text('신청자', style: head)),
+                SizedBox(
+                  width: 96,
+                  child: Text('받을 금액', textAlign: TextAlign.right, style: head),
+                ),
+                SizedBox(
+                  width: 96,
+                  child: Text('입금액', textAlign: TextAlign.right, style: head),
+                ),
+                SizedBox(
+                  width: 112,
+                  child: Text('차액', textAlign: TextAlign.right, style: head),
+                ),
+                const SizedBox(width: 16),
+                SizedBox(width: 150, child: Text('입금 일시 · 입금자', style: head)),
+              ],
+            ),
+            const Divider(height: 12),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  if (widget.matches.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text('입금대기 신청과 맞는 입금이 없습니다.'),
+                    ),
+                  if (sure.isNotEmpty) SectionTitle('확실 ${sure.length}'),
+                  ...sure.map(_row),
+                  if (check.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    SectionTitle(
+                      '확인 필요 ${check.length}',
+                      subtitle: '사유를 보고 맞으면 체크하세요.',
+                    ),
+                    ...check.map(_row),
+                  ],
+                  if (widget.unmatched.isNotEmpty)
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: Text(
+                        '맞는 신청이 없는 입금 ${widget.unmatched.length}건',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      children: [
+                        for (final t in widget.unmatched)
+                          ListTile(
+                            dense: true,
+                            title: Text(t.name.isEmpty ? '(입금자 없음)' : t.name),
+                            subtitle: Text(_at(t.at)),
+                            trailing: Text(
+                              won(t.amount),
+                              style: const TextStyle(fontFeatures: _tabular),
+                            ),
+                          ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('닫기'),
+        ),
+        FilledButton(
+          onPressed: picked.isEmpty
+              ? null
+              : () => Navigator.pop(context, picked.toList()),
+          child: Text('${picked.length}건 입금 확인'),
         ),
       ],
     );
