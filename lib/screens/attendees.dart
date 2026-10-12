@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../gathering.dart' show mdw, ymd, Registration, RegStatus;
 import '../main.dart';
 import '../remote.dart';
+import '../responsive.dart';
 import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
@@ -107,6 +108,60 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     final list = store.search(query, people)
       ..retainWhere((a) => key == null || key(a) == pick!.$2)
       ..sort(_cmp);
+    final compact = windowSizeOf(context).isCompact;
+    final search = TextField(
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.search),
+        hintText: '이름 / 셀 / 존 / 전화 검색',
+        isDense: true,
+        border: OutlineInputBorder(),
+      ),
+      onChanged: (v) => setState(() => query = v),
+    );
+    final tools = <Widget>[
+      DropdownButton<String>(
+        value: sortKey,
+        onChanged: (v) => setState(() => sortKey = v!),
+        items: const [
+          DropdownMenuItem(value: 'name', child: Text('이름순')),
+          DropdownMenuItem(value: 'age', child: Text('나이순')),
+          DropdownMenuItem(value: 'cell', child: Text('셀순')),
+          DropdownMenuItem(value: 'zone', child: Text('존순')),
+          DropdownMenuItem(value: 'room', child: Text('방순')),
+        ],
+      ),
+      // 홈스테이는 신청이 참석자가 아니라 방(가정)이 된다 — 그 버튼은 [가정 관리]에 있다.
+      if (current.value?.isHomestay != true) ...[
+        Tooltip(
+          message: current.value == null
+              ? '서버에 연결된 집회에서만 쓸 수 있습니다'
+              : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.download_outlined, size: 18),
+            label: const Text('신청에서 가져오기'),
+            onPressed: current.value == null
+                ? null
+                : () async {
+                    await importRegistrations(context);
+                    _loadRegs();
+                  },
+          ),
+        ),
+      ],
+      if (pick != null) ...[
+        InputChip(
+          label: Text('${pick!.$1}: ${pick!.$2}'),
+          onDeleted: () => setState(() => pick = null),
+        ),
+      ],
+      Text(
+        homestay
+            // 기간을 나눈 아이는 조각이 여럿이라 사람 수로 센다.
+            ? '${list.map((a) => a.personId).toSet().length} / '
+                  '${people.map((a) => a.personId).toSet().length}명'
+            : '${list.length} / ${people.length}명',
+      ),
+    ];
     return Scaffold(
       // 한 명씩 추가는 [신청·입금]의 [신청 추가]로 한다 — 입금 확인까지 거쳐야 해서.
       // 홈스테이는 아이들이 신청이 아니라 명단으로 들어오니 여기서 바로 추가한다.
@@ -143,67 +198,27 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: '이름 / 셀 / 존 / 전화 검색',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (v) => setState(() => query = v),
+            // 휴대폰은 검색창이 한 줄을 다 쓰고, 나머지는 아래 줄에서 넘치면 다음 줄로.
+            child: compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      search,
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: tools,
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(child: search),
+                      for (final t in tools) ...[const SizedBox(width: 12), t],
+                    ],
                   ),
-                ),
-                const SizedBox(width: 12),
-                DropdownButton<String>(
-                  value: sortKey,
-                  onChanged: (v) => setState(() => sortKey = v!),
-                  items: const [
-                    DropdownMenuItem(value: 'name', child: Text('이름순')),
-                    DropdownMenuItem(value: 'age', child: Text('나이순')),
-                    DropdownMenuItem(value: 'cell', child: Text('셀순')),
-                    DropdownMenuItem(value: 'zone', child: Text('존순')),
-                    DropdownMenuItem(value: 'room', child: Text('방순')),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                // 홈스테이는 신청이 참석자가 아니라 방(가정)이 된다 — 그 버튼은 [가정 관리]에 있다.
-                if (current.value?.isHomestay != true) ...[
-                  Tooltip(
-                    message: current.value == null
-                        ? '서버에 연결된 집회에서만 쓸 수 있습니다'
-                        : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.download_outlined, size: 18),
-                      label: const Text('신청에서 가져오기'),
-                      onPressed: current.value == null
-                          ? null
-                          : () async {
-                              await importRegistrations(context);
-                              _loadRegs();
-                            },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-                if (pick != null) ...[
-                  InputChip(
-                    label: Text('${pick!.$1}: ${pick!.$2}'),
-                    onDeleted: () => setState(() => pick = null),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Text(
-                  homestay
-                      // 기간을 나눈 아이는 조각이 여럿이라 사람 수로 센다.
-                      ? '${list.map((a) => a.personId).toSet().length} / '
-                            '${people.map((a) => a.personId).toSet().length}명'
-                      : '${list.length} / ${people.length}명',
-                ),
-              ],
-            ),
           ),
           // 홈스테이는 날짜·존·셀 통계가 뜻이 없다 (아이들은 신청이 아니라 명단으로 들어온다).
           // 대신 아래 표가 누가 어느 집에서 언제 묵는지를 보여준다.
@@ -405,7 +420,7 @@ int naturalCompare(String a, String b) {
 /// 홈스테이 그래프: 맨 위가 날짜(집회 첫날~마지막 밤), 왼쪽이 아이 이름,
 /// 가운데 막대가 "며칠부터 며칠까지 누구 집" 이다. 날짜가 많으면 가로로 민다.
 /// 일정이 중간에 끊긴 아이는 막대도 끊어서 그린다.
-class _HomestayChart extends StatelessWidget {
+class _HomestayChart extends StatefulWidget {
   const _HomestayChart({
     required this.people,
     required this.nights,
@@ -416,6 +431,43 @@ class _HomestayChart extends StatelessWidget {
   /// 묵는 밤들 (집회 첫날 ~ 마지막 날 전날). 칸 하나 = 하룻밤.
   final List<DateTime> nights;
   final void Function(Attendee) onTap;
+
+  @override
+  State<_HomestayChart> createState() => _HomestayChartState();
+}
+
+/// 이름 칸은 왼쪽에 고정하고 날짜 칸만 가로로 민다 — 좁은 화면에서 날짜를 넘겨도 누구 줄인지 보이게.
+/// 그래서 [이름 목록 | 날짜 목록] 두 개로 나누고 세로 스크롤을 서로 맞춰 움직인다.
+class _HomestayChartState extends State<_HomestayChart> {
+  final _names = ScrollController(), _days = ScrollController();
+
+  /// 한쪽을 옮기면서 다른 쪽을 따라 옮길 때, 그 따라간 움직임이 다시 되돌아오지 않게.
+  bool _syncing = false;
+
+  List<Attendee> get people => widget.people;
+  List<DateTime> get nights => widget.nights;
+  void Function(Attendee) get onTap => widget.onTap;
+
+  @override
+  void initState() {
+    super.initState();
+    _names.addListener(() => _follow(_names, _days));
+    _days.addListener(() => _follow(_days, _names));
+  }
+
+  void _follow(ScrollController from, ScrollController to) {
+    if (_syncing || !to.hasClients || to.offset == from.offset) return;
+    _syncing = true;
+    to.jumpTo(from.offset.clamp(0, to.position.maxScrollExtent));
+    _syncing = false;
+  }
+
+  @override
+  void dispose() {
+    _names.dispose();
+    _days.dispose();
+    super.dispose();
+  }
 
   /// 한 사람 = 한 줄. 기간을 나눠 여러 집에 묵는 아이는 조각이 여럿이라 같은 줄에 이어 그린다.
   List<List<Attendee>> get _rows {
@@ -429,43 +481,78 @@ class _HomestayChart extends StatelessWidget {
     return by.values.toList();
   }
 
-  static const _name = 150.0, _cell = 38.0, _rowH = 34.0;
+  static const _name = 150.0, _cell = 38.0, _rowH = 34.0, _headH = 48.0;
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: SizedBox(
-      width: _name + _cell * nights.length + 16,
-      child: Column(
-        children: [
-          _header(),
-          const Divider(height: 1),
-          Expanded(
-            child: Builder(
-              builder: (context) {
-                final rows = _rows;
-                return ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 80),
+  Widget build(BuildContext context) {
+    final rows = _rows;
+    // 아래 FAB 에 마지막 줄이 가리지 않게. 두 목록이 같은 여백이어야 끝까지 맞춰 굴러간다.
+    const pad = EdgeInsets.only(bottom: 80);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: 12 + _name,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(
+                height: _headH,
+                child: Padding(
+                  padding: EdgeInsets.only(left: 12),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _Th('참석자'),
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  controller: _names,
+                  padding: pad,
                   itemCount: rows.length,
-                  itemBuilder: (context, i) => _row(rows[i], i.isOdd),
-                );
-              },
+                  itemBuilder: (context, i) => _nameCell(rows[i], i.isOdd),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: _cell * nights.length + 4,
+              child: Column(
+                children: [
+                  _header(),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: _days,
+                      padding: pad,
+                      itemCount: rows.length,
+                      itemBuilder: (context, i) => _row(rows[i], i.isOdd),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      ],
+    );
+  }
 
-  Widget _header() => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 8, 4, 6),
+  Widget _header() => SizedBox(
+    height: _headH,
     child: Row(
       children: [
-        const SizedBox(width: _name, child: _Th('참석자')),
         for (final n in nights)
           SizedBox(
             width: _cell,
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
                   // 달이 바뀌는 날은 '11/1' 로 적어 어느 달인지 알아보게 한다.
@@ -490,29 +577,36 @@ class _HomestayChart extends StatelessWidget {
     ),
   );
 
-  Widget _row(List<Attendee> parts, bool striped) {
+  /// 고정된 왼쪽 이름 칸. 줄 높이·줄무늬는 오른쪽 날짜 줄([_row])과 같아야 한 줄로 읽힌다.
+  Widget _nameCell(List<Attendee> parts, bool striped) {
     final first = parts.first;
     return Container(
       height: _rowH,
       color: striped ? AppColors.surface : null,
-      padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
+      padding: const EdgeInsets.only(left: 12),
+      alignment: Alignment.centerLeft,
+      child: InkWell(
+        onTap: () => onTap(first),
+        child: Text(
+          '${first.name}  ${genderLabel(first.gender)}'
+          '${first.age > 0 ? ' ${first.age}세' : ''}'
+          '${parts.length > 1 ? '  ·${parts.length}' : ''}'
+          '${parts.every((x) => _outside(x, nights)) ? '  [기간 밖]' : ''}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(List<Attendee> parts, bool striped) {
+    return Container(
+      height: _rowH,
+      color: striped ? AppColors.surface : null,
+      padding: const EdgeInsets.only(right: 4),
       child: Row(
         children: [
-          SizedBox(
-            width: _name,
-            child: InkWell(
-              onTap: () => onTap(first),
-              child: Text(
-                '${first.name}  ${genderLabel(first.gender)}'
-                '${first.age > 0 ? ' ${first.age}세' : ''}'
-                '${parts.length > 1 ? '  ·${parts.length}' : ''}'
-                '${parts.every((x) => _outside(x, nights)) ? '  [기간 밖]' : ''}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13.5),
-              ),
-            ),
-          ),
           SizedBox(
             width: _cell * nights.length,
             child: Stack(
@@ -641,16 +735,31 @@ class _StatsPanel extends StatelessWidget {
   final ValueChanged<(String, String)> onPick;
 
   @override
-  Widget build(BuildContext context) => Row(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Expanded(flex: 2, child: _countCard('존')),
-      const SizedBox(width: 12),
-      Expanded(flex: 2, child: _countCard('셀')),
-      const SizedBox(width: 12),
-      Expanded(flex: 4, child: _ageGenderCard()),
-    ],
-  );
+  Widget build(BuildContext context) {
+    // 휴대폰은 카드 세 장이 한 줄에 안 들어간다. 폭을 정해 두고 옆으로 넘겨 본다.
+    if (windowSizeOf(context).isCompact) {
+      return ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          SizedBox(width: 260, child: _countCard('존')),
+          const SizedBox(width: 12),
+          SizedBox(width: 260, child: _countCard('셀')),
+          const SizedBox(width: 12),
+          SizedBox(width: 340, child: _ageGenderCard()),
+        ],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: 2, child: _countCard('존')),
+        const SizedBox(width: 12),
+        Expanded(flex: 2, child: _countCard('셀')),
+        const SizedBox(width: 12),
+        Expanded(flex: 4, child: _ageGenderCard()),
+      ],
+    );
+  }
 
   /// 값 이름 · 비율 막대 · 인원 한 줄씩. '없음'은 개수에 넣지 않는다. "셀 12개"
   Widget _countCard(String title) {
@@ -1277,7 +1386,10 @@ Future<void> _splitDialog(BuildContext context, Attendee a) async {
                     ? '이 날부터는 다른 집에서 묵습니다. 뒤쪽 기간은 미배정으로 떨어져 나오고, '
                           '[가정 배정]에서 다른 집에 넣으면 됩니다.'
                     : '이 날부터를 따로 떼어냅니다. 뒤쪽 기간은 미배정이 됩니다.',
-                style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textMuted,
+                ),
               ),
               const SizedBox(height: 8),
               ListTile(
@@ -1467,125 +1579,10 @@ Future<List<Attendee>?> pasteDialog(
         });
         final good = preview.where((r) => r.ok).length;
         final bad = preview.length - good;
-        return AlertDialog(
-          title: Text(title),
-          content: SizedBox(
-            width: 820,
-            height: 560,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '엑셀에서 셀 범위를 복사해 그대로 붙여넣으세요 (탭 구분). 컬럼 순서를 아래에서 맞춥니다.',
-                ),
-                if (help != null) Text(help),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    for (var i = 0; i < columns.length; i++)
-                      SizedBox(
-                        width: 120,
-                        child: DropdownButtonFormField<String>(
-                          initialValue: columns[i],
-                          isDense: true,
-                          decoration: InputDecoration(
-                            labelText: '${i + 1}번째 열',
-                          ),
-                          items: [
-                            for (final e in attendeeColumnOptions(
-                              store.event,
-                            ).entries)
-                              DropdownMenuItem(
-                                value: e.key,
-                                child: Text(e.value),
-                              ),
-                          ],
-                          onChanged: (v) {
-                            columns[i] = v!;
-                            reparse();
-                          },
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: '열 추가',
-                      onPressed: () {
-                        columns.add('skip');
-                        reparse();
-                      },
-                      icon: const Icon(Icons.add),
-                    ),
-                    IconButton(
-                      tooltip: '열 제거',
-                      onPressed: columns.length <= 1
-                          ? null
-                          : () {
-                              columns.removeLast();
-                              reparse();
-                            },
-                      icon: const Icon(Icons.remove),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 130,
-                  child: TextField(
-                    controller: text,
-                    maxLines: null,
-                    expands: true,
-                    textAlignVertical: TextAlignVertical.top,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '홍길동\t남\t34\t010-...\t1셀\tA존',
-                    ),
-                    onChanged: (_) => reparse(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '정상 $good행 · 오류 $bad행 (오류 행은 저장 시 건너뜁니다)',
-                  style: TextStyle(
-                    color: bad > 0 ? Colors.red : Colors.green.shade800,
-                  ),
-                ),
-                const Divider(),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: preview.length,
-                    itemBuilder: (context, i) {
-                      final r = preview[i];
-                      return Container(
-                        color: r.ok ? null : Colors.red.withValues(alpha: 0.12),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 40,
-                              child: Text(
-                                '${r.lineNo}',
-                                style: const TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                            Expanded(child: Text(r.cells.join(' | '))),
-                            if (!r.ok)
-                              Text(
-                                r.error!,
-                                style: const TextStyle(color: Colors.red),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
+        return WideDialog(
+          title: title,
+          width: 820,
+          height: 560,
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -1596,6 +1593,115 @@ Future<List<Attendee>?> pasteDialog(
               child: Text('$good명 저장'),
             ),
           ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('엑셀에서 셀 범위를 복사해 그대로 붙여넣으세요 (탭 구분). 컬럼 순서를 아래에서 맞춥니다.'),
+              if (help != null) Text(help),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (var i = 0; i < columns.length; i++)
+                    SizedBox(
+                      width: 120,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: columns[i],
+                        isDense: true,
+                        decoration: InputDecoration(labelText: '${i + 1}번째 열'),
+                        items: [
+                          for (final e in attendeeColumnOptions(
+                            store.event,
+                          ).entries)
+                            DropdownMenuItem(
+                              value: e.key,
+                              child: Text(e.value),
+                            ),
+                        ],
+                        onChanged: (v) {
+                          columns[i] = v!;
+                          reparse();
+                        },
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: '열 추가',
+                    onPressed: () {
+                      columns.add('skip');
+                      reparse();
+                    },
+                    icon: const Icon(Icons.add),
+                  ),
+                  IconButton(
+                    tooltip: '열 제거',
+                    onPressed: columns.length <= 1
+                        ? null
+                        : () {
+                            columns.removeLast();
+                            reparse();
+                          },
+                    icon: const Icon(Icons.remove),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 130,
+                child: TextField(
+                  controller: text,
+                  maxLines: null,
+                  expands: true,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: '홍길동\t남\t34\t010-...\t1셀\tA존',
+                  ),
+                  onChanged: (_) => reparse(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '정상 $good행 · 오류 $bad행 (오류 행은 저장 시 건너뜁니다)',
+                style: TextStyle(
+                  color: bad > 0 ? Colors.red : Colors.green.shade800,
+                ),
+              ),
+              const Divider(),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: preview.length,
+                  itemBuilder: (context, i) {
+                    final r = preview[i];
+                    return Container(
+                      color: r.ok ? null : Colors.red.withValues(alpha: 0.12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 40,
+                            child: Text(
+                              '${r.lineNo}',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          ),
+                          Expanded(child: Text(r.cells.join(' | '))),
+                          if (!r.ok)
+                            Text(
+                              r.error!,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         );
       },
     ),

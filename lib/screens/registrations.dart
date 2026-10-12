@@ -9,6 +9,7 @@ import '../main.dart';
 import '../main_public.dart' show ApplyPage;
 import '../models.dart';
 import '../remote.dart';
+import '../responsive.dart';
 import '../theme.dart';
 import '../widgets/quote_table.dart';
 import 'attendees.dart' show pasteDialog;
@@ -185,12 +186,114 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         .where((r) => r.status == RegStatus.confirmed)
         .fold(0, (s, r) => s + r.paid);
     final selected = all.where((r) => r.id == selectedId).firstOrNull;
+    final size = windowSizeOf(context);
+    Widget detailOf(Registration selected) => _Detail(
+      r: selected,
+      q: quotes[selected.id]!,
+      busy: busy,
+      onClose: () => setState(() => selectedId = null),
+      onConfirm: () => _confirm(selected, quotes[selected.id]!),
+      onRevert: () => _patch(selected, {
+        'status': 'pending',
+        'paid': 0,
+        'paid_at': null,
+        'paid_ref': null,
+      }, '입금대기로 되돌렸습니다.'),
+      onCancel: () => _cancel(selected),
+      onResetPin: () => _resetPin(selected),
+      onDelete: () => _delete(selected),
+      onDiscount: (d) => _patch(selected, {
+        'discount_pct': d.pct,
+        'discount_amount': d.amount,
+        'discount_note': d.note,
+      }, d.isEmpty ? '지정 할인을 해제했습니다.' : '지정 할인을 적용했습니다.'),
+    );
+    // 휴대폰: 상세가 목록 자리를 통째로 쓴다. 뒤로 가기(제스처·버튼)는 상세만 닫는다.
+    if (size.isCompact && selected != null) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) setState(() => selectedId = null);
+        },
+        child: detailOf(selected),
+      );
+    }
+
+    final chips = <Widget>[
+      for (final f in [null, ...RegStatus.values])
+        ChoiceChip(
+          label: Text(
+            '${f?.labelFor(free: g.fee.isFree) ?? '전체'} ${all.where((r) => f == null || r.status == f).length}',
+          ),
+          selected: filter == f,
+          onSelected: (_) => setState(() => filter = f),
+        ),
+      if (g.asks('minister') || all.any(_hasMinister))
+        FilterChip(
+          label: Text('사역자 ${all.where(_hasMinister).length}'),
+          selected: ministerOnly,
+          onSelected: (v) => setState(() => ministerOnly = v),
+        ),
+    ];
+    final Widget table = shown.isEmpty
+        ? EmptyNotice(
+            icon: Icons.inbox_outlined,
+            text: all.isEmpty
+                ? '아직 신청이 없습니다.\n[집회 설정]에서 신청 링크를 복사해 공지하세요.'
+                : '조건에 맞는 신청이 없습니다.',
+          )
+        // 창이 좁거나 오른쪽 상세가 열려 폭이 모자라면 열을 찌그러뜨리지 않고 가로로 굴린다.
+        : LayoutBuilder(
+            builder: (context, box) => SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: box.maxWidth < _minTableWidth
+                    ? _minTableWidth
+                    : box.maxWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const _Header(),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: shown.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, i) {
+                          final r = shown[i];
+                          return _RegRow(
+                            r: r,
+                            q: quotes[r.id]!,
+                            selected: r.id == selectedId,
+                            checked: checked.contains(r.id),
+                            onTap: () => setState(
+                              () =>
+                                  selectedId = selectedId == r.id ? null : r.id,
+                            ),
+                            onCheck: (v) => setState(
+                              () =>
+                                  v ? checked.add(r.id) : checked.remove(r.id),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: EdgeInsets.fromLTRB(
+            size.isCompact ? 12 : 16,
+            size.isCompact ? 12 : 16,
+            size.isCompact ? 12 : 16,
+            8,
+          ),
           child: Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -217,159 +320,201 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        if (size.isCompact)
+          _compactTools(g, quotes, chips)
+        else
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                ...chips,
+                SizedBox(
+                  width: 260,
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search, size: 18),
+                      hintText: '이름 · 입금자명 · 휴대폰',
+                    ),
+                    onChanged: (v) => setState(() => query = v),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: loading ? null : _load,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('새로고침'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: busy ? null : () => _add(g),
+                  icon: const Icon(Icons.person_add_alt, size: 18),
+                  label: const Text('신청 추가'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: busy ? null : () => _paste(g),
+                  icon: const Icon(Icons.content_paste, size: 18),
+                  label: const Text('붙여넣기 추가'),
+                ),
+                FilledButton.icon(
+                  onPressed: checked.isEmpty || busy
+                      ? null
+                      : () => _bulkConfirm(quotes),
+                  icon: const Icon(Icons.done_all, size: 18),
+                  label: Text('선택 ${checked.length}건 입금 확인'),
+                ),
+                if (!g.fee.isFree)
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : () => _importBank(quotes),
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: const Text('은행 내역 올리기'),
+                  ),
+              ],
+            ),
+          ),
+        const Divider(height: 1),
+        Expanded(
+          child: switch (size) {
+            // 데스크톱: [표 | 상세 400] 나란히.
+            WindowSize.expanded => Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: table),
+                if (selected != null) ...[
+                  const VerticalDivider(width: 1),
+                  SizedBox(width: 400, child: detailOf(selected)),
+                ],
+              ],
+            ),
+            // 태블릿: 상세가 표 폭을 뺏지 않게 오른쪽에 겹쳐 띄운다.
+            WindowSize.medium => Stack(
+              children: [
+                Positioned.fill(child: table),
+                if (selected != null)
+                  Positioned(
+                    top: 0,
+                    bottom: 0,
+                    right: 0,
+                    width: 400,
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: AppColors.surface,
+                        border: Border(
+                          left: BorderSide(color: AppColors.border),
+                        ),
+                      ),
+                      child: detailOf(selected),
+                    ),
+                  ),
+              ],
+            ),
+            // 휴대폰: 표 대신 두 줄짜리 카드. 누르면 상세가 화면을 채운다(위 PopScope).
+            WindowSize.compact =>
+              shown.isEmpty
+                  ? table
+                  : ListView.separated(
+                      itemCount: shown.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final r = shown[i];
+                        return _RegCard(
+                          r: r,
+                          q: quotes[r.id]!,
+                          checked: checked.contains(r.id),
+                          onTap: () => setState(() => selectedId = r.id),
+                          onCheck: (v) => setState(
+                            () => v ? checked.add(r.id) : checked.remove(r.id),
+                          ),
+                        );
+                      },
+                    ),
+          },
+        ),
+      ],
+    );
+  }
+
+  /// 휴대폰 도구 줄: [검색] / [상태 칩 가로 스크롤] / [선택 입금 확인 | ⋮].
+  /// 버튼 여섯 개를 늘어놓으면 화면 절반이 버튼이라, 자주 쓰는 하나만 꺼내고 나머지는 메뉴로.
+  Widget _compactTools(
+    Gathering g,
+    Map<String, Quote> quotes,
+    List<Widget> chips,
+  ) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.search, size: 18),
+            hintText: '이름 · 입금자명 · 휴대폰',
+          ),
+          onChanged: (v) => setState(() => query = v),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
             children: [
-              for (final f in [null, ...RegStatus.values])
-                ChoiceChip(
-                  label: Text(
-                    '${f?.labelFor(free: g.fee.isFree) ?? '전체'} ${all.where((r) => f == null || r.status == f).length}',
-                  ),
-                  selected: filter == f,
-                  onSelected: (_) => setState(() => filter = f),
-                ),
-              if (g.asks('minister') || all.any(_hasMinister))
-                FilterChip(
-                  label: Text('사역자 ${all.where(_hasMinister).length}'),
-                  selected: ministerOnly,
-                  onSelected: (v) => setState(() => ministerOnly = v),
-                ),
-              SizedBox(
-                width: 260,
-                child: TextField(
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search, size: 18),
-                    hintText: '이름 · 입금자명 · 휴대폰',
-                  ),
-                  onChanged: (v) => setState(() => query = v),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: loading ? null : _load,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('새로고침'),
-              ),
-              OutlinedButton.icon(
-                onPressed: busy ? null : () => _add(g),
-                icon: const Icon(Icons.person_add_alt, size: 18),
-                label: const Text('신청 추가'),
-              ),
-              OutlinedButton.icon(
-                onPressed: busy ? null : () => _paste(g),
-                icon: const Icon(Icons.content_paste, size: 18),
-                label: const Text('붙여넣기 추가'),
-              ),
-              FilledButton.icon(
+              for (final (i, c) in chips.indexed) ...[
+                if (i > 0) const SizedBox(width: 8),
+                c,
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
                 onPressed: checked.isEmpty || busy
                     ? null
                     : () => _bulkConfirm(quotes),
                 icon: const Icon(Icons.done_all, size: 18),
                 label: Text('선택 ${checked.length}건 입금 확인'),
               ),
-              if (!g.fee.isFree)
-                OutlinedButton.icon(
-                  onPressed: busy ? null : () => _importBank(quotes),
-                  icon: const Icon(Icons.upload_file, size: 18),
-                  label: const Text('은행 내역 올리기'),
+            ),
+            const SizedBox(width: 4),
+            PopupMenuButton<String>(
+              tooltip: '더보기',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (v) => switch (v) {
+                'refresh' => _load(),
+                'add' => _add(g),
+                'paste' => _paste(g),
+                _ => _importBank(quotes),
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'refresh',
+                  enabled: !loading,
+                  child: const Text('새로고침'),
                 ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: shown.isEmpty
-                    ? EmptyNotice(
-                        icon: Icons.inbox_outlined,
-                        text: all.isEmpty
-                            ? '아직 신청이 없습니다.\n[집회 설정]에서 신청 링크를 복사해 공지하세요.'
-                            : '조건에 맞는 신청이 없습니다.',
-                      )
-                    // 창이 좁거나 오른쪽 상세가 열려 폭이 모자라면 열을 찌그러뜨리지 않고 가로로 굴린다.
-                    : LayoutBuilder(
-                        builder: (context, box) => SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: box.maxWidth < _minTableWidth
-                                ? _minTableWidth
-                                : box.maxWidth,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                const _Header(),
-                                const Divider(height: 1),
-                                Expanded(
-                                  child: ListView.separated(
-                                    itemCount: shown.length,
-                                    separatorBuilder: (_, _) =>
-                                        const Divider(height: 1),
-                                    itemBuilder: (context, i) {
-                                      final r = shown[i];
-                                      return _RegRow(
-                                        r: r,
-                                        q: quotes[r.id]!,
-                                        selected: r.id == selectedId,
-                                        checked: checked.contains(r.id),
-                                        onTap: () => setState(
-                                          () => selectedId = selectedId == r.id
-                                              ? null
-                                              : r.id,
-                                        ),
-                                        onCheck: (v) => setState(
-                                          () => v
-                                              ? checked.add(r.id)
-                                              : checked.remove(r.id),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-              ),
-              if (selected != null) ...[
-                const VerticalDivider(width: 1),
-                SizedBox(
-                  width: 400,
-                  child: _Detail(
-                    r: selected,
-                    q: quotes[selected.id]!,
-                    busy: busy,
-                    onClose: () => setState(() => selectedId = null),
-                    onConfirm: () => _confirm(selected, quotes[selected.id]!),
-                    onRevert: () => _patch(selected, {
-                      'status': 'pending',
-                      'paid': 0,
-                      'paid_at': null,
-                      'paid_ref': null,
-                    }, '입금대기로 되돌렸습니다.'),
-                    onCancel: () => _cancel(selected),
-                    onResetPin: () => _resetPin(selected),
-                    onDelete: () => _delete(selected),
-                    onDiscount: (d) => _patch(selected, {
-                      'discount_pct': d.pct,
-                      'discount_amount': d.amount,
-                      'discount_note': d.note,
-                    }, d.isEmpty ? '지정 할인을 해제했습니다.' : '지정 할인을 적용했습니다.'),
+                PopupMenuItem(
+                  value: 'add',
+                  enabled: !busy,
+                  child: const Text('신청 추가'),
+                ),
+                PopupMenuItem(
+                  value: 'paste',
+                  enabled: !busy,
+                  child: const Text('붙여넣기 추가'),
+                ),
+                if (!g.fee.isFree)
+                  PopupMenuItem(
+                    value: 'bank',
+                    enabled: !busy,
+                    child: const Text('은행 내역 올리기'),
                   ),
-                ),
               ],
-            ],
-          ),
+            ),
+          ],
         ),
       ],
-    );
-  }
+    ),
+  );
 
   /// 전화·현장 접수. 신청 웹과 같은 신청서로 받아 입금대기로 넣고, 그 신청을 열어 둔다 —
   /// 입금 확인·지정 할인은 다른 신청과 똑같이 여기서 한다.
@@ -1208,6 +1353,136 @@ class _RegRow extends StatelessWidget {
   }
 }
 
+/// 휴대폰용 신청 한 줄. 표의 열 9개를 두 줄로 접는다.
+/// 1줄: [체크] 신청자 · 사역자 · 상태 / 2줄: 신청일 · 일정 · 금액 · 경고.
+class _RegCard extends StatelessWidget {
+  const _RegCard({
+    required this.r,
+    required this.q,
+    required this.checked,
+    required this.onTap,
+    required this.onCheck,
+  });
+  final Registration r;
+  final Quote q;
+  final bool checked;
+  final VoidCallback onTap;
+  final ValueChanged<bool> onCheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final mismatch = r.quoted != q.beforeDiscount;
+    final diff = r.status == RegStatus.confirmed ? r.paid - q.total : 0;
+    final free = current.value?.freeFor(q) ?? false;
+    const muted = TextStyle(fontSize: 12, color: AppColors.textMuted);
+    return Material(
+      color: AppColors.surface,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
+          child: Row(
+            children: [
+              // 입금대기만 체크할 수 있다. 자리는 늘 비워 둬서 이름 줄이 흔들리지 않게.
+              SizedBox(
+                width: 48,
+                child: r.status == RegStatus.pending
+                    ? Checkbox(
+                        value: checked,
+                        onChanged: (v) => onCheck(v == true),
+                      )
+                    : null,
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        // 이름이 길면 이름만 줄이고 상태 배지는 늘 오른쪽 끝에.
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  r.applicant,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              if (_hasMinister(r))
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 6),
+                                  child: Text(
+                                    '사역자',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.brand,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        RegStatusBadge(r.status, free: free),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${mdw(r.createdAt)} 신청 · ${_stay(q)}',
+                            overflow: TextOverflow.ellipsis,
+                            style: muted,
+                          ),
+                        ),
+                        if (mismatch)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.warning_amber,
+                              size: 16,
+                              color: AppColors.warn,
+                              semanticLabel: '신청 때 금액과 지금 계산 금액이 다릅니다',
+                            ),
+                          ),
+                        if (diff != 0)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.error_outline,
+                              size: 16,
+                              color: AppColors.danger,
+                              semanticLabel: '입금액이 계산 금액과 다릅니다',
+                            ),
+                          ),
+                        const SizedBox(width: 8),
+                        Text(
+                          q.freeDayOnly ? '무료' : won(q.total),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: _tabular,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Detail extends StatelessWidget {
   const _Detail({
     required this.r,
@@ -1267,10 +1542,7 @@ class _Detail extends StatelessWidget {
                 ),
               ),
             ),
-            RegStatusBadge(
-              r.status,
-              free: current.value?.freeFor(q) ?? false,
-            ),
+            RegStatusBadge(r.status, free: current.value?.freeFor(q) ?? false),
             IconButton(
               tooltip: '닫기',
               icon: const Icon(Icons.close),
@@ -1459,18 +1731,71 @@ class BankPreviewState extends State<BankPreview> {
   Widget _row(BankMatch m) {
     final taken = picked.any((p) => p != m && p.tx == m.tx);
     final cell = TextStyle(fontSize: 13, fontFeatures: _tabular);
+    final check = Checkbox(
+      value: picked.contains(m),
+      onChanged: taken
+          ? null
+          : (v) => setState(() => v == true ? picked.add(m) : picked.remove(m)),
+    );
+    // 휴대폰: 열 다섯 개(≈ 520px)가 안 들어간다. 이름·사유 / 금액 / 입금 일시를 줄로 쌓는다.
+    if (windowSizeOf(context).isCompact) {
+      const muted = TextStyle(fontSize: 12, color: AppColors.textMuted);
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            check,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    m.reg.applicant,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  if (m.issue != null)
+                    Text(
+                      taken ? '${m.issue} · 다른 신청에 쓴 입금' : m.issue!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.warnInk,
+                      ),
+                    ),
+                  const SizedBox(height: 2),
+                  Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('받을 ${won(m.due)}', style: cell),
+                      Text(
+                        '입금 ${won(m.tx.amount)}',
+                        style: cell.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      m.tx.amount == m.due
+                          ? const Text(
+                              '일치',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.ok,
+                              ),
+                            )
+                          : _DiffText(m.tx.amount, m.due),
+                    ],
+                  ),
+                  Text('${_at(m.tx.at)} · ${m.tx.name}', style: muted),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Checkbox(
-            value: picked.contains(m),
-            onChanged: taken
-                ? null
-                : (v) => setState(
-                    () => v == true ? picked.add(m) : picked.remove(m),
-                  ),
-          ),
+          check,
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1539,21 +1864,35 @@ class BankPreviewState extends State<BankPreview> {
         if (m.issue != null) m,
     ];
     final head = const TextStyle(fontSize: 12, color: AppColors.textMuted);
-    return AlertDialog(
-      title: const Text('은행 내역으로 입금 확인'),
-      content: SizedBox(
-        width: 760,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              '입금 ${widget.txCount}건 중 확실 ${sure.length} · 확인 필요 ${check.length} · '
-              '맞는 신청 없음 ${widget.unmatched.length}. '
-              '입금자명과 금액(계산 금액)을 같이 맞춰 봤습니다.',
-              style: const TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 12),
+    final compact = windowSizeOf(context).isCompact;
+    return WideDialog(
+      title: '은행 내역으로 입금 확인',
+      width: 760,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('닫기'),
+        ),
+        FilledButton(
+          onPressed: picked.isEmpty
+              ? null
+              : () => Navigator.pop(context, picked.toList()),
+          child: Text('${picked.length}건 입금 확인'),
+        ),
+      ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '입금 ${widget.txCount}건 중 확실 ${sure.length} · 확인 필요 ${check.length} · '
+            '맞는 신청 없음 ${widget.unmatched.length}. '
+            '입금자명과 금액(계산 금액)을 같이 맞춰 봤습니다.',
+            style: const TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          // 휴대폰은 줄마다 금액을 글로 적으므로 열 머리글이 없다.
+          if (!compact) ...[
             Row(
               children: [
                 const SizedBox(width: 48),
@@ -1575,72 +1914,63 @@ class BankPreviewState extends State<BankPreview> {
               ],
             ),
             const Divider(height: 12),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  if (widget.matches.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Text('입금대기 신청과 맞는 입금이 없습니다.'),
-                    ),
-                  if (sure.isNotEmpty) SectionTitle('확실 ${sure.length}'),
-                  ...sure.map(_row),
-                  if (check.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    SectionTitle(
-                      '확인 필요 ${check.length}',
-                      subtitle: '사유를 보고 맞으면 체크하세요.',
-                    ),
-                    ...check.map(_row),
-                  ],
-                  if (widget.unmatched.isNotEmpty)
-                    ExpansionTile(
-                      // 맞춘 게 없으면 왜 안 맞았는지 바로 보이게 펼쳐 둔다.
-                      initiallyExpanded: widget.matches.isEmpty,
-                      tilePadding: EdgeInsets.zero,
-                      subtitle: const Text(
-                        '입금자명이 신청자·입금자명과 다르거나, 신청한 날보다 앞선 거래입니다(앞선 거래는 대조하지 않습니다).',
-                        style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                      ),
-                      title: Text(
-                        '맞는 신청이 없는 입금 ${widget.unmatched.length}건',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      children: [
-                        for (final t in widget.unmatched)
-                          ListTile(
-                            dense: true,
-                            title: Text(t.name.isEmpty ? '(입금자 없음)' : t.name),
-                            subtitle: Text(_at(t.at)),
-                            trailing: Text(
-                              won(t.amount),
-                              style: const TextStyle(fontFeatures: _tabular),
-                            ),
-                          ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
           ],
-        ),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                if (widget.matches.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text('입금대기 신청과 맞는 입금이 없습니다.'),
+                  ),
+                if (sure.isNotEmpty) SectionTitle('확실 ${sure.length}'),
+                ...sure.map(_row),
+                if (check.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SectionTitle(
+                    '확인 필요 ${check.length}',
+                    subtitle: '사유를 보고 맞으면 체크하세요.',
+                  ),
+                  ...check.map(_row),
+                ],
+                if (widget.unmatched.isNotEmpty)
+                  ExpansionTile(
+                    // 맞춘 게 없으면 왜 안 맞았는지 바로 보이게 펼쳐 둔다.
+                    initiallyExpanded: widget.matches.isEmpty,
+                    tilePadding: EdgeInsets.zero,
+                    subtitle: const Text(
+                      '입금자명이 신청자·입금자명과 다르거나, 신청한 날보다 앞선 거래입니다(앞선 거래는 대조하지 않습니다).',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    title: Text(
+                      '맞는 신청이 없는 입금 ${widget.unmatched.length}건',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    children: [
+                      for (final t in widget.unmatched)
+                        ListTile(
+                          dense: true,
+                          title: Text(t.name.isEmpty ? '(입금자 없음)' : t.name),
+                          subtitle: Text(_at(t.at)),
+                          trailing: Text(
+                            won(t.amount),
+                            style: const TextStyle(fontFeatures: _tabular),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('닫기'),
-        ),
-        FilledButton(
-          onPressed: picked.isEmpty
-              ? null
-              : () => Navigator.pop(context, picked.toList()),
-          child: Text('${picked.length}건 입금 확인'),
-        ),
-      ],
     );
   }
 }

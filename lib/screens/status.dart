@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../responsive.dart';
 import '../theme.dart';
 import '../widgets/room_board.dart';
 import 'assign.dart' show showRoomOccupants, pendingSelection;
@@ -16,9 +17,10 @@ class StatusScreen extends StatelessWidget {
     final free = e.rooms
         .map(store.freeSeats)
         .fold(0, (s, x) => s + (x > 0 ? x : 0));
+    final compact = windowSizeOf(context).isCompact;
 
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(compact ? 12 : 20),
       children: [
         Wrap(
           spacing: 12,
@@ -38,126 +40,152 @@ class StatusScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 24),
-        Row(
-          children: [
-            const Expanded(
-              child: SectionTitle('전체 구조', subtitle: '타일을 클릭하면 그 방 인원이 나옵니다'),
-            ),
-            const SizedBox(width: 16),
-            const RoomLegend(),
-          ],
-        ),
+        // 휴대폰은 제목 옆에 범례가 들어갈 폭이 없어서 아래 줄로 내린다.
+        if (compact) ...[
+          const SectionTitle('전체 구조', subtitle: '타일을 누르면 그 방 인원이 나옵니다'),
+          const SizedBox(height: 8),
+          const RoomLegend(),
+        ] else
+          const Row(
+            children: [
+              Expanded(
+                child: SectionTitle('전체 구조', subtitle: '타일을 클릭하면 그 방 인원이 나옵니다'),
+              ),
+              SizedBox(width: 16),
+              RoomLegend(),
+            ],
+          ),
         const SizedBox(height: 10),
         RoomBoard(rooms: e.rooms, onTap: (r) => showRoomOccupants(context, r)),
         const SizedBox(height: 24),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        _SideBySide(
+          vertical: compact,
           children: [
-            Expanded(
-              child: _Panel(
-                title: '미배정 인원',
-                count: unassigned.length,
-                action: unassigned.isEmpty
-                    ? null
-                    : TextButton(
-                        onPressed: () {
-                          pendingSelection
-                            ..clear()
-                            ..addAll(unassigned.map((a) => a.id));
-                          tabIndex.value = assignTab;
-                        },
-                        child: const Text('전체 선택해서 배정'),
-                      ),
+            _Panel(
+              title: '미배정 인원',
+              count: unassigned.length,
+              action: unassigned.isEmpty
+                  ? null
+                  : TextButton(
+                      onPressed: () {
+                        pendingSelection
+                          ..clear()
+                          ..addAll(unassigned.map((a) => a.id));
+                        tabIndex.value = assignTab;
+                      },
+                      child: const Text('전체 선택해서 배정'),
+                    ),
+              children: [
+                for (final a in unassigned.take(200))
+                  ListTile(
+                    dense: true,
+                    title: Row(
+                      children: [
+                        Text(
+                          a.name,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(width: 6),
+                        GenderBadge(a.gender),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${a.age}세',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    subtitle: Text(
+                      [
+                        if ((a.zone ?? '').isNotEmpty) '존 ${a.zone}',
+                        if ((a.cell ?? '').isNotEmpty) '셀 ${a.cell}',
+                      ].join('  ·  '),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    onTap: () {
+                      pendingSelection
+                        ..clear()
+                        ..add(a.id);
+                      tabIndex.value = assignTab;
+                    },
+                  ),
+                if (unassigned.length > 200)
+                  const ListTile(dense: true, title: Text('... 이하 생략')),
+              ],
+            ),
+            () {
+              final spare =
+                  e.rooms.where((r) => store.freeSeats(r) > 0).toList()..sort(
+                    (a, b) => store.freeSeats(b).compareTo(store.freeSeats(a)),
+                  );
+              return _Panel(
+                title: '여유 있는 방',
+                count: spare.length,
                 children: [
-                  for (final a in unassigned.take(200))
+                  for (final r in spare)
                     ListTile(
                       dense: true,
                       title: Row(
                         children: [
                           Text(
-                            a.name,
+                            '${r.label}호',
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(width: 6),
-                          GenderBadge(a.gender),
-                          const SizedBox(width: 6),
-                          Text(
-                            '${a.age}세',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
+                          if (r.gender != null) GenderBadge(r.gender!),
                         ],
                       ),
                       subtitle: Text(
-                        [
-                          if ((a.zone ?? '').isNotEmpty) '존 ${a.zone}',
-                          if ((a.cell ?? '').isNotEmpty) '셀 ${a.cell}',
-                        ].join('  ·  '),
+                        '${store.peakOccupancy(r)}/${r.capacity}',
                         style: const TextStyle(fontSize: 11),
                       ),
-                      onTap: () {
-                        pendingSelection
-                          ..clear()
-                          ..add(a.id);
-                        tabIndex.value = assignTab;
-                      },
-                    ),
-                  if (unassigned.length > 200)
-                    const ListTile(dense: true, title: Text('... 이하 생략')),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: () {
-                final spare =
-                    e.rooms.where((r) => store.freeSeats(r) > 0).toList()..sort(
-                      (a, b) =>
-                          store.freeSeats(b).compareTo(store.freeSeats(a)),
-                    );
-                return _Panel(
-                  title: '여유 있는 방',
-                  count: spare.length,
-                  children: [
-                    for (final r in spare)
-                      ListTile(
-                        dense: true,
-                        title: Row(
-                          children: [
-                            Text(
-                              '${r.label}호',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            if (r.gender != null) GenderBadge(r.gender!),
-                          ],
+                      trailing: Text(
+                        '+${store.freeSeats(r)}',
+                        style: const TextStyle(
+                          color: AppColors.ok,
+                          fontWeight: FontWeight.w700,
                         ),
-                        subtitle: Text(
-                          '${store.peakOccupancy(r)}/${r.capacity}',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                        trailing: Text(
-                          '+${store.freeSeats(r)}',
-                          style: const TextStyle(
-                            color: AppColors.ok,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        onTap: () => showRoomOccupants(context, r),
                       ),
-                  ],
-                );
-              }(),
-            ),
+                      onTap: () => showRoomOccupants(context, r),
+                    ),
+                ],
+              );
+            }(),
           ],
         ),
       ],
     );
   }
+}
+
+/// 패널 두 장을 나란히. 휴대폰은 폭이 모자라 위아래로 쌓는다.
+class _SideBySide extends StatelessWidget {
+  const _SideBySide({required this.vertical, required this.children});
+  final bool vertical;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => vertical
+      ? Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (i, c) in children.indexed) ...[
+              if (i > 0) const SizedBox(height: 16),
+              c,
+            ],
+          ],
+        )
+      : Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final (i, c) in children.indexed) ...[
+              if (i > 0) const SizedBox(width: 16),
+              Expanded(child: c),
+            ],
+          ],
+        );
 }
 
 class _Panel extends StatelessWidget {

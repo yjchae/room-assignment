@@ -224,6 +224,35 @@ void main() {
       expect(find.textContaining('다른 신청에 쓴 입금'), findsOneWidget);
     });
 
+    testWidgets('미리보기: 휴대폰에서는 전체 화면, 줄은 금액을 글로 적어 접는다', (t) async {
+      final r = matchDeposits(
+        txs,
+        [reg('a', '홍길동'), reg('b', '홍길동'), reg('c', '김철수')],
+        {'a': 415000, 'b': 415000, 'c': 210000},
+      );
+      t.view.physicalSize = const Size(390, 844);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      await t.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BankPreview(
+              matches: r.matches,
+              unmatched: r.unmatched,
+              txCount: txs.length,
+            ),
+          ),
+        ),
+      );
+      expect(t.takeException(), isNull);
+      expect(find.byType(CloseButton), findsOneWidget);
+      expect(find.text('받을 금액'), findsNothing); // 열 머리글 대신 줄마다 글로
+      expect(find.textContaining('받을 '), findsWidgets);
+      await t.tap(find.byType(Checkbox).first);
+      await t.pump();
+      expect(find.text('1건 입금 확인'), findsOneWidget);
+    });
+
     test('신청일 전 입금, 이미 다른 신청에 쓴 입금은 보지 않는다', () {
       final late = matchDeposits(
         txs,

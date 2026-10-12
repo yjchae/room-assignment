@@ -497,7 +497,10 @@ class _AdminRequestsDialogState extends State<_AdminRequestsDialog> {
 
 /// 앱바의 운영자 계정 버튼. 로그인 전엔 [운영자 로그인], 후엔 이메일 + 로그아웃 메뉴.
 class AdminButton extends StatelessWidget {
-  const AdminButton({super.key});
+  const AdminButton({super.key, this.iconOnly = false});
+
+  /// 휴대폰 앱바: 이메일 대신 아이콘만 (이메일은 메뉴 맨 위에 보인다).
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder(
@@ -505,6 +508,13 @@ class AdminButton extends StatelessWidget {
     builder: (context, _, _) {
       final email = remote.adminEmail;
       if (email == null) {
+        if (iconOnly) {
+          return IconButton(
+            tooltip: '운영자 로그인',
+            icon: const Icon(Icons.login, size: 20, color: AppColors.textMuted),
+            onPressed: () => ensureAdmin(context),
+          );
+        }
         return TextButton.icon(
           style: TextButton.styleFrom(foregroundColor: AppColors.textMuted),
           icon: const Icon(Icons.login, size: 16),
@@ -529,10 +539,15 @@ class AdminButton extends StatelessWidget {
             Navigator.of(context).popUntil((r) => r.isFirst);
           }
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'approve', child: Text('운영자 승인')),
-          PopupMenuItem(value: 'pw', child: Text('비밀번호 변경')),
-          PopupMenuItem(value: 'out', child: Text('로그아웃')),
+        itemBuilder: (_) => [
+          if (iconOnly)
+            PopupMenuItem(
+              enabled: false,
+              child: Text(email, style: const TextStyle(fontSize: 13)),
+            ),
+          const PopupMenuItem(value: 'approve', child: Text('운영자 승인')),
+          const PopupMenuItem(value: 'pw', child: Text('비밀번호 변경')),
+          const PopupMenuItem(value: 'out', child: Text('로그아웃')),
         ],
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -544,14 +559,16 @@ class AdminButton extends StatelessWidget {
                 size: 18,
                 color: AppColors.textMuted,
               ),
-              const SizedBox(width: 6),
-              Text(
-                email,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppColors.textMuted,
+              if (!iconOnly) ...[
+                const SizedBox(width: 6),
+                Text(
+                  email,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textMuted,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -627,7 +644,10 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).
       // 로그인 전이면 권한을 모르는 것이지 "맡은 집회가 없는" 게 아니라서 거르지 않는다.
       if (signed && !scope.full) {
-        list = [for (final g in list) if (scope.gatherings.contains(g.id)) g];
+        list = [
+          for (final g in list)
+            if (scope.gatherings.contains(g.id)) g,
+        ];
       }
       counts = remote.signedIn ? await remote.registrationCounts() : {};
     } catch (e) {
@@ -767,9 +787,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('기간'),
-                    trailing: Text(
-                      '${start.year}-${mdw(start)} ~ ${mdw(end)}',
-                    ),
+                    trailing: Text('${start.year}-${mdw(start)} ~ ${mdw(end)}'),
                     onTap: () async {
                       final r = await pickRange(context, start, end);
                       if (r == null) return;
