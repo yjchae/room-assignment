@@ -8,6 +8,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'gathering.dart';
 import 'models.dart';
 import 'remote.dart';
+import 'responsive.dart';
 import 'screens/assign.dart';
 import 'screens/attendees.dart';
 import 'screens/duties.dart';
@@ -61,6 +62,15 @@ class App extends StatelessWidget {
       locale: const Locale('ko'),
       supportedLocales: const [Locale('ko')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      // 휴대폰·태블릿이면 터치 영역·다이얼로그 여백을 넓힌다. 데스크톱은 그대로.
+      builder: (context, child) => Theme(
+        data: adaptTheme(
+          Theme.of(context),
+          touch: isTouchDevice,
+          size: windowSizeOf(context),
+        ),
+        child: child!,
+      ),
       home: const Gate(),
     );
   }
@@ -100,72 +110,191 @@ class Shell extends StatelessWidget {
   static (IconData, String) dest(int i) {
     final (icon, label) = _dest[i];
     if (current.value?.isHomestay != true) return (icon, label);
-    return (icon, switch (label) {
-      '방 관리' => '가정 관리',
-      '방배정' => '가정 배정',
-      _ => label,
-    });
+    return (
+      icon,
+      switch (label) {
+        '방 관리' => '가정 관리',
+        '방배정' => '가정 배정',
+        _ => label,
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([store, current, signInCount]),
-      builder: (context, _) => Scaffold(
-        appBar: AppBar(
-          titleSpacing: Navigator.canPop(context) ? 0 : 20,
-          title: Text(store.event.name, overflow: TextOverflow.ellipsis),
-          shape: const Border(bottom: BorderSide(color: AppColors.border)),
-          actions: [
-            TextButton.icon(
-              style: TextButton.styleFrom(foregroundColor: AppColors.textMuted),
-              icon: const Icon(Icons.event_outlined, size: 16),
-              label: Text(
-                '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}',
-                style: const TextStyle(fontSize: 13, fontFeatures: tabular),
-              ),
-              // 날짜·이름은 집회 설정(서버)에서 바꾼다. 여기서 바꾸면 신청 웹과 어긋난다.
-              onPressed: () => tabIndex.value = settingsTab,
-            ),
-            const SizedBox(width: 4),
-            const BackupButton(),
-            const SizedBox(width: 4),
-            const AdminButton(),
-            const SizedBox(width: 12),
-          ],
-        ),
-        body: Column(
-          children: [
-            if (store.loadError != null || store.saveError != null)
-              _Warning(store.loadError ?? store.saveError!),
-            Expanded(
-              child: Row(
-                children: [
-                  ValueListenableBuilder(
-                    valueListenable: tabIndex,
-                    builder: (context, index, _) => _SideNav(index),
-                  ),
-                  const VerticalDivider(width: 1),
-                  Expanded(
-                    child: ValueListenableBuilder(
-                      valueListenable: tabIndex,
-                      builder: (context, index, _) => _page(index),
+      animation: Listenable.merge([store, current, signInCount, tabIndex]),
+      builder: (context, _) {
+        final size = windowSizeOf(context);
+        final compact = size.isCompact;
+        final index = tabIndex.value;
+        final dates =
+            '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}';
+        // 날짜·이름은 집회 설정(서버)에서 바꾼다. 여기서 바꾸면 신청 웹과 어긋난다.
+        void openSettings() => tabIndex.value = settingsTab;
+        return Scaffold(
+          // 휴대폰: 메뉴는 햄버거 뒤 Drawer. 탭이 9개라 하단 NavigationBar(5개 권장)는 안 쓴다.
+          drawer: compact
+              ? Drawer(
+                  width: 264,
+                  backgroundColor: AppColors.surface,
+                  shape: const RoundedRectangleBorder(),
+                  child: SafeArea(
+                    child: _SideNav(
+                      index,
+                      width: null,
+                      header: _DrawerHeader(dates: dates),
+                      onPicked: () => Navigator.of(context).pop(),
                     ),
                   ),
-                ],
+                )
+              : null,
+          appBar: AppBar(
+            // 휴대폰에서는 뒤로 가기 자리를 메뉴가 쓴다. 집회 목록으로 가는 길은 Drawer 머리에 있다.
+            leading: compact
+                ? Builder(
+                    builder: (context) => IconButton(
+                      tooltip: '메뉴',
+                      icon: const Icon(Icons.menu),
+                      onPressed: () => Scaffold.of(context).openDrawer(),
+                    ),
+                  )
+                : null,
+            titleSpacing: compact || Navigator.canPop(context) ? 0 : 20,
+            // 휴대폰은 폭이 좁아 집회 이름 대신 지금 탭 이름을 적는다 (집회 이름은 Drawer 머리에).
+            title: Text(
+              compact ? dest(index).$2 : store.event.name,
+              overflow: TextOverflow.ellipsis,
+            ),
+            shape: const Border(bottom: BorderSide(color: AppColors.border)),
+            actions: compact
+                ? [
+                    IconButton(
+                      tooltip: dates,
+                      icon: const Icon(
+                        Icons.event_outlined,
+                        size: 20,
+                        color: AppColors.textMuted,
+                      ),
+                      onPressed: openSettings,
+                    ),
+                    const BackupButton(iconOnly: true),
+                    const AdminButton(iconOnly: true),
+                    const SizedBox(width: 4),
+                  ]
+                : [
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.textMuted,
+                      ),
+                      icon: const Icon(Icons.event_outlined, size: 16),
+                      label: Text(
+                        dates,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontFeatures: tabular,
+                        ),
+                      ),
+                      onPressed: openSettings,
+                    ),
+                    const SizedBox(width: 4),
+                    const BackupButton(),
+                    const SizedBox(width: 4),
+                    const AdminButton(),
+                    const SizedBox(width: 12),
+                  ],
+          ),
+          body: Column(
+            children: [
+              if (store.loadError != null || store.saveError != null)
+                _Warning(store.loadError ?? store.saveError!),
+              Expanded(
+                child: compact
+                    ? _page(index)
+                    : Row(
+                        children: [
+                          // 태블릿은 아이콘만 있는 레일, 데스크톱은 이름까지 있는 메뉴.
+                          _SideNav(index, width: size.isExpanded ? 148 : 64),
+                          const VerticalDivider(width: 1),
+                          Expanded(child: _page(index)),
+                        ],
+                      ),
               ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 휴대폰 Drawer 맨 위: 집회 이름·기간과 집회 목록으로 돌아가는 길.
+class _DrawerHeader extends StatelessWidget {
+  const _DrawerHeader({required this.dates});
+  final String dates;
+
+  @override
+  Widget build(BuildContext context) {
+    // Drawer 의 context 로 pop 하면 Drawer 만 닫힌다. 집회 목록은 그 아래 화면이다.
+    final nav = Navigator.of(context);
+    final fromList = ModalRoute.of(context)?.isFirst == false;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            store.event.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.4,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            dates,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textMuted,
+              fontFeatures: tabular,
+            ),
+          ),
+          if (fromList) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.textMuted,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+              icon: const Icon(Icons.arrow_back, size: 16),
+              label: const Text('집회 목록', style: TextStyle(fontSize: 13)),
+              onPressed: () {
+                nav.pop(); // Drawer
+                nav.pop(); // 탭 화면
+              },
             ),
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
 /// 왼쪽 메뉴. 하는 순서대로 [준비 | 배정 | 스탭] 세 묶음.
+/// 데스크톱은 폭 148(아이콘+이름), 태블릿은 폭 64 레일(아이콘만), 휴대폰은 Drawer 안(폭 null = 꽉 채움).
 class _SideNav extends StatelessWidget {
-  const _SideNav(this.index);
+  const _SideNav(this.index, {required this.width, this.header, this.onPicked});
   final int index;
+  final double? width;
+
+  /// Drawer 맨 위에 넣을 집회 이름 등.
+  final Widget? header;
+
+  /// 메뉴를 누른 뒤 할 일 (Drawer 닫기).
+  final VoidCallback? onPicked;
 
   /// 숫자는 [Shell._dest] 의 탭 번호.
   static const _groups = [
@@ -174,26 +303,36 @@ class _SideNav extends StatelessWidget {
     ('스탭', [dutiesTab, dutyTasksTab]),
   ];
 
+  bool get _rail => width != null && width! < 100;
+
   @override
   Widget build(BuildContext context) => Container(
-    width: 148,
+    width: width,
     color: AppColors.surface,
     child: ListView(
-      padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
+      padding: EdgeInsets.fromLTRB(_rail ? 8 : 10, 4, _rail ? 8 : 10, 12),
       children: [
-        for (final (label, tabs) in _groups) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 16, 10, 6),
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textFaint,
+        ?header,
+        for (final (i, (label, tabs)) in _groups.indexed) ...[
+          // 레일은 묶음 이름이 들어갈 폭이 없어서 선으로만 나눈다.
+          if (_rail)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: i == 0 ? const SizedBox(height: 1) : const Divider(),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 16, 10, 6),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textFaint,
+                ),
               ),
             ),
-          ),
-          for (final i in tabs) _item(i),
+          for (final t in tabs) _item(t),
         ],
       ],
     ),
@@ -202,10 +341,16 @@ class _SideNav extends StatelessWidget {
   Widget _item(int i) {
     final on = i == index;
     final (icon, label) = Shell.dest(i);
-    return Padding(
+    final glyph = Icon(
+      icon,
+      size: _rail ? 20 : 18,
+      color: on ? AppColors.brand : AppColors.textMuted,
+    );
+    final item = Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Semantics(
         selected: on,
+        label: _rail ? label : null,
         child: Material(
           color: on ? AppColors.bg : AppColors.surface,
           shape: RoundedRectangleBorder(
@@ -213,36 +358,47 @@ class _SideNav extends StatelessWidget {
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(Radii.control),
-            onTap: () => tabIndex.value = i,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-              child: Row(
-                children: [
-                  Icon(
-                    icon,
-                    size: 18,
-                    color: on ? AppColors.brand : AppColors.textMuted,
-                  ),
-                  const SizedBox(width: 10),
-                  // 메뉴 폭이 고정이라 긴 이름은 자른다 (넘치면 RenderFlex 가 죽는다).
-                  Expanded(
-                    child: Text(
-                      label,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: on ? AppColors.text : AppColors.textMuted,
-                      ),
+            onTap: () {
+              tabIndex.value = i;
+              onPicked?.call();
+            },
+            child: _rail
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Center(child: glyph),
+                  )
+                : Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                    child: Row(
+                      children: [
+                        glyph,
+                        const SizedBox(width: 10),
+                        // 메뉴 폭이 고정이라 긴 이름은 자른다 (넘치면 RenderFlex 가 죽는다).
+                        Expanded(
+                          child: Text(
+                            label,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: on ? AppColors.text : AppColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
           ),
         ),
       ),
     );
+    // 레일은 이름이 안 보이니 마우스를 올리거나 길게 누르면 알려준다.
+    return _rail
+        ? Tooltip(message: label, preferBelow: false, child: item)
+        : item;
   }
 }
 
@@ -360,7 +516,10 @@ class Gate extends StatelessWidget {
 /// 앱바의 [백업]. 방배정(방·참석자·배정)을 JSON 파일로 내려받거나 파일로 되살린다.
 /// 인터넷이 끊겨도 내려받기는 된다 — 지금 화면에 있는 그대로 저장한다.
 class BackupButton extends StatelessWidget {
-  const BackupButton({super.key});
+  const BackupButton({super.key, this.iconOnly = false});
+
+  /// 휴대폰 앱바: 글자 없이 아이콘만.
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<String>(
@@ -375,19 +534,29 @@ class BackupButton extends StatelessWidget {
       PopupMenuItem(value: 'csv', child: Text('참석자 CSV로 내려받기 (엑셀)')),
       PopupMenuItem(value: 'restore', child: Text('JSON 파일로 되살리기')),
     ],
-    child: const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.save_alt_outlined, size: 16, color: AppColors.textMuted),
-          SizedBox(width: 6),
-          Text(
-            '백업',
-            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
-          ),
-        ],
-      ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: iconOnly
+          ? const Icon(
+              Icons.save_alt_outlined,
+              size: 20,
+              color: AppColors.textMuted,
+            )
+          : const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.save_alt_outlined,
+                  size: 16,
+                  color: AppColors.textMuted,
+                ),
+                SizedBox(width: 6),
+                Text(
+                  '백업',
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                ),
+              ],
+            ),
     ),
   );
 }
@@ -431,7 +600,9 @@ Future<void> _downloadCsv(BuildContext context) async {
     final saved = await FilePicker.saveFile(
       fileName: '${name}_참석자_${ymd(DateTime.now())}.csv',
       // BOM 이 있어야 엑셀이 한글을 UTF-8 로 읽는다.
-      bytes: utf8.encode('﻿${attendeesCsv(store.event, store.everyone(g, regs))}'),
+      bytes: utf8.encode(
+        '﻿${attendeesCsv(store.event, store.everyone(g, regs))}',
+      ),
       mimeType: 'text/csv',
       type: FileType.custom,
       allowedExtensions: ['csv'],

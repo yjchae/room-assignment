@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../gathering.dart' show mdw, ymd, Registration, RegStatus;
 import '../main.dart';
 import '../remote.dart';
+import '../responsive.dart';
 import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
@@ -107,6 +108,60 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     final list = store.search(query, people)
       ..retainWhere((a) => key == null || key(a) == pick!.$2)
       ..sort(_cmp);
+    final compact = windowSizeOf(context).isCompact;
+    final search = TextField(
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.search),
+        hintText: '이름 / 셀 / 존 / 전화 검색',
+        isDense: true,
+        border: OutlineInputBorder(),
+      ),
+      onChanged: (v) => setState(() => query = v),
+    );
+    final tools = <Widget>[
+      DropdownButton<String>(
+        value: sortKey,
+        onChanged: (v) => setState(() => sortKey = v!),
+        items: const [
+          DropdownMenuItem(value: 'name', child: Text('이름순')),
+          DropdownMenuItem(value: 'age', child: Text('나이순')),
+          DropdownMenuItem(value: 'cell', child: Text('셀순')),
+          DropdownMenuItem(value: 'zone', child: Text('존순')),
+          DropdownMenuItem(value: 'room', child: Text('방순')),
+        ],
+      ),
+      // 홈스테이는 신청이 참석자가 아니라 방(가정)이 된다 — 그 버튼은 [가정 관리]에 있다.
+      if (current.value?.isHomestay != true) ...[
+        Tooltip(
+          message: current.value == null
+              ? '서버에 연결된 집회에서만 쓸 수 있습니다'
+              : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.download_outlined, size: 18),
+            label: const Text('신청에서 가져오기'),
+            onPressed: current.value == null
+                ? null
+                : () async {
+                    await importRegistrations(context);
+                    _loadRegs();
+                  },
+          ),
+        ),
+      ],
+      if (pick != null) ...[
+        InputChip(
+          label: Text('${pick!.$1}: ${pick!.$2}'),
+          onDeleted: () => setState(() => pick = null),
+        ),
+      ],
+      Text(
+        homestay
+            // 기간을 나눈 아이는 조각이 여럿이라 사람 수로 센다.
+            ? '${list.map((a) => a.personId).toSet().length} / '
+                  '${people.map((a) => a.personId).toSet().length}명'
+            : '${list.length} / ${people.length}명',
+      ),
+    ];
     return Scaffold(
       // 한 명씩 추가는 [신청·입금]의 [신청 추가]로 한다 — 입금 확인까지 거쳐야 해서.
       // 홈스테이는 아이들이 신청이 아니라 명단으로 들어오니 여기서 바로 추가한다.
@@ -143,67 +198,27 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: '이름 / 셀 / 존 / 전화 검색',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (v) => setState(() => query = v),
+            // 휴대폰은 검색창이 한 줄을 다 쓰고, 나머지는 아래 줄에서 넘치면 다음 줄로.
+            child: compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      search,
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: tools,
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(child: search),
+                      for (final t in tools) ...[const SizedBox(width: 12), t],
+                    ],
                   ),
-                ),
-                const SizedBox(width: 12),
-                DropdownButton<String>(
-                  value: sortKey,
-                  onChanged: (v) => setState(() => sortKey = v!),
-                  items: const [
-                    DropdownMenuItem(value: 'name', child: Text('이름순')),
-                    DropdownMenuItem(value: 'age', child: Text('나이순')),
-                    DropdownMenuItem(value: 'cell', child: Text('셀순')),
-                    DropdownMenuItem(value: 'zone', child: Text('존순')),
-                    DropdownMenuItem(value: 'room', child: Text('방순')),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                // 홈스테이는 신청이 참석자가 아니라 방(가정)이 된다 — 그 버튼은 [가정 관리]에 있다.
-                if (current.value?.isHomestay != true) ...[
-                  Tooltip(
-                    message: current.value == null
-                        ? '서버에 연결된 집회에서만 쓸 수 있습니다'
-                        : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.download_outlined, size: 18),
-                      label: const Text('신청에서 가져오기'),
-                      onPressed: current.value == null
-                          ? null
-                          : () async {
-                              await importRegistrations(context);
-                              _loadRegs();
-                            },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-                if (pick != null) ...[
-                  InputChip(
-                    label: Text('${pick!.$1}: ${pick!.$2}'),
-                    onDeleted: () => setState(() => pick = null),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Text(
-                  homestay
-                      // 기간을 나눈 아이는 조각이 여럿이라 사람 수로 센다.
-                      ? '${list.map((a) => a.personId).toSet().length} / '
-                            '${people.map((a) => a.personId).toSet().length}명'
-                      : '${list.length} / ${people.length}명',
-                ),
-              ],
-            ),
           ),
           // 홈스테이는 날짜·존·셀 통계가 뜻이 없다 (아이들은 신청이 아니라 명단으로 들어온다).
           // 대신 아래 표가 누가 어느 집에서 언제 묵는지를 보여준다.
@@ -641,16 +656,31 @@ class _StatsPanel extends StatelessWidget {
   final ValueChanged<(String, String)> onPick;
 
   @override
-  Widget build(BuildContext context) => Row(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Expanded(flex: 2, child: _countCard('존')),
-      const SizedBox(width: 12),
-      Expanded(flex: 2, child: _countCard('셀')),
-      const SizedBox(width: 12),
-      Expanded(flex: 4, child: _ageGenderCard()),
-    ],
-  );
+  Widget build(BuildContext context) {
+    // 휴대폰은 카드 세 장이 한 줄에 안 들어간다. 폭을 정해 두고 옆으로 넘겨 본다.
+    if (windowSizeOf(context).isCompact) {
+      return ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          SizedBox(width: 260, child: _countCard('존')),
+          const SizedBox(width: 12),
+          SizedBox(width: 260, child: _countCard('셀')),
+          const SizedBox(width: 12),
+          SizedBox(width: 340, child: _ageGenderCard()),
+        ],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: 2, child: _countCard('존')),
+        const SizedBox(width: 12),
+        Expanded(flex: 2, child: _countCard('셀')),
+        const SizedBox(width: 12),
+        Expanded(flex: 4, child: _ageGenderCard()),
+      ],
+    );
+  }
 
   /// 값 이름 · 비율 막대 · 인원 한 줄씩. '없음'은 개수에 넣지 않는다. "셀 12개"
   Widget _countCard(String title) {
@@ -1277,7 +1307,10 @@ Future<void> _splitDialog(BuildContext context, Attendee a) async {
                     ? '이 날부터는 다른 집에서 묵습니다. 뒤쪽 기간은 미배정으로 떨어져 나오고, '
                           '[가정 배정]에서 다른 집에 넣으면 됩니다.'
                     : '이 날부터를 따로 떼어냅니다. 뒤쪽 기간은 미배정이 됩니다.',
-                style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textMuted,
+                ),
               ),
               const SizedBox(height: 8),
               ListTile(

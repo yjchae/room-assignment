@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../gathering.dart' show mdw;
 import '../main.dart';
 import '../models.dart';
+import '../responsive.dart';
 import '../theme.dart';
 
 /// 타일 사이 간격.
@@ -24,6 +25,13 @@ const _gutter = 60.0;
 /// 층 격자의 기본 칸 수. 방 자리(slot)가 이 폭을 기준으로 매겨지므로
 /// 보드를 그리는 쪽과 자리를 옮기는 쪽이 같은 값을 봐야 한다.
 const boardColumns = 10;
+
+/// 휴대폰에서 보드를 [목록]으로 볼지. 화면을 옮겨 다녀도 같은 보기가 유지되게 전역 하나.
+/// 저장하지 않는다 — 보기 방식일 뿐이라 방 자리(slot)와 무관하다.
+final boardAsList = ValueNotifier<bool>(true);
+
+/// 목록 보기에서 타일이 이보다 좁아지지 않게 한 줄 개수를 줄인다.
+const _listTile = 88.0;
 
 /// 홈스테이 가정이 신청서에서 고른 "받는 날". 중간에 안 받는 밤이 있으면
 /// 기간 대신 날짜를 하나씩 적는다 (기간으로 적으면 빈 날이 감춰진다).
@@ -235,6 +243,102 @@ class RoomBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 휴대폰은 10칸 격자(≈854px)가 안 들어간다. 칸 수를 줄이면 저장된 배치가 어긋나므로
+    // 격자는 그대로 두고, 층별로 방을 흘려 놓는 [목록] 보기를 따로 둔다 (PLAN_RESPONSIVE.md §4.1).
+    if (!windowSizeOf(context).isCompact || rooms.isEmpty) {
+      return _grid(context);
+    }
+    return ValueListenableBuilder(
+      valueListenable: boardAsList,
+      builder: (context, asList, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: SegmentedButton<bool>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: true,
+                  icon: Icon(Icons.view_agenda_outlined, size: 16),
+                  label: Text('목록'),
+                ),
+                ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.grid_view, size: 16),
+                  label: Text('격자'),
+                ),
+              ],
+              selected: {asList && !editingLayout},
+              // 자리 옮기기는 격자에서만 뜻이 있다.
+              onSelectionChanged: editingLayout
+                  ? null
+                  : (v) => boardAsList.value = v.first,
+            ),
+          ),
+          const SizedBox(height: 8),
+          asList && !editingLayout ? _list() : _grid(context),
+        ],
+      ),
+    );
+  }
+
+  /// 목록 보기: 층마다 [층 이름 · 방 수] 한 줄 + 방 타일을 폭에 맞춰 흘려 놓는다.
+  /// 빈 자리(복도·계단)는 그리지 않고, `layoutSlots` 도 거치지 않는다 — 아무것도 저장하지 않는다.
+  Widget _list() {
+    final floors = byFloorDesc(rooms);
+    final keys = floors.keys.toList();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(Radii.card),
+      ),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final n = ((c.maxWidth + _gap) / (_listTile + _gap)).floor().clamp(
+            1,
+            columns,
+          );
+          final w = (c.maxWidth - _gap * (n - 1)) / n;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final (i, e) in floors.entries.indexed) ...[
+                if (e.key.building != null &&
+                    (i == 0 || keys[i - 1].building != e.key.building))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      e.key.building!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(2, 12, 2, 8),
+                  child: _FloorLine(group: e.key, rooms: e.value),
+                ),
+                Wrap(
+                  spacing: _gap,
+                  runSpacing: _gap,
+                  children: [for (final r in e.value) _slot(e.key, r, 0, w)],
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _grid(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
@@ -488,6 +592,49 @@ class _DragGhost extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// 목록 보기의 층 한 줄: "3층  4실 · 6/16명".
+class _FloorLine extends StatelessWidget {
+  const _FloorLine({required this.group, required this.rooms});
+  final FloorGroup group;
+  final List<Room> rooms;
+
+  @override
+  Widget build(BuildContext context) {
+    final used = rooms.fold(0, (s, r) => s + store.peakOccupancy(r));
+    final cap = rooms.fold(0, (s, r) => s + r.capacity);
+    final name = group.floor != null
+        ? '${group.floor}층'
+        : current.value?.isHomestay == true
+        ? '가정'
+        : '기타';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(
+          name,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.5,
+            fontFeatures: tabular,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '${rooms.length}실 · $used/$cap명',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            fontFeatures: tabular,
+            color: AppColors.textMuted,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// 층 줄 왼쪽의 층 표시. [큰 층 숫자] → [방 수·인원].

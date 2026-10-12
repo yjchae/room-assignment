@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../auto_assign.dart';
 import '../main.dart';
+import '../responsive.dart';
 import '../theme.dart';
 
 class AutoAssignScreen extends StatefulWidget {
@@ -87,16 +88,36 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
   @override
   Widget build(BuildContext context) {
     final r = result;
-    return Row(
-      children: [
-        SizedBox(width: 380, child: _settings()),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: r == null
-              ? const Center(child: Text('규칙을 정하고 [미리보기]를 누르세요.'))
-              : _preview(r),
+    // 휴대폰은 규칙이 많고 미리보기 보드가 커서 지원하지 않는다 (PLAN_RESPONSIVE.md §9-2).
+    // 메뉴는 남겨 두고 어디서 하면 되는지만 알려 준다.
+    if (windowSizeOf(context).isCompact) {
+      return EmptyNotice(
+        icon: Icons.devices_outlined,
+        text: '자동배정은 태블릿·PC 에서 하세요.\n휴대폰에서는 [방배정]에서 직접 배정할 수 있습니다.',
+        action: OutlinedButton(
+          onPressed: () => tabIndex.value = assignTab,
+          child: const Text('방배정으로'),
         ),
-      ],
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, box) {
+        // 태블릿: 규칙 → 미리보기 두 단계. 미리보기의 [취소]가 규칙으로 돌아가는 길이다.
+        if (box.maxWidth < splitPaneFrom) {
+          return r == null ? _settings() : _preview(r);
+        }
+        return Row(
+          children: [
+            SizedBox(width: 380, child: _settings()),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: r == null
+                  ? const Center(child: Text('규칙을 정하고 [미리보기]를 누르세요.'))
+                  : _preview(r),
+            ),
+          ],
+        );
+      },
     );
   }
 

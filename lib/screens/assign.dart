@@ -6,6 +6,7 @@ import '../auto_assign.dart';
 import '../gathering.dart' show mdw;
 import '../main.dart';
 import '../models.dart';
+import '../responsive.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/room_board.dart';
@@ -58,6 +59,13 @@ class _AssignScreenState extends State<AssignScreen> {
   /// 방 자리 옮기기 모드. 켜면 타일을 끌어서 실제 건물 배치대로 놓을 수 있다.
   bool editingLayout = false;
 
+  /// 본문이 좁아(태블릿·휴대폰) [인원 고르기 → 방 고르기] 두 단계로 나눠 그리는 중인가.
+  /// 넓은 화면은 두 카드를 나란히 둔다. build 에서 폭을 보고 정한다.
+  bool narrow = false;
+
+  /// 두 단계일 때 지금 [방 고르기] 단계인가.
+  bool roomsStep = false;
+
   @override
   void initState() {
     super.initState();
@@ -108,22 +116,100 @@ class _AssignScreenState extends State<AssignScreen> {
         .where((a) => selected.contains(a.id))
         .toList();
 
-    // 회색 바탕 위에 [인원 카드 | 방 카드] 두 장.
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: SizedBox(width: 320, child: _left(filtered, chosen)),
+    return LayoutBuilder(
+      builder: (context, box) {
+        narrow = box.maxWidth < splitPaneFrom;
+        final pad = windowSizeOf(context).isCompact ? 12.0 : 16.0;
+        if (narrow) {
+          // 좁으면 한 번에 한 장씩, 각 단계가 폭을 다 쓴다 (PLAN_RESPONSIVE.md §4.2).
+          return Padding(
+            padding: EdgeInsets.fromLTRB(pad, pad, pad, 0),
+            child: roomsStep
+                ? _roomsStep(chosen)
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: _left(filtered, chosen)),
+                      _nextBar(chosen),
+                    ],
+                  ),
+          );
+        }
+        // 회색 바탕 위에 [인원 카드 | 방 카드] 두 장.
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: SizedBox(width: 320, child: _left(filtered, chosen)),
+              ),
+              const SizedBox(width: 16),
+              Expanded(child: _right(chosen)),
+            ],
           ),
-          const SizedBox(width: 16),
-          Expanded(child: _right(chosen)),
-        ],
-      ),
+        );
+      },
     );
   }
+
+  // --- 좁은 화면: 두 단계 ----------------------------------------------------
+
+  /// [인원 고르기] 단계 아래에 붙는 다음 단계 버튼. 아무도 안 골라도 방 현황은 볼 수 있게 열어 둔다.
+  Widget _nextBar(List<Attendee> chosen) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: FilledButton.icon(
+      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      onPressed: () => setState(() => roomsStep = true),
+      icon: const Icon(Icons.arrow_forward, size: 18),
+      label: Text(chosen.isEmpty ? '방 보기' : '${chosen.length}명 · 방 고르기'),
+    ),
+  );
+
+  /// [방 고르기] 단계. 위에 돌아가기 + 고른 사람 이름 줄 — 보드를 보는 동안 누구를 넣는지 잊지 않게.
+  Widget _roomsStep(List<Attendee> chosen) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          TextButton.icon(
+            onPressed: () => setState(() => roomsStep = false),
+            icon: const Icon(Icons.arrow_back, size: 18),
+            label: const Text('인원 고르기'),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: SizedBox(
+              height: 32,
+              child: chosen.isEmpty
+                  ? const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '고른 인원이 없습니다',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    )
+                  : ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final a in chosen) ...[
+                          Center(child: _CountPill(a.name, active: true)),
+                          const SizedBox(width: 6),
+                        ],
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Expanded(child: _right(chosen)),
+    ],
+  );
 
   // --- 왼쪽: 인원 고르기 -----------------------------------------------------
 
@@ -262,6 +348,8 @@ class _AssignScreenState extends State<AssignScreen> {
     final people = on ? chosen : [a];
     final row = _attendeeRowBody(a, on);
     final ghost = _DragChip(people);
+    // 두 단계로 나뉘면 끌어다 놓을 보드가 같은 화면에 없다. 눌러서 고르기만.
+    if (narrow) return row;
     // 태블릿은 길게 눌러야 끌린다 — 바로 끌리면 목록을 스크롤하려던 손가락이 사람을 끈다.
     return switch (defaultTargetPlatform) {
       TargetPlatform.iOS ||
@@ -578,6 +666,7 @@ class _AssignScreenState extends State<AssignScreen> {
 
   /// 방을 고르는 보조 도구: 호수 범위 입력 + 상태별 일괄 선택 + 자리 옮기기 + 범례.
   Widget _roomTools(List<Room> rooms) {
+    final compact = windowSizeOf(context).isCompact;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -614,7 +703,11 @@ class _AssignScreenState extends State<AssignScreen> {
               ),
               label: const Text('자리 옮기기'),
               selected: editingLayout,
-              onSelected: (v) => setState(() => editingLayout = v),
+              tooltip: compact ? '자리 옮기기는 태블릿·PC 에서 하세요' : null,
+              // 휴대폰에서 10칸 격자를 손가락으로 옮기면 실수가 많다. 숨기지 않고 끈다.
+              onSelected: compact
+                  ? null
+                  : (v) => setState(() => editingLayout = v),
             ),
             if (editingLayout)
               TextButton.icon(
@@ -635,6 +728,8 @@ class _AssignScreenState extends State<AssignScreen> {
             Text(
               editingLayout
                   ? '타일을 끌어서 실제 건물 자리로 옮기세요 · 다른 방 위에 놓으면 서로 바뀝니다'
+                  : narrow
+                  ? '누르면 선택 · 길게 누르면 인원 목록'
                   : '클릭=선택 · Shift+클릭=사이 방까지 한 번에 · 길게 누르면 인원 목록'
                         ' · 왼쪽 인원을 방에 끌어다 놓으면 바로 배정',
               style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
@@ -859,6 +954,14 @@ class _AssignScreenState extends State<AssignScreen> {
 
     applyAssignments(plan.assignments);
     store.commit();
+    // 두 단계 화면: 배정이 끝나면 다음 사람을 고르러 돌아간다.
+    if (narrow && mounted) {
+      setState(() {
+        roomsStep = false;
+        selected.clear();
+        selectedRooms.clear();
+      });
+    }
     if (!confirm && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -910,7 +1013,9 @@ class _AssignScreenState extends State<AssignScreen> {
               children: [
                 _line(
                   '신청한 날',
-                  hostWindowLabel(room).isEmpty ? _noWindow : hostWindowLabel(room),
+                  hostWindowLabel(room).isEmpty
+                      ? _noWindow
+                      : hostWindowLabel(room),
                 ),
                 _line(
                   '정원',
@@ -987,10 +1092,9 @@ class _AssignScreenState extends State<AssignScreen> {
     if (choice == null || choice == 'cancel') return;
 
     // 신청하지 않은 밤이 들어가면 먼저 알린다 (중간에 비워 둔 날은 기간만 보면 안 보인다).
-    final ok = await _confirmOutside(
-      [for (final a in chosen) (room, a)],
-      only: choice == 'all' ? null : (from, to),
-    );
+    final ok = await _confirmOutside([
+      for (final a in chosen) (room, a),
+    ], only: choice == 'all' ? null : (from, to));
     if (!ok) return;
 
     final String done;
@@ -1063,14 +1167,10 @@ class _AssignScreenState extends State<AssignScreen> {
                   const SizedBox(height: 12),
                   for (final (room, outside, applied) in rows.take(10)) ...[
                     _line('${room.label} · 안 받는 날', outside),
-                    _line(
-                      '  신청한 날',
-                      applied.isEmpty ? _noWindow : applied,
-                    ),
+                    _line('  신청한 날', applied.isEmpty ? _noWindow : applied),
                     const SizedBox(height: 6),
                   ],
-                  if (rows.length > 10)
-                    Text('… 외 ${rows.length - 10}곳'),
+                  if (rows.length > 10) Text('… 외 ${rows.length - 10}곳'),
                 ],
               ),
             ),

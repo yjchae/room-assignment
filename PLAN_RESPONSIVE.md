@@ -42,11 +42,11 @@ WindowSize windowSizeOf(BuildContext context) {
        : WindowSize.expanded;
 }
 
-/// 다이얼로그 내용 폭. 휴대폰에서는 화면 폭 - 48 로 줄인다.
-double dialogWidth(BuildContext context, double want) => ...;
+/// 본문이 이보다 좁으면 [패널 | 보드] 화면을 두 단계로 나눈다.
+const splitPaneFrom = 1100.0;
 
-/// 넓은 표·미리보기 다이얼로그(760·820). 휴대폰에서는 Dialog.fullscreen 으로.
-Future<T?> showAdaptiveDialogPage<T>(...);
+/// 터치 기기 밀도·휴대폰 다이얼로그 여백. MaterialApp.builder 에서 한 번 씌운다.
+ThemeData adaptTheme(ThemeData theme, {required bool touch, required WindowSize size});
 ```
 
 ## 3. 셸 (메뉴·앱바) — `lib/main.dart`
@@ -103,9 +103,10 @@ room-ui §3: **칸 수 10 은 절대 안 줄인다**(`Room.slot` 이 이 폭 기
 ### 4.5 참석자 `screens/attendees.dart`
 - 위쪽 `Row`(검색·정렬·가져오기·칩·인원수) — **지금도 좁은 창에서 넘칠 수 있는 곳**. `Wrap` 으로 바꾸고 compact 에서는 검색창 한 줄 + 나머지 한 줄.
 - 날짜 세그먼트: 이미 가로 스크롤이라 그대로.
-- 통계 패널(높이 224, 카드 3장 가로): medium 은 그대로, compact 는 "통계" 접힘 영역(`ExpansionTile`)에 카드 3장 세로.
-- FAB 두 개(`Row` 안 extended FAB): compact 에서는 FAB 하나 + 누르면 [붙여넣기 등록 | 참석자 추가] 메뉴.
-- 홈스테이 표(`_HomestayChart`): 가로 스크롤 그대로, 이름 칸은 왼쪽에 고정(스크롤해도 누구 줄인지 보이게).
+- 통계 패널(높이 224, 카드 3장 가로): medium 은 그대로, compact 는 카드 폭을 정해(260·260·340) 옆으로 넘겨 본다.
+  (처음엔 접힘 영역으로 세로로 쌓으려 했으나, 높이 224 를 그대로 두는 편이 아래 목록 자리가 덜 줄어서 바꿨다.)
+- FAB: 390 폭에서도 extended FAB 둘이 들어가서 그대로 둔다.
+- 홈스테이 표(`_HomestayChart`): 가로 스크롤 그대로. 이름 칸 왼쪽 고정은 **아직 안 함**(다음 단계 후보).
 
 ### 4.6 현황 `screens/status.dart`
 - [미배정 인원 | 남는 방] 두 패널 가로 → 본문 폭 < 900 이면 세로로 쌓기.
@@ -118,8 +119,9 @@ room-ui §3: **칸 수 10 은 절대 안 줄인다**(`Room.slot` 이 이 폭 기
 - 일정표·회비 표(`quote_table.dart`): 가로 스크롤 감싸기만.
 
 ### 4.8 다이얼로그 (모든 화면)
-- 고정 폭 `SizedBox(width: 320~460)` → `dialogWidth(context, 380)` 로 바꾼다.
-- 넓은 것(붙여넣기 820, 은행 760) → `showAdaptiveDialogPage` 로 compact 에서 전체 화면.
+- 고정 폭 `SizedBox(width: 320~460)` 는 다이얼로그 제약에 걸려 화면 폭까지 줄어든다. 그래서 화면마다 고치지 않고
+  휴대폰에서 다이얼로그 바깥 여백만 40 → 16 으로 줄였다(`adaptTheme`).
+- 넓은 것(붙여넣기 820, 은행 760)을 휴대폰에서 전체 화면으로 여는 건 **아직 안 함**(다음 단계 후보).
 
 ## 5. 터치 대응
 - 테마 `VisualDensity.compact`(theme.dart:200, 299)는 데스크톱 밀도용. compact·medium 에서는 `VisualDensity.standard` +
@@ -143,6 +145,8 @@ room-ui §3: **칸 수 10 은 절대 안 줄인다**(`Room.slot` 이 이 폭 기
 - 끝나면 Chrome 개발자도구 기기 모드 + 실제 휴대폰으로 `/admin/` 확인.
 
 ## 8. 진행 순서 (한 번에 하나씩, 단계마다 배포 가능하게)
+
+> 진행 상황: 1~5단계를 한 번에 구현했다. 남은 것은 §4.5 홈스테이 표 이름 칸 고정, §4.8 넓은 다이얼로그 전체 화면, 실기기 점검.
 
 | 단계 | 내용 | 효과 |
 |---|---|---|

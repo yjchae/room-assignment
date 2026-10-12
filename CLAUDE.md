@@ -85,5 +85,5 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 ## 규칙
 
-- UI 를 만들거나 고칠 때는 `.claude/skills/room-ui/SKILL.md`(room-ui 스킬)를 따른다. 색은 `AppColors` 에서만 가져오고, 폰트는 Pretendard 400~700 만 쓴다(w800 이상 금지). `Material` 에 `shape` 와 `borderRadius` 를 같이 주면 런타임 assert 가 난다.
+- UI 를 만들거나 고칠 때는 `.claude/skills/room-ui/SKILL.md`(room-ui 스킬)를 따른다. 운영자 화면은 휴대폰·태블릿에서도 열린다 — 크기 판정은 `lib/responsive.dart` 하나로 하고 규칙은 스킬 §8, 기획은 `PLAN_RESPONSIVE.md`. 색은 `AppColors` 에서만 가져오고, 폰트는 Pretendard 400~700 만 쓴다(w800 이상 금지). `Material` 에 `shape` 와 `borderRadius` 를 같이 주면 런타임 assert 가 난다.
 - 일부러 줄인 설계에는 `ponytail:` 주석으로 한계와 나중에 올릴 방법을 적는다(이미 쓰고 있는 관례). 상태관리·DI·라우터 패키지는 쓰지 않는다. 새 의존성을 넣기 전에 `pubspec.yaml` 에 이미 있는지 먼저 본다.
