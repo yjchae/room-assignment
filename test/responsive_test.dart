@@ -240,4 +240,69 @@ void main() {
       expect(find.textContaining('가족수양회'), findsWidgets);
     });
   }
+
+  testWidgets('홈스테이 표: 날짜를 옆으로 밀어도 이름은 남고, 세로 스크롤은 두 쪽이 같이 움직인다', (
+    tester,
+  ) async {
+    setView(tester, phone);
+    current.value = homestay();
+    store.event = Event(
+      name: '겨울 홈스테이',
+      startDate: DateTime(2026, 10, 1),
+      endDate: DateTime(2026, 10, 20),
+      attendees: [
+        for (var i = 0; i < 40; i++)
+          Attendee(
+            id: 'k$i',
+            name: '아이$i',
+            gender: 'M',
+            age: 10,
+            checkIn: DateTime(2026, 10, 1),
+            checkOut: DateTime(2026, 10, 20),
+          ),
+      ],
+    );
+    tabIndex.value = 3;
+    await pumpShell(tester);
+    final days = find.byWidgetPredicate(
+      (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+    );
+    await tester.drag(days.last, const Offset(-400, 0));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('아이0 ').hitTestable(), findsOneWidget);
+
+    final lists = find.byWidgetPredicate(
+      (w) => w is ListView && w.controller != null,
+    );
+    expect(lists, findsNWidgets(2));
+    await tester.drag(lists.first, const Offset(0, -300));
+    await tester.pumpAndSettle();
+    final offsets = [
+      for (final e in lists.evaluate())
+        (e.widget as ListView).controller!.offset,
+    ];
+    expect(offsets.first, greaterThan(0));
+    expect(offsets.last, offsets.first);
+  });
+
+  for (final (name, size, full) in [
+    ('휴대폰', phone, true),
+    ('데스크톱', desktop, false),
+  ]) {
+    testWidgets('$name: 붙여넣기 등록은 ${full ? '전체 화면' : '다이얼로그'}로 열린다', (
+      tester,
+    ) async {
+      setView(tester, size);
+      tabIndex.value = 3;
+      await pumpShell(tester);
+      await tester.tap(find.text('붙여넣기 등록'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), full ? findsNothing : findsOneWidget);
+      expect(find.byType(CloseButton), full ? findsOneWidget : findsNothing);
+      await tester.tap(full ? find.byType(CloseButton) : find.text('취소'));
+      await tester.pumpAndSettle();
+      expect(find.text('0명 저장'), findsNothing);
+    });
+  }
 }

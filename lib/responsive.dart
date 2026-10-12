@@ -62,3 +62,60 @@ ThemeData adaptTheme(
         : null,
   );
 }
+
+/// 표·미리보기가 든 넓은 다이얼로그(붙여넣기 820, 은행 내역 760).
+/// 휴대폰에서는 가운데 상자에 욱여넣지 않고 전체 화면으로 연다 — [닫기 | 제목] 앱바, 본문, 아래 버튼 줄.
+/// 닫기(X)와 뒤로 가기는 `Navigator.pop()` 이라 [취소]처럼 null 을 돌려준다.
+class WideDialog extends StatelessWidget {
+  const WideDialog({
+    super.key,
+    required this.title,
+    required this.width,
+    this.height,
+    required this.actions,
+    required this.child,
+  });
+
+  final String title;
+
+  /// 태블릿·데스크톱에서 본문 크기. 휴대폰에서는 무시하고 화면을 채운다.
+  final double width;
+  final double? height;
+  final List<Widget> actions;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!windowSizeOf(context).isCompact) {
+      return AlertDialog(
+        title: Text(title),
+        content: SizedBox(width: width, height: height, child: child),
+        actions: actions,
+      );
+    }
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          leading: const CloseButton(),
+          titleSpacing: 0,
+          title: Text(title, overflow: TextOverflow.ellipsis),
+        ),
+        body: Padding(padding: const EdgeInsets.all(16), child: child),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                for (final (i, a) in actions.indexed) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  a,
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

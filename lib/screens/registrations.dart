@@ -1731,18 +1731,71 @@ class BankPreviewState extends State<BankPreview> {
   Widget _row(BankMatch m) {
     final taken = picked.any((p) => p != m && p.tx == m.tx);
     final cell = TextStyle(fontSize: 13, fontFeatures: _tabular);
+    final check = Checkbox(
+      value: picked.contains(m),
+      onChanged: taken
+          ? null
+          : (v) => setState(() => v == true ? picked.add(m) : picked.remove(m)),
+    );
+    // 휴대폰: 열 다섯 개(≈ 520px)가 안 들어간다. 이름·사유 / 금액 / 입금 일시를 줄로 쌓는다.
+    if (windowSizeOf(context).isCompact) {
+      const muted = TextStyle(fontSize: 12, color: AppColors.textMuted);
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            check,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    m.reg.applicant,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  if (m.issue != null)
+                    Text(
+                      taken ? '${m.issue} · 다른 신청에 쓴 입금' : m.issue!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.warnInk,
+                      ),
+                    ),
+                  const SizedBox(height: 2),
+                  Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('받을 ${won(m.due)}', style: cell),
+                      Text(
+                        '입금 ${won(m.tx.amount)}',
+                        style: cell.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      m.tx.amount == m.due
+                          ? const Text(
+                              '일치',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.ok,
+                              ),
+                            )
+                          : _DiffText(m.tx.amount, m.due),
+                    ],
+                  ),
+                  Text('${_at(m.tx.at)} · ${m.tx.name}', style: muted),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Checkbox(
-            value: picked.contains(m),
-            onChanged: taken
-                ? null
-                : (v) => setState(
-                    () => v == true ? picked.add(m) : picked.remove(m),
-                  ),
-          ),
+          check,
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1811,21 +1864,35 @@ class BankPreviewState extends State<BankPreview> {
         if (m.issue != null) m,
     ];
     final head = const TextStyle(fontSize: 12, color: AppColors.textMuted);
-    return AlertDialog(
-      title: const Text('은행 내역으로 입금 확인'),
-      content: SizedBox(
-        width: 760,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              '입금 ${widget.txCount}건 중 확실 ${sure.length} · 확인 필요 ${check.length} · '
-              '맞는 신청 없음 ${widget.unmatched.length}. '
-              '입금자명과 금액(계산 금액)을 같이 맞춰 봤습니다.',
-              style: const TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 12),
+    final compact = windowSizeOf(context).isCompact;
+    return WideDialog(
+      title: '은행 내역으로 입금 확인',
+      width: 760,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('닫기'),
+        ),
+        FilledButton(
+          onPressed: picked.isEmpty
+              ? null
+              : () => Navigator.pop(context, picked.toList()),
+          child: Text('${picked.length}건 입금 확인'),
+        ),
+      ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '입금 ${widget.txCount}건 중 확실 ${sure.length} · 확인 필요 ${check.length} · '
+            '맞는 신청 없음 ${widget.unmatched.length}. '
+            '입금자명과 금액(계산 금액)을 같이 맞춰 봤습니다.',
+            style: const TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          // 휴대폰은 줄마다 금액을 글로 적으므로 열 머리글이 없다.
+          if (!compact) ...[
             Row(
               children: [
                 const SizedBox(width: 48),
@@ -1847,75 +1914,63 @@ class BankPreviewState extends State<BankPreview> {
               ],
             ),
             const Divider(height: 12),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  if (widget.matches.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Text('입금대기 신청과 맞는 입금이 없습니다.'),
-                    ),
-                  if (sure.isNotEmpty) SectionTitle('확실 ${sure.length}'),
-                  ...sure.map(_row),
-                  if (check.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    SectionTitle(
-                      '확인 필요 ${check.length}',
-                      subtitle: '사유를 보고 맞으면 체크하세요.',
-                    ),
-                    ...check.map(_row),
-                  ],
-                  if (widget.unmatched.isNotEmpty)
-                    ExpansionTile(
-                      // 맞춘 게 없으면 왜 안 맞았는지 바로 보이게 펼쳐 둔다.
-                      initiallyExpanded: widget.matches.isEmpty,
-                      tilePadding: EdgeInsets.zero,
-                      subtitle: const Text(
-                        '입금자명이 신청자·입금자명과 다르거나, 신청한 날보다 앞선 거래입니다(앞선 거래는 대조하지 않습니다).',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                      title: Text(
-                        '맞는 신청이 없는 입금 ${widget.unmatched.length}건',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      children: [
-                        for (final t in widget.unmatched)
-                          ListTile(
-                            dense: true,
-                            title: Text(t.name.isEmpty ? '(입금자 없음)' : t.name),
-                            subtitle: Text(_at(t.at)),
-                            trailing: Text(
-                              won(t.amount),
-                              style: const TextStyle(fontFeatures: _tabular),
-                            ),
-                          ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
           ],
-        ),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                if (widget.matches.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text('입금대기 신청과 맞는 입금이 없습니다.'),
+                  ),
+                if (sure.isNotEmpty) SectionTitle('확실 ${sure.length}'),
+                ...sure.map(_row),
+                if (check.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SectionTitle(
+                    '확인 필요 ${check.length}',
+                    subtitle: '사유를 보고 맞으면 체크하세요.',
+                  ),
+                  ...check.map(_row),
+                ],
+                if (widget.unmatched.isNotEmpty)
+                  ExpansionTile(
+                    // 맞춘 게 없으면 왜 안 맞았는지 바로 보이게 펼쳐 둔다.
+                    initiallyExpanded: widget.matches.isEmpty,
+                    tilePadding: EdgeInsets.zero,
+                    subtitle: const Text(
+                      '입금자명이 신청자·입금자명과 다르거나, 신청한 날보다 앞선 거래입니다(앞선 거래는 대조하지 않습니다).',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    title: Text(
+                      '맞는 신청이 없는 입금 ${widget.unmatched.length}건',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    children: [
+                      for (final t in widget.unmatched)
+                        ListTile(
+                          dense: true,
+                          title: Text(t.name.isEmpty ? '(입금자 없음)' : t.name),
+                          subtitle: Text(_at(t.at)),
+                          trailing: Text(
+                            won(t.amount),
+                            style: const TextStyle(fontFeatures: _tabular),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('닫기'),
-        ),
-        FilledButton(
-          onPressed: picked.isEmpty
-              ? null
-              : () => Navigator.pop(context, picked.toList()),
-          child: Text('${picked.length}건 입금 확인'),
-        ),
-      ],
     );
   }
 }
