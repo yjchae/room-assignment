@@ -23,6 +23,9 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
   final noMax = TextEditingController();
   bool separateGender = true;
 
+  /// 입금확인된 사람만 배정 ([AutoRule.paidOnly]).
+  bool paidOnly = false;
+
   /// 배정에서 뺄 건물. '넣을 것' 대신 '뺄 것'을 기억해서 새로 생긴 건물은 기본으로 들어간다.
   final Set<String?> offBuildings = {};
 
@@ -82,6 +85,7 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
               if (!offBuildings.contains(b)) b,
           },
     separateGender: separateGender,
+    paidOnly: paidOnly,
     groupBy: _groupBy,
   );
 
@@ -250,6 +254,18 @@ class _AutoAssignScreenState extends State<AutoAssignScreen> {
         title: const Text('성별 분리'),
         subtitle: const Text('방 성별이 없으면 첫 배정자 성별로 고정'),
       ),
+      // 입금 전 신청자가 미배정에 있을 때만 보인다.
+      if (paidOnly || store.unassigned.any((a) => a.unpaid))
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: paidOnly,
+          onChanged: (v) => setState(() => paidOnly = v),
+          title: const Text('입금확인된 사람만'),
+          subtitle: Text(
+            '켜면 미배정 중 입금대기 '
+            '${store.unassigned.where((a) => a.unpaid).length}명을 그대로 둡니다',
+          ),
+        ),
       const SizedBox(height: 20),
       FilledButton.icon(
         onPressed: !_ageValid || !_buildingsValid

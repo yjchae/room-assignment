@@ -590,11 +590,22 @@ Future<void> openGathering(BuildContext context, Gathering g) async {
   );
   current.value = g;
   store.applyGathering(g);
+  _syncRegistrations(g);
   tabIndex.value = settingsTab;
   if (!context.mounted) return;
   await Navigator.of(context)
       .push(MaterialPageRoute(builder: (_) => const Shell()));
   current.value = null;
+}
+
+/// 집회를 열면 신청을 한 번 읽어 방배정에 맞춘다 — 입금 전 신청자도 참석자(홈스테이는 가정)로
+/// 보이게. 기다리지 않는다. 못 읽으면 그냥 둔다(참석자·신청 탭을 열 때 다시 맞춘다).
+Future<void> _syncRegistrations(Gathering g) async {
+  if (!remote.signedIn) return;
+  try {
+    final regs = await remote.registrations(g.id);
+    if (current.value?.id == g.id) store.syncFromRegistrations(g, regs);
+  } catch (_) {}
 }
 
 /// 첫 화면: 집회 목록. 하나 고르면 그 집회의 탭 화면으로 들어간다.

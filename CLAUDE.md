@@ -46,7 +46,7 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - `applyGathering()` 은 집회 설정(이름·날짜·사용자 항목)을 `Event` 에 반영한다. 방배정 쪽 코드는 `Gathering` 을 몰라도 된다.
 
 **집회 구분** (`Gathering.kind`): `집회` / `홈스테이`. 만들 때만 정한다.
-- 홈스테이는 신청자가 재워 줄 **가정**이다. 확정하면 `Store.syncHomestayRooms` 가 그 이름으로 방을 만들고(`Room.registrationId` 로 신청과 묶는다), 운영자가 따로 등록한 참석자를 그 방에 배치한다. 신청자를 참석자로 가져오지 않는다.
+- 홈스테이는 신청자가 재워 줄 **가정**이다. 신청하면(입금대기 포함) `Store.syncHomestayRooms` 가 그 이름으로 방을 만들고(`Room.registrationId` 로 신청과 묶는다), 운영자가 따로 등록한 참석자를 그 방에 배치한다. 신청자를 참석자로 가져오지 않는다.
 - 방 정원은 신청서의 사용자 정의 항목 `수용 인원`(`homestayCapacityField`)에서 만들 때 한 번만 가져온다. 그 뒤엔 운영자가 고친 값이 이긴다.
 - 신청자는 `lookup_registration` 이 같이 돌려주는 `assigned`(`schema.sql` 의 `_assigned`)로 자기 집에 배정된 사람을 본다. 운영자 메모는 빼고 준다.
 - 화면은 같은 걸 쓰고 이름만 바꾼다(`방 관리 → 가정 관리`). 홈스테이의 [신청에서 가져오기]는 참석자 화면이 아니라 **가정 관리** 화면에 있다.
@@ -72,7 +72,9 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 **일정표** (`Gathering.schedule`): `{date, time, title}` 목록을 `gatherings.schedule` 에 담는다. 집회 설정에서 날짜별로 적고, 신청 웹 집회 페이지에 보인다. 기간 밖 날짜의 항목은 화면에 안 보이지만 지우지도 않는다.
 
-**신청 → 참석자** (`Store.syncRegistrations`): 확정된 신청의 사람을 사람 id 로 맞추기 때문에 몇 번을 불러도 결과가 같다. 1박 이상 묵는 사람만 가져오고, 가져올 때 `roomId`·`note` 는 건드리지 않는다. `Attendee.registrationId` 가 null 이면 붙여넣기나 직접 추가로 들어온 사람이라 동기화 대상에서 빠진다. 운영자가 고친 사람은 `editedByAdmin` 으로, 지운 사람은 `Event.deletedIds` 로 기억해 두었다가 `syncConflicts()` 로 어느 쪽 내용을 쓸지 묻는다.
+**신청 → 참석자** (`Store.syncRegistrations`): 취소되지 않은 신청(**입금대기 포함**)의 사람을 사람 id 로 맞추기 때문에 몇 번을 불러도 결과가 같다. 1박 이상 묵는 사람만 가져오고, 가져올 때 `roomId`·`note` 는 건드리지 않는다. `Attendee.registrationId` 가 null 이면 붙여넣기나 직접 추가로 들어온 사람이라 동기화 대상에서 빠진다. 운영자가 고친 사람은 `editedByAdmin` 으로, 지운 사람은 `Event.deletedIds` 로 기억해 두었다가 `syncConflicts()` 로 어느 쪽 내용을 쓸지 묻는다.
+입금 상태는 `Attendee.pay`·`Room.pay`(null = 입금확인, `payPending` = 입금대기)에 복사해 두고 정원에는 그대로 센다 — 화면은 `PayBadge`·`store.unpaidIn(room)` 으로 예외만 표시한다.
+집회를 열 때·[신청·입금]과 [참석자] 탭이 신청을 읽을 때 `store.syncFromRegistrations()` 가 자동으로 맞춘다. **취소된 신청은 방이 배정돼 있어도 바로 뺀다**(기간을 나눈 조각까지, 홈스테이는 가정을 지우고 손님은 미배정으로). 그 밖에 신청에서 빠진 사람(동반자 삭제 등)은 방이 없을 때만 자동으로 빼고, 방이 있으면 경고를 보여 주는 [신청에서 가져오기]에 맡긴다. 요구사항은 `PLAN_GATHERING.md` §19.
 
 **서버 에러 코드**: SQL 함수가 `CLOSED`, `INVALID_*`, `CONFLICT` 같은 문자열을 던지면(`schema.sql` 맨 위 목록) `remote.dart` 의 `errorText()` 가 안내 문구로 바꾼다. 코드를 새로 만들면 두 곳에 같이 넣는다.
 

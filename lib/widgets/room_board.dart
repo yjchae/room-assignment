@@ -45,6 +45,40 @@ String hostWindowLabel(Room room) {
       : '${ns.map(mdw).join(', ')} (${ns.length}박)';
 }
 
+/// 입금 상태 글자. 입금확인(null)은 빈 문자열 — 결국 대부분이 확정이 되므로 예외만 적는다.
+/// 무료 집회는 입금이 없으니 '대기'.
+String payLabel(String? pay) => switch (pay) {
+  payPending => current.value?.fee.isFree == true ? '대기' : '입금대기',
+  _ => '',
+};
+
+/// 참석자·가정 이름 옆의 입금 상태 배지. 입금확인이면 아무것도 그리지 않는다.
+/// 입금대기 = 노랑.
+class PayBadge extends StatelessWidget {
+  const PayBadge(this.pay, {super.key});
+  final String? pay;
+
+  @override
+  Widget build(BuildContext context) {
+    if (pay == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.warn.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        payLabel(pay),
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: AppColors.warnInk,
+        ),
+      ),
+    );
+  }
+}
+
 /// 방 한 칸. 바탕색 = 상태, 글자 = 상태("2자리"·"1명 초과"), 숫자 = 인원/정원.
 ///
 /// 색만으로 상태를 알려주면 색각 이상이 있는 사람은 못 읽는다. 상태는 항상 글자로도 적는다.
@@ -76,10 +110,20 @@ class RoomTile extends StatelessWidget {
     // 홈스테이는 "언제 받을 수 있는 집인지"가 배정의 첫 기준이라 툴팁에 같이 적는다.
     final label = homestay ? hostWindowLabel(room) : '';
     final window = label.isEmpty ? '' : '\n신청한 날 $label';
+    // 입금 전인 사람도 정원에 들어간다. 몇 명이 아직 입금 전인지는 따로 적는다.
+    final unpaid = store.unpaidIn(room);
+    final flag = [
+      if (room.pay != null) payLabel(room.pay), // 홈스테이 가정 자신의 신청
+      if (unpaid > 0) '대기 $unpaid',
+    ].join(' · ');
+    final money = unpaid == 0
+        ? ''
+        : '\n입금확인 ${store.peopleIn(room) - unpaid}명 · 입금대기 $unpaid명';
     return Tooltip(
       message:
           '${room.label}${homestay ? '' : '호'}'
-          '  $used/${room.capacity}  ${st.label}$window'
+          '  $used/${room.capacity}  ${st.label}$window$money'
+          '${room.pay == null ? '' : '\n가정 신청: ${payLabel(room.pay)}'}'
           '\n${groups.isEmpty ? '비어 있음' : groups}'
           '${note.isEmpty ? '' : '\n$note'}',
       waitDuration: const Duration(milliseconds: 400),
@@ -142,12 +186,25 @@ class RoomTile extends StatelessWidget {
                         ),
                     ],
                   ),
-                  // 방 관리의 [기타]. 길면 잘리고 전체는 툴팁에 나온다.
+                  // 입금 상태("대기 2") + 방 관리의 [기타]. 길면 잘리고 전체는 툴팁에 나온다.
                   Expanded(
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(
-                        note,
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            if (flag.isNotEmpty)
+                              TextSpan(
+                                text: note.isEmpty ? flag : '$flag  ',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontFeatures: tabular,
+                                  color: AppColors.warnInk,
+                                ),
+                              ),
+                            TextSpan(text: note),
+                          ],
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(

@@ -181,6 +181,10 @@ class Room {
   /// 신청 조회에 "우리 집에 배정된 사람"을 돌려줄 때 이 값으로 찾는다 (schema.sql `_assigned`).
   String? registrationId;
 
+  /// 신청 상태 ([Attendee.pay] 와 같은 규칙). 홈스테이 가정은 입금 전에도 방이 생긴다.
+  String? pay;
+  bool get unpaid => pay == payPending;
+
   /// 홈스테이에서 이 가정이 신청서에 적은 "받을 수 있는 기간". null = 집회 전체.
   /// 배정할 때 이 기간을 보여 주고 며칠을 넣을지 고른다.
   DateTime? hostFrom, hostTo;
@@ -243,6 +247,7 @@ class Room {
     'note': note,
     'slot': slot,
     if (registrationId != null) 'registrationId': registrationId,
+    if (pay != null) 'pay': pay,
     if (hostFrom != null) 'hostFrom': hostFrom!.toIso8601String(),
     if (hostTo != null) 'hostTo': hostTo!.toIso8601String(),
     if (hostNights != null)
@@ -267,7 +272,7 @@ class Room {
     hostNights: (j['hostNights'] as List?)
         ?.map((e) => dateOnly(DateTime.parse('$e')))
         .toList(),
-  );
+  )..pay = j['pay'] as String?;
 }
 
 class Attendee {
@@ -298,6 +303,13 @@ class Attendee {
 
   /// 신청서의 "스탭으로 신청합니다" 체크에서 왔다. 담당구역 배정 창의 [스탭만] 이 이걸 본다.
   bool staff = false;
+
+  /// 신청 상태. null = 입금확인이거나 신청에서 오지 않은 사람(붙여넣기·직접 추가).
+  /// [payPending] = 신청만 하고 입금 전. 취소된 신청의 사람은 참석자에서 빠지므로 값이 없다.
+  /// 예전 문서에는 이 칸이 없다 — 그때는 확정된 신청만 가져왔으므로 null(확정)이 맞다.
+  /// 신청에서 다시 맞출 때([Store.syncRegistrations]) 늘 덮어쓴다. 운영자가 고치는 칸이 아니다.
+  String? pay;
+  bool get unpaid => pay == payPending;
 
   /// 운영자가 참석자 화면에서 직접 고쳤다. 신청에서 다시 가져올 때 덮어쓸지 묻는 데 쓴다.
   bool editedByAdmin = false;
@@ -360,6 +372,7 @@ class Attendee {
     'extra': extra,
     'registrationId': registrationId,
     if (staff) 'staff': true,
+    if (pay != null) 'pay': pay,
     if (editedByAdmin) 'edited': true,
     if (splitOf != null) 'splitOf': splitOf,
   };
@@ -383,9 +396,14 @@ class Attendee {
     registrationId: j['registrationId'] as String?,
   )
     ..staff = j['staff'] == true
+    ..pay = j['pay'] as String?
     ..editedByAdmin = j['edited'] == true
     ..splitOf = j['splitOf'] as String?;
 }
+
+/// [Attendee.pay]·[Room.pay] 값. 신청 상태(`RegStatus`)를 그대로 옮긴 이름이다
+/// (이 파일은 웹 빌드에 들어가서 gathering.dart 를 끌어오지 않고 문자열로 둔다).
+const payPending = 'pending';
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -414,6 +432,7 @@ Event copyEvent(
         Room.fromJson({
           ...r.toJson(),
           'registrationId': null,
+          'pay': null,
           'hostFrom': null,
           'hostTo': null,
           'hostNights': null,
@@ -427,6 +446,7 @@ Event copyEvent(
           ...a.toJson(),
           'roomId': null,
           'registrationId': null,
+          'pay': null,
           'edited': false,
           'age': a.age == 0 ? 0 : a.age + years, // 0 = 모름
           'checkIn': e.startDate.toIso8601String(),

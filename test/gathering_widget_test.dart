@@ -1287,7 +1287,7 @@ void main() {
       expect(g2.formFields, [homestayCapacityField]);
     });
 
-    testWidgets('신청·입금: 홈스테이는 확정하면 그 이름으로 가정이 생긴다', (tester) async {
+    testWidgets('신청·입금: 홈스테이는 신청만 해도 가정이 생기고, 확정하면 입금대기 표시가 사라진다', (tester) async {
       fake.gs
         ..clear()
         ..add(homestay());
@@ -1295,6 +1295,8 @@ void main() {
       current.value = homestay();
       setView(tester, const Size(1400, 900));
       await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      // 신청 목록을 읽자마자 입금 전 가정도 방으로 올라온다 (방배정을 미리 할 수 있게).
+      expect(store.event.rooms.single.unpaid, isTrue);
       await tester.tap(find.text('김호스트').first);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, '입금 확인'));
@@ -1307,7 +1309,7 @@ void main() {
       final room = store.event.rooms.single;
       expect((room.roomNo, room.capacity), ('김호스트', 3));
       expect(room.registrationId, 'h-r1');
-      expect(find.textContaining('가정 1곳을 방으로 만들었습니다'), findsOneWidget);
+      expect(room.pay, isNull);
     });
 
     testWidgets('가정 관리: 확정된 신청을 가정으로 가져온다', (tester) async {
@@ -1472,6 +1474,9 @@ void main() {
       expect(find.text('홍길동'), findsNWidgets(2)); // 신청자 + 입금자명 칸
       expect(find.text('입금대기 1'), findsOneWidget);
       expect(find.byIcon(Icons.warning_amber), findsNothing); // 금액 일치
+      // 입금 전에도 참석자로 올라와 있다 — 입금대기 표시와 함께.
+      expect(store.event.attendees.map((a) => a.name), ['홍길동', '홍딸']);
+      expect(store.event.attendees.every((a) => a.unpaid), isTrue);
 
       await tester.tap(find.text('홍길동').first);
       await tester.pumpAndSettle();
@@ -1485,9 +1490,9 @@ void main() {
       expect(fake.patches.single['status'], 'confirmed');
       expect(fake.patches.single['paid'], 280000);
       expect(find.text('입금확인 1'), findsOneWidget);
-      // 확정한 신청의 사람은 참석자로 바로 올라간다
+      // 같은 참석자에서 입금대기 표시만 사라진다
       expect(store.event.attendees.map((a) => a.name), ['홍길동', '홍딸']);
-      expect(find.textContaining('참석자 2명을 등록했습니다'), findsOneWidget);
+      expect(store.event.attendees.every((a) => a.pay == null), isTrue);
     });
 
     testWidgets('신청·입금: 운영자가 대신 받은 신청은 입금대기로 들어가고 바로 입금 확인한다', (tester) async {
@@ -1603,6 +1608,38 @@ void main() {
       await tester.tap(find.text('홍길동').first);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('참석자: 입금 전 신청자도 열자마자 보이고, 입금확인·입금대기로 나눠 본다', (tester) async {
+      fake.regs.add(pendingReg()); // 홍길동·홍딸, 입금대기
+      store.event.attendees.add(
+        Attendee(
+          id: 'x',
+          name: '직접추가',
+          gender: 'M',
+          age: 40,
+          checkIn: DateTime(2026, 10, 9),
+          checkOut: DateTime(2026, 10, 11),
+        ),
+      );
+      current.value = sample();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: AttendeesScreen()));
+      expect(tester.takeException(), isNull);
+
+      expect(store.event.attendees.map((a) => a.name).toSet(), {
+        '직접추가',
+        '홍길동',
+        '홍딸',
+      });
+      expect(find.text('입금대기'), findsNWidgets(2)); // 이름 옆 배지
+      await tester.tap(find.text('입금대기 2'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('직접추가'), findsNothing);
+      await tester.tap(find.text('입금확인 1'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('직접추가'), findsOneWidget);
+      expect(find.textContaining('홍길동'), findsNothing);
     });
 
     testWidgets('참석자: 날짜를 고르면 당일 신청자도 그날 인원에 든다 (식수)', (tester) async {

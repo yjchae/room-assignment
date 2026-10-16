@@ -55,7 +55,9 @@ void main() {
       endDate: DateTime(2026, 10, 3),
       rooms: [
         for (final no in ['301', '302', '303', '201', '202'])
-          Room(id: 'r$no', roomNo: no, capacity: 4),
+          Room(id: 'r$no', roomNo: no, capacity: 4)
+            // 홈스테이 가정의 입금 상태 표시도 같이 그려 본다.
+            ..pay = no == '302' ? payPending : null,
       ],
       attendees: [
         for (var i = 0; i < 6; i++)
@@ -69,7 +71,9 @@ void main() {
             checkIn: DateTime(2026, 10, 1),
             checkOut: DateTime(2026, 10, 3),
             roomId: i < 3 ? 'r301' : null,
-          ),
+          )
+            // 방 타일·목록의 입금대기 표시가 좁은 폭에서 넘치지 않는지 본다.
+            ..pay = i == 1 || i == 2 || i == 4 ? payPending : null,
       ],
     );
   });

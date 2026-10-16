@@ -18,6 +18,14 @@ class StatusScreen extends StatelessWidget {
         .map(store.freeSeats)
         .fold(0, (s, x) => s + (x > 0 ? x : 0));
     final compact = windowSizeOf(context).isCompact;
+    // 입금 전 신청자도 방을 미리 잡는다. 누가 아직 안 냈는지(독촉할 사람) 바로 보이게.
+    final unpaid = e.attendees.where((a) => a.unpaid);
+    final unpaidPeople = unpaid.map((a) => a.personId).toSet().length;
+    final unpaidInRoom = unpaid
+        .where((a) => a.roomId != null)
+        .map((a) => a.personId)
+        .toSet()
+        .length;
 
     return ListView(
       padding: EdgeInsets.all(compact ? 12 : 20),
@@ -35,6 +43,13 @@ class StatusScreen extends StatelessWidget {
               unit: '명',
               color: unassigned.isEmpty ? null : AppColors.warnInk,
             ),
+            if (unpaidPeople > 0)
+              StatCard(
+                '입금대기',
+                '$unpaidPeople',
+                unit: '명 (배정 $unpaidInRoom)',
+                color: AppColors.warnInk,
+              ),
             StatCard('총 수용', '${store.totalCapacity}', unit: '명'),
             StatCard('잔여 좌석', '$free', unit: '석'),
           ],
@@ -95,6 +110,10 @@ class StatusScreen extends StatelessWidget {
                             color: AppColors.textMuted,
                           ),
                         ),
+                        if (a.pay != null) ...[
+                          const SizedBox(width: 6),
+                          PayBadge(a.pay),
+                        ],
                       ],
                     ),
                     subtitle: Text(
