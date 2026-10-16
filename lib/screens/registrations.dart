@@ -76,6 +76,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       checked.removeWhere(
         (id) => !regs!.any((r) => r.id == id && r.status == RegStatus.pending),
       );
+      _syncPlan(); // 새로 들어온 신청도 바로 참석자(홈스테이는 가정)에 보이게
     } catch (e) {
       error = errorText(e);
     }
@@ -91,7 +92,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     if (r.status != RegStatus.pending) checked.remove(r.id);
   });
 
-  /// 서버에 저장이 되면 [then] 을 부르고(참석자 반영 등), 그 결과 문장을 [done] 뒤에 붙여 알린다.
+  /// 서버에 저장이 되면 [then] 을 부르고 방배정에 반영한 뒤([_syncPlan]), 그 결과 문장을 [done] 뒤에 붙여 알린다.
   Future<void> _patch(
     Registration r,
     Map<String, dynamic> fields,
@@ -101,7 +102,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     setState(() => busy = true);
     try {
       _replace(await remote.patchRegistration(r.id, fields));
-      _snack('$done${then?.call() ?? ''}');
+      _snack('$done${then?.call() ?? ''}${_syncPlan()}');
     } catch (e) {
       _snack(errorText(e));
     } finally {
@@ -109,16 +110,15 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     }
   }
 
-  /// 확정된 신청을 방배정에 반영한다 (추가·수정만, 빼지는 않는다). 알림에 덧붙일 문장.
+  /// 신청 목록을 방배정에 반영한다 — 입금대기도 올리고 입금 상태를 맞춘다. 알림에 덧붙일 문장.
+  /// 방이 배정된 사람은 빼지 않는다 ([Store.syncFromRegistrations]).
   ///
   /// - 집회: 신청의 사람을 참석자로 올린다. 당일 참석자는 방이 필요 없어 올리지 않는다.
   /// - 홈스테이: 신청자 이름으로 방(가정)을 만든다.
-  String _syncConfirmed() {
+  String _syncPlan() {
     final g = current.value;
     if (g == null || regs == null) return '';
-    final n = g.isHomestay
-        ? store.syncHomestayRooms(g, regs!, remove: false).added
-        : store.syncRegistrations(g, regs!, remove: false).added;
+    final n = store.syncFromRegistrations(g, regs!);
     if (n == 0) return '';
     return g.isHomestay ? ' 가정 $n곳을 방으로 만들었습니다.' : ' 참석자 $n명을 등록했습니다.';
   }
@@ -602,7 +602,6 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           'paid_ref': null,
         },
         '${r.applicant} 신청을 확정했습니다.',
-        then: _syncConfirmed,
       );
     }
     final amount = TextEditingController(text: '${q.total}');
@@ -693,7 +692,6 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
       },
       '${r.applicant} 입금 확인했습니다.',
-      then: _syncConfirmed,
     );
   }
 
@@ -726,7 +724,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         fail++;
       }
     }
-    final added = _syncConfirmed();
+    final added = _syncPlan();
     if (!mounted) return;
     setState(() => busy = false);
     _snack(
@@ -813,7 +811,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
         fail++;
       }
     }
-    final added = _syncConfirmed();
+    final added = _syncPlan();
     if (!mounted) return;
     setState(() => busy = false);
     final off = picked.where((m) {

@@ -8,6 +8,7 @@ import '../responsive.dart';
 import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
+import '../widgets/room_board.dart' show PayBadge;
 import 'gatherings.dart';
 
 class AttendeesScreen extends StatefulWidget {
@@ -28,6 +29,9 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   /// 'full' = 모든 날 오는 사람(전참), 날짜(ymd) = 그날 오는 사람. 통계와 목록이 같이 바뀐다.
   String view = 'total';
 
+  /// 입금으로 거르기. 'all' / 'paid'(입금확인·직접 추가) / 'unpaid'(입금대기·신청 취소).
+  String payView = 'all';
+
   /// 이 집회의 신청. 날짜별 인원은 신청서의 실제 참석일로 센다. null = 아직/못 불러옴.
   List<Registration>? regs;
   String? regsError;
@@ -45,6 +49,9 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     if (g == null || !remote.signedIn) return;
     try {
       final r = await remote.registrations(g.id);
+      // 입금 전 신청자도 참석자로 올리고 입금 상태를 맞춘다 (방 배정된 사람은 빼지 않는다).
+      // 알림은 띄우지 않는다 — 탭을 열 때마다 뜨면 [붙여넣기 등록] 버튼을 가리고, 목록에 바로 보인다.
+      store.syncFromRegistrations(g, r);
       if (mounted) {
         setState(() {
           regs = r;
@@ -105,8 +112,18 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           a,
     ];
     final key = attendeeStats[pick?.$1];
+    // 입금 전 신청자도 참석자에 있다 — 확정 인원과 따로 셀 수 있게.
+    final unpaidCount = people.where((a) => a.pay != null).length;
+    final showPay = !homestay && (unpaidCount > 0 || payView != 'all');
     final list = store.search(query, people)
       ..retainWhere((a) => key == null || key(a) == pick!.$2)
+      ..retainWhere(
+        (a) => switch (payView) {
+          'paid' => a.pay == null,
+          'unpaid' => a.pay != null,
+          _ => true,
+        },
+      )
       ..sort(_cmp);
     final compact = windowSizeOf(context).isCompact;
     final search = TextField(
@@ -135,7 +152,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
         Tooltip(
           message: current.value == null
               ? '서버에 연결된 집회에서만 쓸 수 있습니다'
-              : '입금이 확인된 신청자를 참석자로 가져옵니다. 여러 번 눌러도 됩니다.',
+              : '취소되지 않은 신청자(입금대기 포함)를 참석자로 가져오고, '
+                    '취소된 신청의 사람을 뺍니다. 여러 번 눌러도 됩니다.',
           child: OutlinedButton.icon(
             icon: const Icon(Icons.download_outlined, size: 18),
             label: const Text('신청에서 가져오기'),
@@ -148,6 +166,25 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           ),
         ),
       ],
+      if (showPay)
+        SegmentedButton<String>(
+          showSelectedIcon: false,
+          segments: [
+            const ButtonSegment(value: 'all', label: Text('전체')),
+            ButtonSegment(
+              value: 'paid',
+              label: Text('입금확인 ${people.length - unpaidCount}'),
+              tooltip: '입금이 확인된 신청자와 직접 추가한 사람',
+            ),
+            ButtonSegment(
+              value: 'unpaid',
+              label: Text('입금대기 $unpaidCount'),
+              tooltip: '신청만 하고 아직 입금이 확인되지 않은 사람 (방 정원에는 들어갑니다)',
+            ),
+          ],
+          selected: {payView},
+          onSelectionChanged: (s) => setState(() => payView = s.first),
+        ),
       if (pick != null) ...[
         InputChip(
           label: Text('${pick!.$1}: ${pick!.$2}'),
@@ -324,8 +361,19 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                       final visitor = visitors.contains(a.id);
                       return ListTile(
                         dense: true,
-                        title: Text(
-                          '${a.name}  ${genderLabel(a.gender)} ${a.age}세',
+                        title: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                '${a.name}  ${genderLabel(a.gender)} ${a.age}세',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (a.pay != null) ...[
+                              const SizedBox(width: 8),
+                              PayBadge(a.pay),
+                            ],
+                          ],
                         ),
                         subtitle: Text(
                           [
@@ -992,7 +1040,7 @@ Future<void> importRegistrations(BuildContext context) async {
           context,
           title: '사람이 배정된 가정 ${gone.length}곳이 빠집니다',
           body:
-              '신청이 취소됐거나 입금대기로 되돌려진 가정입니다. 빼면 그 집에 배정된 사람도 미배정이 됩니다.\n\n'
+              '신청이 취소된 가정입니다. 빼면 그 집에 배정된 사람도 미배정이 됩니다.\n\n'
               '${gone.take(20).map((r) => '· ${r.roomNo} (${store.occupantsOf(r).length}명)').join('\n')}'
               '${gone.length > 20 ? '\n… 외 ${gone.length - 20}곳' : ''}',
           action: '빼고 가져오기',
@@ -1016,7 +1064,7 @@ Future<void> importRegistrations(BuildContext context) async {
         context,
         title: '방이 배정된 ${gone.length}명이 빠집니다',
         body:
-            '신청이 취소됐거나 입금대기로 되돌려진 사람들입니다. 빼면 방 배정도 풀립니다.\n\n'
+            '신청이 취소됐거나 신청에서 빠진 사람들입니다. 빼면 방 배정도 풀립니다.\n\n'
             '${gone.take(20).map((a) => '· ${a.name} (${store.roomById(a.roomId)?.label ?? '-'}호)').join('\n')}'
             '${gone.length > 20 ? '\n… 외 ${gone.length - 20}명' : ''}',
         action: '빼고 가져오기',

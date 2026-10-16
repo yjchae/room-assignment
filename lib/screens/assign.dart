@@ -45,6 +45,9 @@ class _AssignScreenState extends State<AssignScreen> {
   String? gender;
   bool unassignedOnly = false;
 
+  /// 입금 전인 사람만 — 방을 미리 잡아 둔 사람 중 누가 아직 안 냈는지 볼 때.
+  bool unpaidOnly = false;
+
   /// 사용자 정의 항목(교회 등) 값으로 거르는 칸. 어느 항목이든 값이 걸리면 통과.
   final extraQuery = TextEditingController();
   final selected = <String>{};
@@ -101,6 +104,7 @@ class _AssignScreenState extends State<AssignScreen> {
       return false;
     }
     if (unassignedOnly && a.roomId != null) return false;
+    if (unpaidOnly && !a.unpaid) return false;
     final lo = int.tryParse(ageMin.text.trim());
     final hi = int.tryParse(ageMax.text.trim());
     if (lo != null && a.age < lo) return false;
@@ -293,6 +297,22 @@ class _AssignScreenState extends State<AssignScreen> {
                     ),
                   ],
                 ),
+                // 입금 전 신청자가 있을 때만 보인다 (붙여넣기로만 채운 집회엔 뜻이 없다).
+                if (unpaidOnly || store.event.attendees.any((a) => a.unpaid))
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: unpaidOnly,
+                        visualDensity: VisualDensity.compact,
+                        onChanged: (v) => setState(() => unpaidOnly = v!),
+                      ),
+                      Text(
+                        '입금대기만 '
+                        '(${store.event.attendees.where((a) => a.unpaid).map((a) => a.personId).toSet().length}명)',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -418,6 +438,10 @@ class _AssignScreenState extends State<AssignScreen> {
                           color: AppColors.textMuted,
                         ),
                       ),
+                      if (a.pay != null) ...[
+                        const SizedBox(width: 6),
+                        PayBadge(a.pay),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 2),
@@ -599,6 +623,7 @@ class _AssignScreenState extends State<AssignScreen> {
                       style: const TextStyle(fontSize: 13),
                     ),
                   ),
+                  if (a.pay != null) PayBadge(a.pay),
                   IconButton(
                     tooltip: '배정 해제',
                     visualDensity: VisualDensity.compact,
@@ -1389,7 +1414,8 @@ Future<void> showRoomOccupants(BuildContext context, Room room) {
           Text('${room.label}호'),
           const SizedBox(width: 8),
           Text(
-            '$used/${room.capacity} · ${st.label}',
+            '$used/${room.capacity} · ${st.label}'
+            '${store.unpaidIn(room) > 0 ? ' · 입금대기 ${store.unpaidIn(room)}' : ''}',
             style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
           ),
         ],
@@ -1421,6 +1447,10 @@ Future<void> showRoomOccupants(BuildContext context, Room room) {
                               color: AppColors.textMuted,
                             ),
                           ),
+                          if (a.pay != null) ...[
+                            const SizedBox(width: 6),
+                            PayBadge(a.pay),
+                          ],
                         ],
                       ),
                       subtitle: Text(

@@ -59,6 +59,7 @@ class AutoRule {
     this.priorityBuilding,
     this.buildings,
     this.separateGender = true,
+    this.paidOnly = false,
     List<GroupField>? groupBy,
   }) : groupBy = groupBy ?? const [GroupField.zone, GroupField.cell];
 
@@ -80,6 +81,10 @@ class AutoRule {
   Set<String?>? buildings;
 
   bool separateGender;
+
+  /// 입금확인된 사람만 배정한다 — 입금대기([Attendee.unpaid])는 미배정으로 남긴다.
+  /// 끄면 입금 전 신청자도 방을 미리 잡아 둔다.
+  bool paidOnly;
 
   /// 같이 배정할 기준을 **우선순위 순서대로**. 앞에 있을수록 중요하다.
   ///
@@ -319,7 +324,13 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     settle(a.roomId!, a);
   }
 
-  final todo = event.attendees.where((a) => a.roomId == null).toList();
+  // 신청이 취소된 사람은 넣지 않는다 (가져오기에서 빠질 사람이다).
+  final todo = event.attendees
+      .where(
+        (a) =>
+            a.roomId == null && !a.cancelled && !(rule.paidOnly && a.unpaid),
+      )
+      .toList();
 
   // 1단계: 우대 대상 → 지정 구역. 나이 많은 순, 낮은 층 먼저.
   final priority = todo.where(rule.isPriority).toList()
