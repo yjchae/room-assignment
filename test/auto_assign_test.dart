@@ -204,22 +204,14 @@ void main() {
   });
 
   group('자동배정', () {
-    test('입금확인만 켜면 입금대기는 미배정으로 남는다. 신청 취소된 사람은 늘 넣지 않는다', () {
+    test('입금확인만 켜면 입금대기는 미배정으로 남는다', () {
       final paid = person('확정');
       final wait = person('대기')..pay = payPending;
-      final gone = person('취소')..pay = payCancelled;
-      final e = ev(rooms: [room('101', 4)], attendees: [paid, wait, gone]);
+      final e = ev(rooms: [room('101', 4)], attendees: [paid, wait]);
       final all = autoAssign(e, AutoRule(groupBy: []));
       expect(all.assignments.map((x) => x.attendee.name).toSet(), {'확정', '대기'});
       final only = autoAssign(e, AutoRule(groupBy: [], paidOnly: true));
       expect(only.assignments.map((x) => x.attendee.name), ['확정']);
-    });
-
-    test('신청을 취소한 가정(취소 표시로 남은 방)에는 새로 넣지 않는다', () {
-      final home = room('101', 4)..pay = payCancelled;
-      final e = ev(rooms: [home, room('102', 4)], attendees: [person('손님')]);
-      final r = autoAssign(e, AutoRule(groupBy: []));
-      expect(r.assignments.single.room.roomNo, '102');
     });
 
     test('기존 배정은 건드리지 않고 미배정만 채운다', () {

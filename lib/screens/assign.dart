@@ -1415,8 +1415,7 @@ Future<void> showRoomOccupants(BuildContext context, Room room) {
           const SizedBox(width: 8),
           Text(
             '$used/${room.capacity} · ${st.label}'
-            '${store.unpaidIn(room) > 0 ? ' · 입금대기 ${store.unpaidIn(room)}' : ''}'
-            '${store.cancelledIn(room) > 0 ? ' · 신청 취소 ${store.cancelledIn(room)}' : ''}',
+            '${store.unpaidIn(room) > 0 ? ' · 입금대기 ${store.unpaidIn(room)}' : ''}',
             style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
           ),
         ],

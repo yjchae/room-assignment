@@ -110,8 +110,8 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     }
   }
 
-  /// 신청 목록을 방배정에 반영한다 — 입금대기도 올리고 입금 상태를 맞춘다. 알림에 덧붙일 문장.
-  /// 방이 배정된 사람은 빼지 않는다 ([Store.syncFromRegistrations]).
+  /// 신청 목록을 방배정에 반영한다 — 입금대기도 올리고 입금 상태를 맞추고, 취소된 신청은
+  /// 방이 있어도 뺀다 ([Store.syncFromRegistrations]). 알림에 덧붙일 문장.
   ///
   /// - 집회: 신청의 사람을 참석자로 올린다. 당일 참석자는 방이 필요 없어 올리지 않는다.
   /// - 홈스테이: 신청자 이름으로 방(가정)을 만든다.
@@ -119,8 +119,12 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     final g = current.value;
     if (g == null || regs == null) return '';
     final n = store.syncFromRegistrations(g, regs!);
-    if (n == 0) return '';
-    return g.isHomestay ? ' 가정 $n곳을 방으로 만들었습니다.' : ' 참석자 $n명을 등록했습니다.';
+    final unit = g.isHomestay ? '곳' : '명';
+    return [
+      if (n.added > 0)
+        g.isHomestay ? ' 가정 ${n.added}곳을 방으로 만들었습니다.' : ' 참석자 ${n.added}명을 등록했습니다.',
+      if (n.removed > 0) ' 취소된 신청의 ${g.isHomestay ? '가정' : '참석자'} ${n.removed}$unit을 뺐습니다.',
+    ].join();
   }
 
   bool _matches(Registration r) {

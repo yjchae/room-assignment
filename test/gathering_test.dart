@@ -332,17 +332,21 @@ void main() {
       expect(s.event.attendees, hasLength(1));
     });
 
-    test('remove: false 면 추가·수정만 하고 빼지는 않는다 (입금 확인 때 자동 등록)', () {
+    test('remove: false 면 신청에서 빠진 사람 중 방이 있는 사람은 남긴다 (자동 맞춤)', () {
       final s = tmpStore();
-      final r1 = reg('r1', RegStatus.confirmed, [person('아빠', 1985)]);
+      final r1 = reg('r1', RegStatus.confirmed, [
+        person('아빠', 1985),
+        person('딸', 2012, gender: 'F'),
+      ]);
       s.syncRegistrations(g, [r1]);
-      s.event.attendees.single.roomId = 'room301';
-      r1.status = RegStatus.cancelled;
+      s.event.attendees.firstWhere((a) => a.name == '딸').roomId = 'room301';
+      r1.people.removeLast(); // 신청자가 동반자를 지움
       final r2 = reg('r2', RegStatus.confirmed, [person('새가족', 1990)]);
       final res = s.syncRegistrations(g, [r1, r2], remove: false);
       expect((res.added, res.removed), (1, 0));
-      expect(s.event.attendees.map((a) => a.name), ['아빠', '새가족']);
-      expect(s.event.attendees.first.roomId, 'room301'); // 방 배정이 말없이 풀리지 않는다
+      expect(s.event.attendees.map((a) => a.name), ['아빠', '딸', '새가족']);
+      // 방 배정이 말없이 풀리지 않는다 — [신청에서 가져오기]가 경고 뒤에 뺀다.
+      expect(s.syncWouldRemove(g, [r1, r2]).single.name, '딸');
     });
 
     group('입금 전 신청자 (PLAN_GATHERING §19)', () {
@@ -359,7 +363,7 @@ void main() {
         expect((a.pay, a.roomId), (null, 'room301'));
       });
 
-      test('자동 맞춤(remove: false): 취소된 사람은 방이 없으면 빠지고, 방이 있으면 취소 표시로 남는다', () {
+      test('취소된 신청의 사람은 방이 배정돼 있어도 자동 맞춤에서 바로 빠진다', () {
         final s = tmpStore();
         final r1 = reg('r1', RegStatus.pending, [
           person('방있음', 1985),
@@ -369,13 +373,11 @@ void main() {
         s.event.attendees.firstWhere((a) => a.name == '방있음').roomId = 'room301';
         r1.status = RegStatus.cancelled;
         final res = s.syncRegistrations(g, [r1], remove: false);
-        expect(res.removed, 1);
-        expect(s.event.attendees.single.name, '방있음');
-        expect(s.event.attendees.single.cancelled, isTrue);
-        // [신청에서 가져오기]는 경고 뒤에 뺀다.
-        expect(s.syncWouldRemove(g, [r1]).single.name, '방있음');
-        s.syncRegistrations(g, [r1]);
+        expect(res.removed, 2);
         expect(s.event.attendees, isEmpty);
+        // 취소를 되돌리면 다시 들어온다 (지운 사람 목록에 남기지 않는다).
+        r1.status = RegStatus.pending;
+        expect(s.syncRegistrations(g, [r1], remove: false).added, 2);
       });
 
       test('운영자가 고친 사람·기간을 나눈 조각도 입금 상태는 따라온다', () {
@@ -393,37 +395,42 @@ void main() {
         expect((a.pay, piece.pay), (null, null));
       });
 
-      test('자동 맞춤: 나눈 조각 하나라도 방에 있으면 원본(방 없음)을 지우지 않는다', () {
+      test('기간을 나눈 사람이 취소하면 조각(신청 id 없음)까지 모두 빠진다', () {
         final s = tmpStore();
         final r1 = reg('r1', RegStatus.pending, [person('아빠', 1985)]);
         s.syncRegistrations(g, [r1]);
         final a = s.event.attendees.single;
-        final later = s.splitStay(a, DateTime(2026, 10, 10))!..roomId = 'room301';
+        s.splitStay(a, DateTime(2026, 10, 10))!.roomId = 'room301';
         r1.status = RegStatus.cancelled;
         s.syncRegistrations(g, [r1], remove: false);
-        expect(s.event.attendees, containsAll([a, later]));
-        expect((a.cancelled, later.cancelled), (true, true));
+        expect(s.event.attendees, isEmpty);
       });
 
-      test('신청에서 빠져 지워진 사람은 담당구역에서도 빠진다', () {
+      test('자동 맞춤: 신청에서 빠진 사람은 나눈 조각 하나라도 방에 있으면 원본도 남긴다', () {
+        final s = tmpStore();
+        final r1 = reg('r1', RegStatus.pending, [
+          person('아빠', 1985),
+          person('딸', 2012, gender: 'F'),
+        ]);
+        s.syncRegistrations(g, [r1]);
+        final kid = s.event.attendees.firstWhere((a) => a.name == '딸');
+        final later = s.splitStay(kid, DateTime(2026, 10, 10))!
+          ..roomId = 'room301';
+        r1.people.removeLast();
+        s.syncRegistrations(g, [r1], remove: false);
+        expect(s.event.attendees, containsAll([kid, later]));
+      });
+
+      test('취소로 빠진 사람은 담당구역에서도 빠진다', () {
         final s = tmpStore();
         final r1 = reg('r1', RegStatus.pending, [person('스탭', 1985)]);
         s.syncRegistrations(g, [r1]);
+        s.event.attendees.single.roomId = 'room301';
         s.event.duties.add(Duty(id: 'd1', name: '주방', personIds: ['p-스탭']));
         r1.status = RegStatus.cancelled;
-        s.syncRegistrations(g, [r1], remove: false); // 방이 없어 빠진다
+        s.syncRegistrations(g, [r1], remove: false);
         expect(s.event.attendees, isEmpty);
         expect(s.event.duties.single.personIds, isEmpty);
-      });
-
-      test('신청이 지워진 사람의 조각(신청 id 없음)도 입금대기였으면 취소로 바뀐다', () {
-        final s = tmpStore();
-        final r1 = reg('r1', RegStatus.pending, [person('아빠', 1985)]);
-        s.syncRegistrations(g, [r1]);
-        final a = s.event.attendees.single..roomId = 'room301';
-        final later = s.splitStay(a, DateTime(2026, 10, 10))!;
-        s.syncRegistrations(g, [], remove: false); // 신청 삭제
-        expect((a.cancelled, later.cancelled), (true, true));
       });
 
       test('옛 문서(pay 칸 없음)는 모두 입금확인으로 읽힌다', () {
@@ -930,18 +937,6 @@ void main() {
       expect(s.event.rooms.first.capacity, 9);
     });
 
-    test('자동 맞춤(remove: false)은 취소된 빈 가정도 지우지 않는다 — 운영자가 고친 정원이 남는다', () {
-      final s = tmpStore();
-      s.syncHomestayRooms(g, [homeReg('1', '김호스트')]);
-      s.event.rooms.single.capacity = 7;
-      s.syncHomestayRooms(g, [
-        homeReg('1', '김호스트', status: RegStatus.cancelled),
-      ], remove: false);
-      expect(s.event.rooms.single.cancelled, isTrue);
-      s.syncHomestayRooms(g, [homeReg('1', '김호스트')], remove: false);
-      expect((s.event.rooms.single.pay, s.event.rooms.single.capacity), (null, 7));
-    });
-
     test('입금대기로 되돌리면 방은 그대로 두고 표시만 바뀐다', () {
       final s = tmpStore();
       s.syncHomestayRooms(g, [homeReg('1', '김호스트')]);
@@ -953,7 +948,7 @@ void main() {
       expect(s.event.rooms.single.pay, isNull);
     });
 
-    test('취소되면 방이 빠지고 배정도 풀린다. remove: false 면 사람 있는 방은 취소 표시로 남는다', () {
+    test('취소되면 자동 맞춤에서도 방이 빠지고 배정이 풀린다. 목록에서 사라진 신청은 [가져오기]에서만', () {
       final s = tmpStore();
       s.syncHomestayRooms(g, [homeReg('1', '김호스트')]);
       final room = s.event.rooms.single;
@@ -969,13 +964,12 @@ void main() {
         ),
       );
 
-      final gone = [homeReg('1', '김호스트', status: RegStatus.cancelled)];
-      expect(s.homestayWouldRemove(g, gone).single.roomNo, '김호스트');
-      s.syncHomestayRooms(g, gone, remove: false);
+      // 신청 삭제(목록에 없음)는 자동 맞춤이 지우지 않는다.
+      s.syncHomestayRooms(g, [], remove: false);
       expect(s.event.rooms, hasLength(1));
-      expect(s.event.rooms.single.cancelled, isTrue);
 
-      final r = s.syncHomestayRooms(g, gone);
+      final gone = [homeReg('1', '김호스트', status: RegStatus.cancelled)];
+      final r = s.syncHomestayRooms(g, gone, remove: false);
       expect(r.removed, 1);
       expect(s.event.rooms, isEmpty);
       expect(s.event.attendees.single.roomId, isNull); // 손님은 미배정으로

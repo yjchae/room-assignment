@@ -156,23 +156,29 @@ class Store extends ChangeNotifier {
       ..pay = payOf(r.status);
   }
 
-  /// 신청 상태 → [Attendee.pay]·[Room.pay] 값. 입금확인은 null(표시 없음).
-  static String? payOf(RegStatus s) => switch (s) {
-    RegStatus.confirmed => null,
-    RegStatus.pending => payPending,
-    RegStatus.cancelled => payCancelled,
-  };
+  /// 신청 상태 → [Attendee.pay]·[Room.pay] 값. 입금확인(과 취소)은 null — 취소된 신청은
+  /// 방배정에 남지 않으므로 표시할 일이 없다.
+  static String? payOf(RegStatus s) =>
+      s == RegStatus.pending ? payPending : null;
 
   /// 신청 목록을 방배정에 맞춘다 — 탭을 열 때·입금 확인 때 자동으로 부른다.
   /// 집회는 사람을 참석자로, 홈스테이는 가정을 방으로 올리고 입금 상태를 맞춘다.
-  /// 방이 배정된 사람·사람이 들어간 가정은 빼지 않는다(취소면 [payCancelled] 표시만) —
-  /// 빼는 건 경고를 보여 주는 [신청에서 가져오기]에서만 한다. 새로 올린 수.
+  /// **취소된 신청은 방이 배정돼 있어도 바로 뺀다**(사람은 미배정이 아니라 명단에서 빠지고,
+  /// 가정에 배정된 손님은 미배정으로 돌아간다).
+  /// 그 밖에 빠질 사람(동반자 삭제·당일로 바뀜·신청 삭제)은 방이 없을 때만 빼고, 방이 있으면
+  /// 경고를 보여 주는 [신청에서 가져오기]에 맡긴다.
   /// 방배정을 못 불러왔으면([loadError]) 손대지 않는다 — 빈 문서에 사람을 채워 넣게 된다.
-  int syncFromRegistrations(Gathering g, List<Registration> regs) {
-    if (loadError != null) return 0;
-    return g.isHomestay
-        ? syncHomestayRooms(g, regs, remove: false).added
-        : syncRegistrations(g, regs, remove: false).added;
+  ({int added, int removed}) syncFromRegistrations(
+    Gathering g,
+    List<Registration> regs,
+  ) {
+    if (loadError != null) return (added: 0, removed: 0);
+    if (g.isHomestay) {
+      final r = syncHomestayRooms(g, regs, remove: false);
+      return (added: r.added, removed: r.removed);
+    }
+    final r = syncRegistrations(g, regs, remove: false);
+    return (added: r.added, removed: r.removed);
   }
 
   /// 이 집회에 오는 사람 전체 — 방배정 참석자 + **당일(0박)만 오는 신청자**(입금대기 포함).
@@ -237,10 +243,10 @@ class Store extends ChangeNotifier {
   /// - 신청에서 온 항목(이름·성별·나이·전화·셀·존·사용자 항목·일정)만 덮어쓰고
   ///   배정된 방(roomId)·기타(note)는 그대로 둔다.
   /// - 입금 상태([Attendee.pay])는 늘 맞춘다 — 운영자가 고친 사람·기간을 나눈 조각도.
-  /// - 신청에서 왔는데 이제 목록에 없는 사람(취소·동반자 삭제)은 지운다.
-  ///   [remove] 가 false 면 방이 없는 사람만 지우고, 방이 배정된 사람은 [payCancelled] 로 남긴다 —
-  ///   자동으로 부를 때. 방 배정이 말없이 풀리면 안 되므로, 그 사람들을 지우는 건
-  ///   경고를 보여주는 [신청에서 가져오기]에서만 한다.
+  /// - **취소된 신청의 사람은 늘 지운다** — 방이 배정돼 있어도, 기간을 나눈 조각까지.
+  /// - 신청에서 왔는데 이제 목록에 없는 그 밖의 사람(동반자 삭제·당일로 바뀜·신청 삭제)도 지운다.
+  ///   [remove] 가 false 면(자동으로 부를 때) 이 중 방이 하나도 없는 사람만 지운다 —
+  ///   방 배정이 말없이 풀리지 않게, 그 사람들은 경고를 보여주는 [신청에서 가져오기]에서 지운다.
   /// - 붙여넣기·직접 추가한 사람(registrationId == null)은 건드리지 않는다.
   /// - 운영자가 직접 고치거나 지운 사람([syncConflicts])은 [keepAdminEdits] 면 그대로 두고,
   ///   아니면 신청 내용으로 덮어쓰거나 되살린다.
@@ -284,17 +290,24 @@ class Store extends ChangeNotifier {
         updated++;
       }
     }
-    // 자동으로 부를 때(remove: false)는 방이 하나도 없는 사람만 뺀다. 기간을 나눈 사람은
-    // 조각 중 하나라도 방에 있으면 남긴다 — 원본만 지우면 앞 기간이 사라지고 조각이 고아가 된다.
+    // 취소된 신청의 사람은 조각까지 모두 뺀다 (personId 로 찾는다 — 조각은 신청 id 가 없다).
+    final cancelled = {
+      for (final r in regs)
+        if (r.status == RegStatus.cancelled)
+          for (final p in r.people) p.id,
+    };
+    // 그 밖에 빠질 사람은, 자동으로 부를 때(remove: false) 방이 하나도 없는 사람만 뺀다.
+    // 기간을 나눈 사람은 조각 중 하나라도 방에 있으면 남긴다 — 원본만 지우면 조각이 고아가 된다.
     final housed = {
       for (final a in event.attendees)
         if (a.roomId != null) a.personId,
     };
     final gone = [
       for (final a in event.attendees)
-        if (a.registrationId != null &&
-            !want.containsKey(a.id) &&
-            (remove || !housed.contains(a.personId)))
+        if (cancelled.contains(a.personId) ||
+            (a.registrationId != null &&
+                !want.containsKey(a.id) &&
+                (remove || !housed.contains(a.personId))))
           a,
     ];
     final goneIds = {for (final a in gone) a.id};
@@ -328,26 +341,17 @@ class Store extends ChangeNotifier {
 
   /// 참석자의 입금 상태를 신청에 맞춘다. 바꾼 수.
   /// 사람 id([Attendee.personId])로 맞춰서 신청 id 가 떨어진 나뉜 조각도 따라온다.
-  /// 신청에서 왔는데 신청에서 사라진 사람(동반자 삭제·신청 삭제)은 취소로 본다.
+  /// 신청에서 못 찾는 사람(붙여넣기·직접 추가, 신청에서 빠졌는데 방이 있어 남은 사람)은 그대로 둔다.
   int _syncPay(List<Registration> regs) {
     final pays = <String, String?>{
       for (final r in regs)
-        for (final p in r.people) p.id: payOf(r.status),
+        if (r.status != RegStatus.cancelled)
+          for (final p in r.people) p.id: payOf(r.status),
     };
     var n = 0;
     for (final a in event.attendees) {
-      final String? want;
-      if (pays.containsKey(a.personId)) {
-        want = pays[a.personId];
-      } else if (a.registrationId != null || a.pay != null) {
-        // 신청에서 왔는데 신청에서 사라진 사람. 신청 id 가 떨어진 조각도 입금대기 표시가
-        // 있었으면 신청에서 온 것이다.
-        // ponytail: 입금확인(null)이던 조각은 신청에서 온 줄 몰라 그대로 둔다.
-        // 정확히 하려면 조각에도 원래 신청 id 를 따로 남긴다.
-        want = payCancelled;
-      } else {
-        continue; // 붙여넣기·직접 추가한 사람
-      }
+      if (!pays.containsKey(a.personId)) continue;
+      final want = pays[a.personId];
       if (a.pay != want) {
         a.pay = want;
         n++;
@@ -365,9 +369,9 @@ class Store extends ChangeNotifier {
   /// - 이미 있는 방은 **이름만** 맞춘다. 정원·기타·자리는 운영자가 고친 것이 이긴다
   ///   (신청자는 확정 뒤 신청을 못 고치므로 정원은 만들 때 한 번이면 충분하다).
   /// - 입금 상태([Room.pay])는 늘 신청에 맞춘다.
-  /// - [remove] 가 false 면 취소된 신청의 방을 지우지 않고 [payCancelled] 로 남긴다 — 자동으로
-  ///   부를 때. 빈 방도 남긴다(운영자가 고친 정원·자리를 말없이 잃지 않게, 취소를 되돌리면
-  ///   그대로 돌아오게). 지우는 건 경고를 보여주는 [신청에서 가져오기]에서만.
+  /// - **취소된 신청의 방은 늘 지운다** — 배정돼 있던 손님은 미배정으로 돌아간다.
+  /// - 목록에 아예 없는 신청(삭제)의 방은 [remove] 일 때만 지운다 — 자동으로 부를 때는 남기고,
+  ///   경고를 보여주는 [신청에서 가져오기]에서 지운다.
   ({int added, int updated, int removed}) syncHomestayRooms(
     Gathering g,
     List<Registration> regs, {
@@ -416,16 +420,17 @@ class Store extends ChangeNotifier {
         }
       }
     }
+    final cancelled = {
+      for (final r in regs)
+        if (r.status == RegStatus.cancelled) r.id,
+    };
     var removed = 0;
     for (final room in [...event.rooms]) {
       final id = room.registrationId;
       if (id == null || want.containsKey(id)) continue;
-      if (remove) {
+      if (remove || cancelled.contains(id)) {
         deleteRoom(room); // 배정돼 있던 사람은 미배정으로 돌아간다
         removed++;
-      } else if (room.pay != payCancelled) {
-        room.pay = payCancelled;
-        marked++;
       }
     }
     if (added + updated + marked > 0) commit();
@@ -555,11 +560,6 @@ class Store extends ChangeNotifier {
   /// 기간을 나눈 사람은 한 명으로 센다.
   int unpaidIn(Room room) =>
       occupantsOf(room).where((a) => a.unpaid).map((a) => a.personId).toSet().length;
-
-  /// 방에 남아 있는 신청 취소된 사람 수. [신청에서 가져오기]로 뺄 때까지 빨갛게 보인다.
-  int cancelledIn(Room room) => occupantsOf(
-    room,
-  ).where((a) => a.cancelled).map((a) => a.personId).toSet().length;
 
   /// 해당 밤들 중 가장 붐비는 시점 기준 남은 자리. 음수면 초과.
   int freeSeats(Room room) => room.capacity - peakOccupancy(room);
@@ -936,7 +936,6 @@ String attendeesCsv(Event e, [List<Attendee>? people]) {
         ymd(a.checkOut),
         switch (a.pay) {
           payPending => '입금대기',
-          payCancelled => '신청 취소',
           _ => a.registrationId == null ? '' : '입금확인', // 빈칸 = 붙여넣기·직접 추가
         },
       ],

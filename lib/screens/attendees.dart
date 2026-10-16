@@ -29,7 +29,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   /// 'full' = 모든 날 오는 사람(전참), 날짜(ymd) = 그날 오는 사람. 통계와 목록이 같이 바뀐다.
   String view = 'total';
 
-  /// 입금으로 거르기. 'all' / 'paid'(입금확인·직접 추가) / 'unpaid'(입금대기·신청 취소).
+  /// 입금으로 거르기. 'all' / 'paid'(입금확인·직접 추가) / 'unpaid'(입금대기).
   String payView = 'all';
 
   /// 이 집회의 신청. 날짜별 인원은 신청서의 실제 참석일로 센다. null = 아직/못 불러옴.

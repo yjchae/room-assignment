@@ -184,7 +184,6 @@ class Room {
   /// 신청 상태 ([Attendee.pay] 와 같은 규칙). 홈스테이 가정은 입금 전에도 방이 생긴다.
   String? pay;
   bool get unpaid => pay == payPending;
-  bool get cancelled => pay == payCancelled;
 
   /// 홈스테이에서 이 가정이 신청서에 적은 "받을 수 있는 기간". null = 집회 전체.
   /// 배정할 때 이 기간을 보여 주고 며칠을 넣을지 고른다.
@@ -306,12 +305,11 @@ class Attendee {
   bool staff = false;
 
   /// 신청 상태. null = 입금확인이거나 신청에서 오지 않은 사람(붙여넣기·직접 추가).
-  /// [payPending] = 신청만 하고 입금 전, [payCancelled] = 신청이 취소됐는데 방에 남아 있는 사람.
+  /// [payPending] = 신청만 하고 입금 전. 취소된 신청의 사람은 참석자에서 빠지므로 값이 없다.
   /// 예전 문서에는 이 칸이 없다 — 그때는 확정된 신청만 가져왔으므로 null(확정)이 맞다.
   /// 신청에서 다시 맞출 때([Store.syncRegistrations]) 늘 덮어쓴다. 운영자가 고치는 칸이 아니다.
   String? pay;
   bool get unpaid => pay == payPending;
-  bool get cancelled => pay == payCancelled;
 
   /// 운영자가 참석자 화면에서 직접 고쳤다. 신청에서 다시 가져올 때 덮어쓸지 묻는 데 쓴다.
   bool editedByAdmin = false;
@@ -405,7 +403,7 @@ class Attendee {
 
 /// [Attendee.pay]·[Room.pay] 값. 신청 상태(`RegStatus`)를 그대로 옮긴 이름이다
 /// (이 파일은 웹 빌드에 들어가서 gathering.dart 를 끌어오지 않고 문자열로 둔다).
-const payPending = 'pending', payCancelled = 'cancelled';
+const payPending = 'pending';
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 

@@ -170,10 +170,9 @@ class AutoAssignResult {
 AutoAssignResult autoAssign(Event event, AutoRule rule) {
   final nights = event.nights;
   final allowed = rule.buildings;
-  // 신청을 취소한 홈스테이 가정(사람이 있어 남겨 둔 방)에는 새로 넣지 않는다.
   final rooms = [
     for (final r in event.rooms)
-      if ((allowed == null || allowed.contains(r.building)) && !r.cancelled) r,
+      if (allowed == null || allowed.contains(r.building)) r,
   ]..sort(byRoomNo);
 
   // 방별 밤별 현재 인원. 기존 배정에서 시작.
@@ -325,12 +324,8 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     settle(a.roomId!, a);
   }
 
-  // 신청이 취소된 사람은 넣지 않는다 (가져오기에서 빠질 사람이다).
   final todo = event.attendees
-      .where(
-        (a) =>
-            a.roomId == null && !a.cancelled && !(rule.paidOnly && a.unpaid),
-      )
+      .where((a) => a.roomId == null && !(rule.paidOnly && a.unpaid))
       .toList();
 
   // 1단계: 우대 대상 → 지정 구역. 나이 많은 순, 낮은 층 먼저.

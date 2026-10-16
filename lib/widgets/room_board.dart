@@ -49,12 +49,11 @@ String hostWindowLabel(Room room) {
 /// 무료 집회는 입금이 없으니 '대기'.
 String payLabel(String? pay) => switch (pay) {
   payPending => current.value?.fee.isFree == true ? '대기' : '입금대기',
-  payCancelled => '신청 취소',
   _ => '',
 };
 
 /// 참석자·가정 이름 옆의 입금 상태 배지. 입금확인이면 아무것도 그리지 않는다.
-/// 입금대기 = 노랑, 신청 취소(방에 남아 있음) = 빨강.
+/// 입금대기 = 노랑.
 class PayBadge extends StatelessWidget {
   const PayBadge(this.pay, {super.key});
   final String? pay;
@@ -62,19 +61,18 @@ class PayBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (pay == null) return const SizedBox.shrink();
-    final gone = pay == payCancelled;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: gone ? AppColors.dangerSoft : AppColors.warn.withValues(alpha: 0.14),
+        color: AppColors.warn.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
         payLabel(pay),
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
-          color: gone ? AppColors.danger : AppColors.warnInk,
+          color: AppColors.warnInk,
         ),
       ),
     );
@@ -113,21 +111,14 @@ class RoomTile extends StatelessWidget {
     final label = homestay ? hostWindowLabel(room) : '';
     final window = label.isEmpty ? '' : '\n신청한 날 $label';
     // 입금 전인 사람도 정원에 들어간다. 몇 명이 아직 입금 전인지는 따로 적는다.
-    final unpaid = store.unpaidIn(room), gone = store.cancelledIn(room);
-    // 좁은 타일(방배정)에서는 "대기 2 · 취소 1" 이 잘린다 — 붙여 쓴다.
-    final narrow = width < 120;
+    final unpaid = store.unpaidIn(room);
     final flag = [
       if (room.pay != null) payLabel(room.pay), // 홈스테이 가정 자신의 신청
-      if (unpaid > 0) narrow ? '대기$unpaid' : '대기 $unpaid',
-      if (gone > 0) narrow ? '취소$gone' : '취소 $gone',
-    ].join(narrow ? ' ' : ' · ');
-    final flagInk = room.cancelled || gone > 0
-        ? AppColors.danger
-        : AppColors.warnInk;
-    final money = unpaid + gone == 0
+      if (unpaid > 0) '대기 $unpaid',
+    ].join(' · ');
+    final money = unpaid == 0
         ? ''
-        : '\n입금확인 ${store.peopleIn(room) - unpaid - gone}명 · 입금대기 $unpaid명'
-              '${gone > 0 ? ' · 신청 취소 $gone명' : ''}';
+        : '\n입금확인 ${store.peopleIn(room) - unpaid}명 · 입금대기 $unpaid명';
     return Tooltip(
       message:
           '${room.label}${homestay ? '' : '호'}'
@@ -208,7 +199,7 @@ class RoomTile extends StatelessWidget {
                                 style: TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontFeatures: tabular,
-                                  color: flagInk,
+                                  color: AppColors.warnInk,
                                 ),
                               ),
                             TextSpan(text: note),
