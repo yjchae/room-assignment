@@ -284,14 +284,23 @@ class Store extends ChangeNotifier {
         updated++;
       }
     }
-    final before = event.attendees.length;
-    event.attendees.removeWhere(
-      (a) =>
-          a.registrationId != null &&
-          !want.containsKey(a.id) &&
-          (remove || a.roomId == null),
-    );
-    final removed = before - event.attendees.length;
+    // 자동으로 부를 때(remove: false)는 방이 하나도 없는 사람만 뺀다. 기간을 나눈 사람은
+    // 조각 중 하나라도 방에 있으면 남긴다 — 원본만 지우면 앞 기간이 사라지고 조각이 고아가 된다.
+    final housed = {
+      for (final a in event.attendees)
+        if (a.roomId != null) a.personId,
+    };
+    final gone = [
+      for (final a in event.attendees)
+        if (a.registrationId != null &&
+            !want.containsKey(a.id) &&
+            (remove || !housed.contains(a.personId)))
+          a,
+    ];
+    final goneIds = {for (final a in gone) a.id};
+    event.attendees.removeWhere((a) => goneIds.contains(a.id));
+    _dropDutiesOf(gone);
+    final removed = gone.length;
     final payChanged = _syncPay(regs);
     final newFields = _addFields(want.values.expand((a) => a.extra.keys));
     if (added + updated + removed + payChanged + newFields > 0) commit();
@@ -301,6 +310,20 @@ class Store extends ChangeNotifier {
       removed: removed,
       dayOnly: activePeople - want.length,
     );
+  }
+
+  /// 지운 사람 중 조각이 하나도 안 남은 사람을 담당구역에서 뺀다 ([deleteAttendees] 와 같은 규칙).
+  /// 안 빼면 스탭 페이지 권한(`Duty.personIds`)이 남는다.
+  void _dropDutiesOf(Iterable<Attendee> removed) {
+    final left = {for (final a in event.attendees) a.personId};
+    final gone = {
+      for (final a in removed)
+        if (!left.contains(a.personId)) a.personId,
+    };
+    if (gone.isEmpty) return;
+    for (final d in event.duties) {
+      d.personIds.removeWhere(gone.contains);
+    }
   }
 
   /// 참석자의 입금 상태를 신청에 맞춘다. 바꾼 수.
@@ -316,10 +339,14 @@ class Store extends ChangeNotifier {
       final String? want;
       if (pays.containsKey(a.personId)) {
         want = pays[a.personId];
-      } else if (a.registrationId != null) {
+      } else if (a.registrationId != null || a.pay != null) {
+        // 신청에서 왔는데 신청에서 사라진 사람. 신청 id 가 떨어진 조각도 입금대기 표시가
+        // 있었으면 신청에서 온 것이다.
+        // ponytail: 입금확인(null)이던 조각은 신청에서 온 줄 몰라 그대로 둔다.
+        // 정확히 하려면 조각에도 원래 신청 id 를 따로 남긴다.
         want = payCancelled;
       } else {
-        continue; // 붙여넣기·직접 추가한 사람, 신청과 못 잇는 조각
+        continue; // 붙여넣기·직접 추가한 사람
       }
       if (a.pay != want) {
         a.pay = want;
@@ -338,9 +365,9 @@ class Store extends ChangeNotifier {
   /// - 이미 있는 방은 **이름만** 맞춘다. 정원·기타·자리는 운영자가 고친 것이 이긴다
   ///   (신청자는 확정 뒤 신청을 못 고치므로 정원은 만들 때 한 번이면 충분하다).
   /// - 입금 상태([Room.pay])는 늘 신청에 맞춘다.
-  /// - [remove] 가 false 면 취소된 신청의 방 중 사람이 배정된 방은 지우지 않고 [payCancelled] 로
-  ///   남긴다 — 자동으로 부를 때. 배정이 말없이 풀리면 안 되므로, 그 방을 지우는 건 경고를
-  ///   보여주는 [신청에서 가져오기]에서만. 빈 방은 지운다.
+  /// - [remove] 가 false 면 취소된 신청의 방을 지우지 않고 [payCancelled] 로 남긴다 — 자동으로
+  ///   부를 때. 빈 방도 남긴다(운영자가 고친 정원·자리를 말없이 잃지 않게, 취소를 되돌리면
+  ///   그대로 돌아오게). 지우는 건 경고를 보여주는 [신청에서 가져오기]에서만.
   ({int added, int updated, int removed}) syncHomestayRooms(
     Gathering g,
     List<Registration> regs, {
@@ -393,7 +420,7 @@ class Store extends ChangeNotifier {
     for (final room in [...event.rooms]) {
       final id = room.registrationId;
       if (id == null || want.containsKey(id)) continue;
-      if (remove || occupantsOf(room).isEmpty) {
+      if (remove) {
         deleteRoom(room); // 배정돼 있던 사람은 미배정으로 돌아간다
         removed++;
       } else if (room.pay != payCancelled) {
@@ -518,6 +545,11 @@ class Store extends ChangeNotifier {
       ..sort((x, y) => y.value.compareTo(x.value));
     return entries.map((e) => '${e.key} ${e.value}').join(' · ');
   }
+
+  /// 방에 배정된 사람 수 (기간을 나눈 사람은 한 명). 날짜를 안 따지고 다 센다 —
+  /// 정원 판정은 [peakOccupancy] 로 하고, 이건 입금확인·입금대기 나눠 보기에만 쓴다.
+  int peopleIn(Room room) =>
+      occupantsOf(room).map((a) => a.personId).toSet().length;
 
   /// 방에 있는 사람 중 입금 전(입금대기)인 사람 수. 정원에는 들어가고 표시만 따로 한다.
   /// 기간을 나눈 사람은 한 명으로 센다.

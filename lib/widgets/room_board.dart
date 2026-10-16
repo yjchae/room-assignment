@@ -114,17 +114,19 @@ class RoomTile extends StatelessWidget {
     final window = label.isEmpty ? '' : '\n신청한 날 $label';
     // 입금 전인 사람도 정원에 들어간다. 몇 명이 아직 입금 전인지는 따로 적는다.
     final unpaid = store.unpaidIn(room), gone = store.cancelledIn(room);
+    // 좁은 타일(방배정)에서는 "대기 2 · 취소 1" 이 잘린다 — 붙여 쓴다.
+    final narrow = width < 120;
     final flag = [
       if (room.pay != null) payLabel(room.pay), // 홈스테이 가정 자신의 신청
-      if (unpaid > 0) '대기 $unpaid',
-      if (gone > 0) '취소 $gone',
-    ].join(' · ');
+      if (unpaid > 0) narrow ? '대기$unpaid' : '대기 $unpaid',
+      if (gone > 0) narrow ? '취소$gone' : '취소 $gone',
+    ].join(narrow ? ' ' : ' · ');
     final flagInk = room.cancelled || gone > 0
         ? AppColors.danger
         : AppColors.warnInk;
     final money = unpaid + gone == 0
         ? ''
-        : '\n입금확인 ${used - unpaid - gone}명 · 입금대기 $unpaid명'
+        : '\n입금확인 ${store.peopleIn(room) - unpaid - gone}명 · 입금대기 $unpaid명'
               '${gone > 0 ? ' · 신청 취소 $gone명' : ''}';
     return Tooltip(
       message:

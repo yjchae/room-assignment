@@ -81,12 +81,12 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     final sel = view == 'full' || on != null ? view : 'total';
     final nights = e.nights;
 
-    // 확정된 신청에서 온 사람은 신청서의 참석일로 센다.
+    // 신청에서 온 사람(입금대기 포함)은 신청서의 참석일로 센다.
     // 홈스테이의 신청자는 아이가 아니라 재워 줄 가정이다 — 참석자 명단에 끼면 안 된다.
     final regDays = <String, List<DateTime>>{};
     if (g != null && !homestay) {
       for (final r in regs ?? const <Registration>[]) {
-        if (r.status != RegStatus.confirmed) continue;
+        if (r.status == RegStatus.cancelled) continue;
         for (final p in r.people) {
           final ds = p.daysIn(g.start, g.end);
           if (ds.isNotEmpty) regDays[p.id] = ds;
@@ -113,7 +113,17 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     ];
     final key = attendeeStats[pick?.$1];
     // 입금 전 신청자도 참석자에 있다 — 확정 인원과 따로 셀 수 있게.
-    final unpaidCount = people.where((a) => a.pay != null).length;
+    // 기간을 나눈 사람은 한 명으로 센다 (방배정·현황 화면과 같은 기준).
+    final unpaidCount = people
+        .where((a) => a.pay != null)
+        .map((a) => a.personId)
+        .toSet()
+        .length;
+    final paidCount = people
+        .where((a) => a.pay == null)
+        .map((a) => a.personId)
+        .toSet()
+        .length;
     final showPay = !homestay && (unpaidCount > 0 || payView != 'all');
     final list = store.search(query, people)
       ..retainWhere((a) => key == null || key(a) == pick!.$2)
@@ -173,7 +183,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
             const ButtonSegment(value: 'all', label: Text('전체')),
             ButtonSegment(
               value: 'paid',
-              label: Text('입금확인 ${people.length - unpaidCount}'),
+              label: Text('입금확인 $paidCount'),
               tooltip: '입금이 확인된 신청자와 직접 추가한 사람',
             ),
             ButtonSegment(

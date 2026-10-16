@@ -215,6 +215,13 @@ void main() {
       expect(only.assignments.map((x) => x.attendee.name), ['확정']);
     });
 
+    test('신청을 취소한 가정(취소 표시로 남은 방)에는 새로 넣지 않는다', () {
+      final home = room('101', 4)..pay = payCancelled;
+      final e = ev(rooms: [home, room('102', 4)], attendees: [person('손님')]);
+      final r = autoAssign(e, AutoRule(groupBy: []));
+      expect(r.assignments.single.room.roomNo, '102');
+    });
+
     test('기존 배정은 건드리지 않고 미배정만 채운다', () {
       final r1 = room('101', 2);
       final r2 = room('102', 2);

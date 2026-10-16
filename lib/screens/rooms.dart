@@ -7,7 +7,7 @@ import '../widgets/room_board.dart' show RoomBoard, RoomLegend;
 import 'attendees.dart' show importRegistrations;
 
 /// 방 관리. 방배정과 같은 보드를 쓰고, 방을 누르면 수정 창이 뜬다.
-/// 홈스테이에서는 방 = 가정이고, 확정된 신청에서 가져온다.
+/// 홈스테이에서는 방 = 가정이고, 신청(입금대기 포함)에서 가져온다.
 class RoomsScreen extends StatelessWidget {
   const RoomsScreen({super.key});
 
@@ -35,7 +35,7 @@ class RoomsScreen extends StatelessWidget {
               SectionTitle(
                 homestay ? '가정 관리' : '방 관리',
                 subtitle: homestay
-                    ? '확정된 신청에서 가정을 가져옵니다. 가정을 누르면 정원·기타를 고칠 수 있습니다'
+                    ? '신청이 들어오면 가정이 생깁니다(대기 표시 = 아직 확정 전). 가정을 누르면 정원·기타를 고칠 수 있습니다'
                     : '방을 누르면 수정 · 추가할 때 "301-310" 처럼 범위로 한 번에',
               ),
               _kpi(homestay ? '가정' : '방', '${rooms.length}', homestay ? '곳' : '개'),

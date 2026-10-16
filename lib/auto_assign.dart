@@ -170,9 +170,10 @@ class AutoAssignResult {
 AutoAssignResult autoAssign(Event event, AutoRule rule) {
   final nights = event.nights;
   final allowed = rule.buildings;
+  // 신청을 취소한 홈스테이 가정(사람이 있어 남겨 둔 방)에는 새로 넣지 않는다.
   final rooms = [
     for (final r in event.rooms)
-      if (allowed == null || allowed.contains(r.building)) r,
+      if ((allowed == null || allowed.contains(r.building)) && !r.cancelled) r,
   ]..sort(byRoomNo);
 
   // 방별 밤별 현재 인원. 기존 배정에서 시작.
