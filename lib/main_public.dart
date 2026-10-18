@@ -1414,7 +1414,10 @@ class _LookupPageState extends State<LookupPage> {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+            child: Text(
+              error!,
+              style: const TextStyle(color: AppColors.danger),
+            ),
           ),
         FilledButton(
           onPressed: busy ? null : _lookup,
