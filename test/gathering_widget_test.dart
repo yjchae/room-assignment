@@ -761,6 +761,31 @@ void main() {
       expect(full.value, isTrue);
     });
 
+    testWidgets('일정 없는 날을 뺀 모든 날을 고르면 전체 참석으로 낸다', (tester) async {
+      setView(tester, const Size(400, 2400));
+      final g = sample()..offDays = [DateTime(2026, 10, 11)];
+      await pumpPage(tester, ApplyPage(gathering: g));
+      await tester.enterText(field('출생연도 *'), '1985');
+      await tester.tap(find.widgetWithText(CheckboxListTile, '10-09(금)'));
+      await tester.tap(find.widgetWithText(CheckboxListTile, '10-10(토)'));
+      await tester.pumpAndSettle();
+      expect(find.text('160,000원'), findsOneWidget);
+      expect(find.textContaining('성인 · 전체'), findsOneWidget);
+    });
+
+    testWidgets('날짜를 안 고른 동반자가 있으면 합계 위에 안내가 남는다', (tester) async {
+      setView(tester, const Size(400, 3200));
+      await pumpPage(tester, ApplyPage(gathering: sample()));
+      await tester.enterText(field('출생연도 *'), '1985');
+      await tester.tap(find.text('동반 참석자 추가 (가족 등)'));
+      await tester.pumpAndSettle();
+      await tester.enterText(field('출생연도 *').at(1), '2012');
+      await tester.tap(find.widgetWithText(CheckboxListTile, '10-09(금)').first);
+      await tester.tap(find.widgetWithText(CheckboxListTile, '10-10(토)').first);
+      await tester.pumpAndSettle();
+      expect(find.text('참석하는 날을 고르면 금액이 계산됩니다'), findsOneWidget);
+    });
+
     testWidgets('날짜를 고르면 1박 금액이 된다', (tester) async {
       setView(tester, const Size(400, 2400));
       await pumpPage(tester, ApplyPage(gathering: sample()));

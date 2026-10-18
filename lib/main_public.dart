@@ -480,6 +480,16 @@ class _PersonForm {
 
   bool get full => days == null;
 
+  /// 참석일을 정했다 (전체 참석이거나 하루 이상 골랐다).
+  bool get picked => full || days!.isNotEmpty;
+
+  /// 고를 수 있는 날(일정 없는 날 빼고)을 모두 골랐으면 전체 참석으로 낸다. 일정 없는 날은 체크할 수
+  /// 없어서, 안 바꾸면 끝까지 다 와도 부분 참석 금액이 되고 숙박도 끊겨 보인다.
+  bool _allOpenDays(Gathering g) =>
+      full ||
+      (days!.isNotEmpty &&
+          g.days.where((d) => !g.isOff(d)).every(days!.contains));
+
   TextEditingController extra(String field) =>
       extras.putIfAbsent(field, TextEditingController.new);
 
@@ -505,7 +515,7 @@ class _PersonForm {
       gender: gender ?? '',
       birthYear: y,
       relation: relation,
-      days: days == null ? null : ([...days!]..sort()),
+      days: _allOpenDays(g) ? null : ([...days!]..sort()),
       phone: phone ?? this.phone,
       cell: t(cell),
       zone: t(zone),
@@ -600,12 +610,16 @@ class _ApplyPageState extends State<ApplyPage> {
   /// 금액 미리보기용. 아직 참석일을 하나도 안 고른 사람은 빼서 가족당 금액만 뜨지 않게 한다.
   List<Person> get _people => [
     for (final f in forms)
-      if (f.full || f.days!.isNotEmpty) ?f.toPerson(g),
+      if (f.picked) ?f.toPerson(g),
   ];
 
-  String get _quoteHint => forms.any((f) => !f.full && f.days!.isEmpty)
-      ? '참석하는 날을 고르면 금액이 계산됩니다'
-      : '출생연도를 넣으면 금액이 계산됩니다';
+  /// 합계 대신 보일 안내. 날짜를 안 고른 사람이 있으면 다른 사람 금액이 떠도 알린다
+  /// (그 사람이 빠진 합계라서). null = 인원 요약을 보인다.
+  String? _quoteHint(Quote q) => !forms.every((f) => f.picked)
+      ? (free ? '참석하는 날을 고르세요' : '참석하는 날을 고르면 금액이 계산됩니다')
+      : q.lines.isEmpty && !free
+      ? '출생연도를 넣으면 금액이 계산됩니다'
+      : null;
 
   void _addCompanion() => setState(
     () => forms.add(
@@ -716,7 +730,7 @@ class _ApplyPageState extends State<ApplyPage> {
       ),
       bottomNavigationBar: _TotalBar(
         q: q,
-        hint: _quoteHint,
+        hint: _quoteHint(q),
         free: free,
         busy: busy,
         label: editing
@@ -1001,7 +1015,7 @@ class _ApplyPageState extends State<ApplyPage> {
     final formOk = formKey.currentState!.validate();
     final genderOk =
         !g.requires('gender') || forms.every((f) => f.gender != null);
-    final daysOk = forms.every((f) => f.full || f.days!.isNotEmpty);
+    final daysOk = forms.every((f) => f.picked);
     // 체크 칸이 필수면 체크해야 신청된다 (스탭만 받는 집회).
     final staffOk = !g.requires('staff') || forms.every((f) => f.staff);
     if (!formOk ||
@@ -1114,8 +1128,8 @@ class _TotalBar extends StatelessWidget {
   });
   final Quote q;
 
-  /// 금액을 아직 못 낼 때 합계 위에 보이는 안내.
-  final String hint;
+  /// 금액을 아직 다 못 낼 때 인원 요약 대신 보이는 안내. null = 인원 요약.
+  final String? hint;
 
   /// 무료 집회 — 금액 없이 인원 요약만.
   final bool free;
@@ -1138,7 +1152,7 @@ class _TotalBar extends StatelessWidget {
             if (free)
               Expanded(
                 child: Text(
-                  q.summary,
+                  hint ?? q.summary,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppColors.textMuted),
                 ),
@@ -1160,7 +1174,7 @@ class _TotalBar extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        q.lines.isEmpty ? hint : q.summary,
+                        hint ?? q.summary,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 12,
