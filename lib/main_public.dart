@@ -460,6 +460,8 @@ class _PersonForm {
       for (final e in copyFrom.extras.entries) {
         extras[e.key] = TextEditingController(text: e.value.text);
       }
+      // 가족은 보통 같이 오므로 신청자가 고른 날짜로 시작한다.
+      days = copyFrom.days == null ? null : {...copyFrom.days!};
     }
   }
 
@@ -566,7 +568,7 @@ class _ApplyPageState extends State<ApplyPage> {
     super.initState();
     final r = widget.editing;
     forms = r == null
-        ? [_PersonForm(applicant: true)]
+        ? [_PersonForm(applicant: true)..days = _newDays]
         : [
             for (final (i, p) in r.people.indexed)
               _PersonForm(p: p, applicant: i == 0),
@@ -590,7 +592,20 @@ class _ApplyPageState extends State<ApplyPage> {
 
   void _changed() => setState(() {});
 
-  List<Person> get _people => [for (final f in forms) ?f.toPerson(g)];
+  /// 새 신청서의 참석일. 신청자는 날짜를 직접 고르도록 빈 부분 참석으로 시작한다
+  /// (모든 날을 고르면 전체 참석으로 계산된다). 하루짜리 집회는 고를 게 없어 전체 참석,
+  /// 운영자 접수는 빨리 넣도록 전체 참석으로 시작한다.
+  Set<DateTime>? get _newDays => widget.admin || g.nights == 0 ? null : {};
+
+  /// 금액 미리보기용. 아직 참석일을 하나도 안 고른 사람은 빼서 가족당 금액만 뜨지 않게 한다.
+  List<Person> get _people => [
+    for (final f in forms)
+      if (f.full || f.days!.isNotEmpty) ?f.toPerson(g),
+  ];
+
+  String get _quoteHint => forms.any((f) => !f.full && f.days!.isEmpty)
+      ? '참석하는 날을 고르면 금액이 계산됩니다'
+      : '출생연도를 넣으면 금액이 계산됩니다';
 
   void _addCompanion() => setState(
     () => forms.add(
@@ -701,6 +716,7 @@ class _ApplyPageState extends State<ApplyPage> {
       ),
       bottomNavigationBar: _TotalBar(
         q: q,
+        hint: _quoteHint,
         free: free,
         busy: busy,
         label: editing
@@ -1090,12 +1106,16 @@ class _ApplyPageState extends State<ApplyPage> {
 class _TotalBar extends StatelessWidget {
   const _TotalBar({
     required this.q,
+    required this.hint,
     required this.free,
     required this.busy,
     required this.label,
     required this.onSubmit,
   });
   final Quote q;
+
+  /// 금액을 아직 못 낼 때 합계 위에 보이는 안내.
+  final String hint;
 
   /// 무료 집회 — 금액 없이 인원 요약만.
   final bool free;
@@ -1140,7 +1160,7 @@ class _TotalBar extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        q.lines.isEmpty ? '출생연도를 넣으면 금액이 계산됩니다' : q.summary,
+                        q.lines.isEmpty ? hint : q.summary,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 12,
@@ -1380,10 +1400,7 @@ class _LookupPageState extends State<LookupPage> {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              error!,
-              style: const TextStyle(color: AppColors.danger),
-            ),
+            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
           ),
         FilledButton(
           onPressed: busy ? null : _lookup,

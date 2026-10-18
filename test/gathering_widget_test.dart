@@ -390,6 +390,12 @@ Future<void> pumpPage(WidgetTester tester, Widget page) async {
 
 Finder field(String label) => find.widgetWithText(TextFormField, label);
 
+/// 신청서는 부분 참석(날짜 직접 고르기)으로 시작하므로, 전체 참석 스위치를 켠다.
+Future<void> attendAll(WidgetTester tester) async {
+  await tester.tap(find.widgetWithText(SwitchListTile, '전체 참석').first);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     fake = FakeRemote()..gs.add(sample());
@@ -472,7 +478,7 @@ void main() {
       await tester.enterText(field('이름 *'), '홍길동');
       await tester.enterText(field('출생연도 *'), '1985');
       await tester.tap(find.text('남').first);
-      await tester.pumpAndSettle();
+      await attendAll(tester);
       expect(find.text('160,000원'), findsOneWidget); // 150,000 + 가족당 10,000
       await tester.enterText(field('셀'), '1셀');
       await tester.enterText(field('존'), 'A존');
@@ -521,6 +527,7 @@ void main() {
       await tester.enterText(field('이름 *'), '홍길동');
       await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
       await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await attendAll(tester);
       await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
       await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
       await tester.pumpAndSettle();
@@ -552,6 +559,7 @@ void main() {
       expect(field('교회 이름 *'), findsNothing);
       await tester.tap(find.text('사역자입니다'));
       await tester.pumpAndSettle();
+      await attendAll(tester);
       await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
       await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
       await tester.pumpAndSettle();
@@ -580,6 +588,7 @@ void main() {
       await tester.enterText(field('이름 *'), '김스탭');
       await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
       await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await attendAll(tester);
       await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
       await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
       await tester.pumpAndSettle();
@@ -718,6 +727,7 @@ void main() {
       for (final label in ['출생연도 *', '셀', '존']) {
         expect(find.widgetWithText(TextFormField, label), findsNothing);
       }
+      await attendAll(tester);
       expect(find.textContaining('성인 · 전체'), findsOneWidget);
       expect(
         Gathering.fromRow({...g.toRow(), 'id': g.id}).hiddenFields,
@@ -725,11 +735,36 @@ void main() {
       );
     });
 
-    testWidgets('부분 참석으로 바꾸면 1박 금액이 된다', (tester) async {
+    testWidgets('신청서는 부분 참석으로 시작하고, 날짜를 안 고르면 막는다', (tester) async {
       setView(tester, const Size(400, 2400));
       await pumpPage(tester, ApplyPage(gathering: sample()));
       await tester.enterText(field('출생연도 *'), '1985');
-      await tester.tap(find.widgetWithText(SwitchListTile, '전체 참석'));
+      await tester.pumpAndSettle();
+      final full = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, '전체 참석'),
+      );
+      expect(full.value, isFalse);
+      // 날짜를 고르기 전엔 가족당 금액만 뜨지 않고 안내가 나온다.
+      expect(find.text('참석하는 날을 고르면 금액이 계산됩니다'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      expect(find.text('참석하는 날을 하루 이상 고르세요'), findsOneWidget);
+      expect(fake.lastSubmit, isNull);
+    });
+
+    testWidgets('운영자 접수는 전체 참석으로 시작한다', (tester) async {
+      setView(tester, const Size(400, 2400));
+      await pumpPage(tester, ApplyPage(gathering: sample(), admin: true));
+      final full = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, '전체 참석'),
+      );
+      expect(full.value, isTrue);
+    });
+
+    testWidgets('날짜를 고르면 1박 금액이 된다', (tester) async {
+      setView(tester, const Size(400, 2400));
+      await pumpPage(tester, ApplyPage(gathering: sample()));
+      await tester.enterText(field('출생연도 *'), '1985');
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       // 금·토 체크 = 1박 70,000 + 가족당 10,000
