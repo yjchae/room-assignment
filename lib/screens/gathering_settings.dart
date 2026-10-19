@@ -707,9 +707,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       '당일 무료인 날',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                     ),
-                    const Text(
-                      '이 날 하루만 당일로 오면 무료입니다. 이 날을 포함해 1박 이상 묵으면 회비표대로 받습니다.',
-                      style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                    Text(
+                      x.fee.lodgingSeparate
+                          ? '이 날은 참가비를 받지 않습니다(전체 참석은 정액 그대로). 숙박하면 숙박비는 받습니다.'
+                          : '이 날 하루만 당일로 오면 무료입니다. 이 날을 포함해 1박 이상 묵으면 회비표대로 받습니다.',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
