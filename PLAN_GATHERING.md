@@ -1175,3 +1175,186 @@ bool get unpaid => pay == 'pending';
 - 입금 기한이 지난 입금대기를 자동 취소 — `ponytail:` 로 남기고, 필요하면 [신청·입금]에 "기한 지난 대기 n건 [일괄 취소]".
 - 입금대기 사람에게 문자 독촉 — 현황의 명단을 CSV 로 내려 쓰는 것으로 대신한다.
 - 부분 입금(덜 낸 사람)을 참석자 화면에 따로 표시 — §17 의 차액 표시가 [신청·입금]에 이미 있다.
+
+---
+
+## 20. 숙박비 별도 (2026-10-19)
+
+지금은 **참석하는 날만** 고르고, 이어서 고른 날 사이를 숙박으로 본다(`nightsOf`). 그래서
+"사흘 모두 오지만 집에서 다닌다"(출퇴근) 같은 사람을 신청서로 받을 수 없고, 회비도 참석과 숙박이 한 금액으로 섞인다.
+
+바꾸는 것: 집회 설정에 **[숙박비 별도]** 스위치를 둔다. 켜면
+- 신청서의 일정이 **참가(날짜) 체크**와 **숙박(밤) 체크** 두 줄이 되고,
+- 회비가 **참가비 + 숙박비**로 나뉘며 1박당 숙박비를 따로 정한다,
+- 신청 화면 금액 표가 **참가비 합계 · 숙박비 합계 · 합계**를 보여 준다.
+
+끄면(기본) 지금과 똑같다.
+
+```
+숙박 별도 켠 집회 (금~일, 2박3일)
+              금      토      일
+참가          ☑       ☑       ☑        ← 참가비: 전체 참석 정액
+숙박            ☐ 금밤   ☑ 토밤           ← 숙박비: 1박 × 1
+```
+
+### 20.0 결정 (기본값으로 진행, 다르면 알려주세요)
+
+| # | 질문 | 이대로 만듦 | 다른 선택지 |
+|---|---|---|---|
+| 1 | 스위치를 어디에 두나 | **`FeeRule.lodgingSeparate`(회비 JSON 안).** 회비 규칙이라 `quote()` 가 이미 받는 `fee` 로 끝나고 §18 무료 날처럼 **서버·스키마 변경이 없다** | `gatherings.lodging_separate` 칸 |
+| 2 | 1박당 숙박비는 | **연령 구분별** — 회비표에 `숙박 1박` 열을 하나 더한다(`FeeRule.lodging`). 영유아 0원처럼 구분마다 다른 경우가 많아서. 한 금액만 쓰려면 모든 칸에 같은 값을 넣으면 된다 | 집회 하나에 금액 하나 |
+| 3 | 켜면 참가비는 어떻게 세나 | **회비표 열이 `전체 참석 · 하루 참가 · 숙박 1박` 으로 바뀐다.** 전체 참석 = 모든 날 참가(정액, 비우면 하루 × 일수). 부분 참가 = 하루 × 참가일수, 전체 참석 금액을 넘지 않는다. `하루 참가` 는 지금의 `dayOnly`(당일) 값을 그대로 쓰고 `1박당`(`perNight`) 열은 숨긴다(값은 지우지 않음 — 끄면 되살아난다) | 1박당·당일 열을 그대로 두고 숙박비만 더함 |
+| 4 | 숙박비는 | **숙박 1박[구분] × 고른 밤 수.** 상한 없음, 전체참석 할인 안 받음 | 전체 숙박 정액 |
+| 5 | 할인은 어디에 | **전체참석 할인 = 참가비에만. 사전등록 할인·지정 할인 = 합계(참가비+숙박비) 전체에** (지금 식 그대로 `subtotal` 에 건다) | 사전등록 할인도 참가비에만 |
+| 6 | 무료 날(§18)은 | **참가일이 무료 날 하루뿐이면 참가비 0원.** 숙박을 고르면 숙박비는 따로 받는다 | 숙박해도 무료 날 참가비 0 |
+| 7 | 참가와 숙박이 안 맞으면 (숙박만 고르고 참가 0일 등) | **참가 하루 이상만 필수.** 밤과 날짜가 따로 놀아도 막지 않는다 — 늦게 와서 자고 다음 날 일찍 가는 사람도 있다. 숙박한 밤 다음 날을 안 고르면 안내 한 줄만 | 숙박한 밤의 앞뒤 날 참가 강제 |
+| 8 | 방배정 참석자는 | **숙박을 1박 이상 고른 사람만**(지금 규칙 "1박 이상만" 그대로). 체크인~체크아웃·빠진 밤(`stayNights`)도 고른 밤으로 계산 | — |
+| 9 | 신청을 받은 뒤 스위치를 바꾸면 | **바꿀 수 있다.** 켠 뒤 들어온 신청엔 숙박 체크가 있고, 그 전 신청(`stays` 없음)은 지금처럼 이어진 날로 밤을 센다. 끄면 숙박 체크는 무시하고 날짜로 센다. 신청이 있을 때 바꾸면 "이미 들어온 n건의 금액이 다시 계산됩니다" 경고 | 신청이 있으면 잠금 |
+
+### 20.1 데이터·계산 (`gathering.dart`)
+
+```dart
+// FeeRule (toJson 'lodgingSeparate', 'lodging' — 없으면 false / {})
+bool lodgingSeparate;
+Map<AgeGroup, int> lodging;            // 숙박 1박 [구분]
+
+// Person (registrations.people jsonb 안 — 서버 변경 없음)
+/// 숙박하는 밤(그 밤이 시작되는 날짜). null = 고르지 않음 → 이어서 고른 날로 센다(예전 방식).
+List<DateTime>? stays;
+/// 이 사람이 묵는 밤. 숙박 별도 집회이고 stays 가 있으면 stays, 아니면 nightsOf(daysIn).
+List<DateTime> nightsIn(DateTime start, DateTime end, {required bool separate});
+
+// QuoteLine
+final int lodging;                     // 숙박비. amount 는 지금처럼 이 사람 합계(참가비+숙박비)
+int get participation => amount - lodging;
+// stay: '전체 · 숙박 2박' / '2일 · 숙박 1박' / '전체 · 숙박 안 함'
+
+// Quote
+int get participationTotal;            // 참가비 합계
+int get lodgingTotal;                  // 숙박비 합계
+```
+
+- `quote()` 는 `fee.lodgingSeparate` 일 때만 새 식을 탄다. 끈 집회는 같은 입력에 같은 값 — 기존 테스트가 그대로 지켜 준다.
+- `isFree` 에 `lodging` 값도 넣는다.
+- `stays` 는 집회 기간 안 밤(시작일 ~ 종료일 전날)으로 잘라서 본다.
+- `Store.attendeeOf`·`_wanted`·`everyone` 이 `nightsOf(days)` 대신 `p.nightsIn(...)` 을 부른다 — 바꾸는 곳은 이 한 군데.
+
+### 20.2 화면
+
+- **집회 설정 → 회비 카드**
+  - 맨 위에 `숙박비 별도` 스위치 + 설명 "참가비와 숙박비를 따로 받습니다. 신청서에서 숙박할 밤을 따로 고릅니다."
+  - 켜면 회비표 열이 `구분 · 시작 나이 · 전체 참석 · 하루 참가 · 숙박 1박` 으로 바뀐다(결정 3).
+  - 하루짜리 집회(밤이 없음)는 스위치를 숨긴다.
+- **신청 웹 회비표(`_FeeTable`)**: 같은 열 구성. 아래 안내 "숙박비는 묵는 밤마다 따로 받습니다."
+- **신청서 일정(`_schedule`)** — 사람마다
+  - `참가` : 지금 그대로(전체 참석 스위치 + 날짜 체크).
+  - `숙박` : `전체 숙박` 스위치 + 밤 체크 `10-09(금) 밤 → 10-10(토)`. 기본은 아무것도 안 고름(= 숙박 안 함).
+  - 사람 줄 아래 금액: `성인 · 전체 · 숙박 1박 · 참가 150,000 + 숙박 30,000`.
+- **금액 표(`widgets/quote_table.dart` `QuoteTable`)** — 신청 완료·조회·관리자 화면이 같이 쓴다
+  - 사람 줄에 참가비·숙박비 두 칸, 소계 대신 `참가비 합계` / `숙박비 합계` 두 줄, 그 아래 할인·가족당·**합계** 는 지금 그대로.
+  - 숙박 별도가 아닌 집회는 지금 표 그대로.
+- **[신청·입금] 상세·참석자 화면의 일정 표시**: `stay` 문구만 바뀐다(데이터는 `quote()` 가 줌).
+
+### 20.3 확인 (테스트)
+
+`test/fee_test.dart` 에 묶음 하나: 금~일, 전체 15만·하루 6만·숙박 1박 3만(성인), 영유아 숙박 0원으로
+전체 참가+숙박 2박 → 15만+6만 / 전체 참가+숙박 안 함 → 15만+0 / 토 하루+토밤 → 6만+3만 /
+부분 참가가 전체 금액을 넘으면 전체 금액으로 / 전체참석 할인이 숙박비엔 안 붙음 / 사전등록 할인은 합계에 /
+무료 날 하루 + 숙박 → 0+숙박비 / 스위치 끈 집회는 `stays` 가 있어도 지금 값 / `stays` 없는 옛 신청은 이어진 날로 / JSON 왕복.
+`Store` 묶음: 전체 참가·숙박 안 함 → 참석자로 안 올라옴 / 띄엄띄엄 고른 밤 → `stayNights`.
+
+### 20.4 안 만드는 것
+
+- 숙소 종류별(호텔·수양관) 다른 숙박비 — 필요하면 숙박을 §21 의 셀렉트 항목으로 받고 `lodging` 을 `{종류: 구분별 금액}` 으로 넓힌다.
+- 숙박 인원 제한(선착순 마감).
+
+---
+
+## 21. 신청서 추가 항목 형식 (2026-10-19)
+
+지금 추가 항목(`Event.customFields` → `gatherings.form_fields`)은 **이름만** 있고 신청서에선 모두 글자 칸이다.
+항목을 만들 때 **형식**을 고를 수 있게 한다.
+
+| 형식 | 신청서에서 | 저장 값(`Person.extra[이름]`, 지금처럼 문자열) |
+|---|---|---|
+| 텍스트 | 글자 칸 (지금) | 입력한 글 |
+| 숫자 | 숫자 키패드 칸, 숫자만 | `'3'` |
+| 체크박스 | 체크 한 개 (항목 이름이 문구) | 체크하면 `'예'`, 안 하면 값 없음 |
+| 셀렉트박스 | 드롭다운에서 하나 | 고른 보기 |
+| 버튼 | 보기를 버튼(칩)으로 늘어놓고 하나 누름 | 고른 보기 |
+
+셀렉트박스·버튼은 만든 뒤 **보기 목록**을 적는다(추가·삭제·순서 바꾸기).
+
+### 21.0 결정 (기본값으로 진행, 다르면 알려주세요)
+
+| # | 질문 | 이대로 만듦 | 다른 선택지 |
+|---|---|---|---|
+| 1 | "버튼" 형식의 뜻 | **보기 중 하나를 버튼으로 고르는 칸**(보기가 2~4개일 때 드롭다운보다 빠름). 셀렉트박스와 값은 같고 모양만 다르다 — **확인 필요** | 여러 개 고르기 / 눌러서 무언가 하는 동작 버튼 |
+| 2 | 형식을 어디에 저장하나 | **`Event.fieldSpecs`(방배정 문서) → 저장할 때 `gatherings.field_specs jsonb` 로 복사.** 항목 이름이 지금도 `Event.customFields` 에 살고 [저장] 때 `form_fields` 로 복사되므로 같은 길을 탄다. 참석자 탭에서 이름을 바꿔도 형식이 따라간다(`store.renameCustomField` 가 키를 옮김) | 집회 설정에만 저장 |
+| 3 | 형식이 없는 기존 항목은 | **텍스트.** `field_specs` 에 키가 없으면 텍스트라 옛 집회·옛 문서가 그대로 열린다 | — |
+| 4 | 값 저장 형식 | **지금처럼 문자열 하나**(`extra` 가 `Map<String, String>`). 자동배정 묶음·CSV·검색이 손댈 것 없이 그대로 돈다 | 숫자·불리언을 JSON 그대로 |
+| 5 | 형식·보기를 바꾸면 | **이미 받은 값은 그대로 둔다.** 목록에서 지운 보기를 가진 신청은 그 글자로 보이고, 운영자가 고치면 새 목록에서 고른다 | 지운 보기 값을 비움 |
+| 6 | 서버 검사 | **안 한다.** 지금도 `extra` 는 검사하지 않고(`_check_input` 은 크기만 봄) 관리자 화면에서 다시 보면 된다. 칸 하나만 추가(`alter table ... add column if not exists field_specs jsonb not null default '{}'`) | RPC 에서 보기 목록 검사 |
+| 7 | 홈스테이 `수용 인원` | **숫자 형식으로 만든다.** 옛 집회는 텍스트 그대로(정원은 지금처럼 숫자만 뽑아 읽음) | — |
+| 8 | 운영자 쪽 편집 | **참석자 편집 창도 같은 형식으로 그린다**(드롭다운·체크·숫자). 신청서와 운영자 화면이 같은 위젯 하나(`widgets/custom_field_input.dart`, 웹 빌드 공용)를 쓴다 | 운영자 쪽은 글자 칸 그대로 |
+
+### 21.1 데이터
+
+```dart
+// gathering.dart (웹 공용)
+enum FieldType { text('텍스트'), number('숫자'), check('체크박스'), select('셀렉트박스'), choice('버튼') }
+
+class FieldSpec {
+  FieldType type;                 // 기본 text
+  List<String> options;           // select·choice 만 씀
+  bool get hasOptions => type == FieldType.select || type == FieldType.choice;
+  Map<String, dynamic> toJson();  // {'type': 'select', 'options': [...]} — text 이고 보기가 없으면 저장 안 함
+  factory FieldSpec.fromJson(Object? j);
+}
+
+// Gathering
+Map<String, FieldSpec> fieldSpecs;              // toRow 'field_specs'
+FieldSpec specOf(String field) => fieldSpecs[field] ?? FieldSpec();
+
+// models.dart Event (방배정 JSON 'fieldSpecs', 없으면 {})
+Map<String, Map<String, dynamic>> fieldSpecs;   // models.dart 는 gathering.dart 를 모르므로 JSON 모양으로 들고 있다
+```
+
+- `store.addCustomField(name, spec)` / `setFieldSpec(name, spec)` / `renameCustomField`(키 옮김) / `removeCustomField`(키 지움).
+- `Store.applyGathering` 은 서버의 `field_specs` 를 `Event.fieldSpecs` 로 가져오고, 설정 [저장] 은 `formFields` 와 함께 `fieldSpecs` 도 복사한다.
+- `schema.sql`: `gatherings` 에 `field_specs jsonb not null default '{}'` + `alter table ... add column if not exists`. `test.sql` 에 칸이 있는지 한 줄.
+
+### 21.2 화면
+
+- **항목 추가 창**(`addCustomFieldDialog`, 참석자 탭·집회 설정 공용): 이름 + 형식 세그먼트 `[텍스트 | 숫자 | 체크박스 | 셀렉트박스 | 버튼]`.
+  셀렉트박스·버튼을 고르면 바로 아래 보기 목록 편집(한 줄씩 입력 + [보기 추가], 줄마다 삭제·위아래) — 보기 하나 이상 있어야 [추가].
+- **집회 설정 → 신청서 추가 항목**: 칩에 형식을 작게 붙인다 `교회 · 셀렉트박스(5)`. 칩을 누르면 같은 창이 편집 모드로 열린다(형식·보기 고치기).
+- **신청 웹 사람 카드**: `for (final field in g.formFields)` 가 `CustomFieldInput(spec, value, onChanged)` 를 부른다.
+  체크박스는 `CheckboxListTile`, 버튼은 `ChoiceChip` 줄(폭이 모자라면 줄바꿈), 셀렉트박스는 `DropdownButtonFormField`(맨 위 `선택 안 함`).
+- **참석자 편집 창**: 같은 `CustomFieldInput`. 표·CSV 는 문자열 그대로.
+- 색·모양은 room-ui 스킬 규칙(`AppColors`, 칩·세그먼트 기존 스타일).
+
+### 21.3 확인 (테스트)
+
+- `gathering_test.dart`: `FieldSpec` JSON 왕복 / 키 없으면 text / `field_specs` 없는 옛 행 / text·보기 없음은 저장 안 함.
+- `auto_assign_test.dart`(Store): 형식 붙여 추가 → 이름 바꾸기 → 형식 따라감 / 삭제하면 형식도 지워짐 / 옛 문서(`fieldSpecs` 없음).
+- 위젯 테스트: 신청서에 셀렉트박스·버튼·체크·숫자가 그 모양으로 나오고 고른 값이 `extra` 에 들어감 /
+  항목 추가 창에서 셀렉트박스를 고르면 보기 목록이 나오고 보기 없이는 [추가]가 꺼짐 / 지운 보기 값이 깨지지 않고 보임.
+- `supabase/test.sql`: `field_specs` 칸.
+
+### 21.4 안 만드는 것
+
+- 추가 항목별 필수/선택 — 지금은 모두 선택. 필요하면 `FieldSpec.required` 한 칸으로 넓힌다(기본 항목의 `requiredFields` 와 같은 모양).
+- 여러 개 고르기(체크박스 목록), 날짜 형식, 조건부 항목(A를 고르면 B가 나옴).
+- 보기마다 추가 금액(옵션 회비) — 회비는 `quote()` 하나라는 원칙 때문에 따로 기획한다.
+
+---
+
+## 22. 구현 순서 (§20 · §21)
+
+1. §21 데이터: `FieldSpec`·`Gathering.fieldSpecs`·`Event.fieldSpecs`·Store 함수·`schema.sql` + 테스트
+2. §21 화면: 항목 추가/편집 창 → `CustomFieldInput` → 신청 웹·참석자 편집 창
+3. §20 계산: `FeeRule.lodgingSeparate/lodging`·`Person.stays/nightsIn`·`quote()`·`QuoteLine.lodging` + `fee_test`
+4. §20 동기화: `Store.attendeeOf` 등이 `nightsIn` 사용 + 테스트
+5. §20 화면: 회비 카드 스위치·열 → 신청 웹 회비표·숙박 체크 → `QuoteTable` 참가비/숙박비 합계
+6. `flutter analyze && flutter test`, CLAUDE.md 에 두 기능 한 단락씩
