@@ -397,19 +397,20 @@ void main() {
       await shot(t, 'admin_phone_drawer');
       await t.pumpWidget(const SizedBox());
       await openShell(t, 2);
+      phone(t, h: 780);
       await shot(t, 'admin_phone_rooms');
     });
   });
 
   group('신청자', () {
     testWidgets('집회 페이지', (t) async {
-      phone(t, h: 2300);
+      phone(t, h: 1340);
       await t.pumpWidget(_app(const GatheringPage(id: 'g1'), public: true));
       await shot(t, 'user_gathering');
     });
 
     testWidgets('신청서', (t) async {
-      phone(t, h: 2000);
+      phone(t, h: 1560);
       await t.pumpWidget(_app(const GatheringPage(id: 'g1'), public: true));
       await t.pumpAndSettle();
       await tap(t, find.text('신청하기'));
@@ -421,12 +422,12 @@ void main() {
       await t.pumpWidget(_app(const GatheringPage(id: 'g1'), public: true));
       await t.pumpAndSettle();
       await tap(t, find.text('신청 조회 · 수정'));
-      phone(t);
+      phone(t, h: 700);
       await shot(t, 'user_lookup');
       await t.enterText(find.byType(TextField).at(0), '01000000009');
       await t.enterText(find.byType(TextField).at(1), '1234');
       await tap(t, find.widgetWithText(FilledButton, '조회'));
-      phone(t, h: 1300);
+      phone(t, h: 960);
       await shot(t, 'user_lookup_result');
     });
 
@@ -434,11 +435,12 @@ void main() {
       phone(t);
       await seedPlan(); // 담당구역이 든 방배정을 서버에 올려 둔다
       await t.pumpWidget(_app(const StaffPage(id: 'g1'), public: true));
-      await t.pumpAndSettle();
+      phone(t, h: 560);
       await shot(t, 'staff_login');
       await t.enterText(find.byType(TextField).at(0), '01000000000');
       await t.enterText(find.byType(TextField).at(1), '1234');
       await tap(t, find.textContaining('내 담당구역 보기'));
+      phone(t, h: 520);
       await shot(t, 'staff_duty');
     });
   });
