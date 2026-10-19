@@ -857,6 +857,9 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       // 홈스테이는 수용 인원을 받아야 방 정원이 정해진다. 신청서 항목으로 넣어 둔다.
       if (base.isHomestay && !base.formFields.contains(homestayCapacityField)) {
         base.formFields.add(homestayCapacityField);
+        base.fieldSpecs[homestayCapacityField] = const FieldSpec(
+          type: FieldType.number,
+        );
       }
       final g = await remote.saveGathering(
         base

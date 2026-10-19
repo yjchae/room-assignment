@@ -16,6 +16,7 @@ import 'gathering.dart';
 import 'models.dart';
 import 'remote.dart';
 import 'theme.dart';
+import 'widgets/custom_field_input.dart';
 import 'widgets/duty_tasks.dart';
 import 'widgets/quote_table.dart';
 
@@ -878,9 +879,10 @@ class _ApplyPageState extends State<ApplyPage> {
         for (final field in g.formFields)
           Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: TextFormField(
+            child: CustomFieldInput(
+              label: field,
+              spec: g.specOf(field),
               controller: f.extra(field),
-              decoration: InputDecoration(labelText: field),
             ),
           ),
         const SizedBox(height: 4),

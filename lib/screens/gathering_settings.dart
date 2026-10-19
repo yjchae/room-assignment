@@ -8,7 +8,8 @@ import '../main.dart';
 import '../models.dart';
 import '../remote.dart';
 import '../theme.dart';
-import 'attendees.dart' show addCustomFieldDialog, removeCustomFieldDialog;
+import 'attendees.dart'
+    show addCustomFieldDialog, editCustomFieldDialog, removeCustomFieldDialog;
 import 'gatherings.dart';
 
 /// 집회 설정 (서버). 저장하면 이 PC 의 방배정 파일 이름·날짜·항목도 같이 바뀐다.
@@ -284,7 +285,12 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     if (!await ensureAdmin(context)) return;
     setState(() => saving = true);
     try {
-      g!.formFields = [...store.event.customFields];
+      g!
+        ..formFields = [...store.event.customFields]
+        ..fieldSpecs = {
+          for (final f in store.event.customFields)
+            f: ?store.event.fieldSpecs[f],
+        };
       final saved = await remote.saveGathering(g!);
       current.value = saved;
       store.applyGathering(saved);
@@ -955,7 +961,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   const Text(
-                    '참석자 탭의 사용자 정의 항목이 신청서에 그대로 나옵니다. '
+                    '참석자 탭의 사용자 정의 항목이 신청서에 그대로 나옵니다. 항목을 누르면 형식(숫자·체크박스·셀렉트박스 등)을 고칠 수 있습니다. '
                     '추가·삭제한 뒤 [저장]해야 신청서에 반영됩니다. 삭제하면 참석자들의 그 항목 값도 지워집니다.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
@@ -965,8 +971,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     runSpacing: 8,
                     children: [
                       for (final f in store.event.customFields)
-                        Chip(
-                          label: Text(f),
+                        InputChip(
+                          label: Text(_fieldChipLabel(f)),
+                          tooltip: '눌러서 이름·형식 고치기',
+                          onPressed: () async {
+                            await editCustomFieldDialog(context, f);
+                            if (mounted) setState(() {});
+                          },
                           deleteButtonTooltipMessage: "'$f' 항목 삭제",
                           onDeleted: () async {
                             final ok = await removeCustomFieldDialog(
@@ -1191,6 +1202,16 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// "교회 · 셀렉트박스(5)" — 텍스트 항목은 이름만.
+  String _fieldChipLabel(String f) {
+    final spec = store.event.specOf(f);
+    return switch (spec.type) {
+      FieldType.text => f,
+      FieldType.select => '$f · ${spec.type.label}(${spec.options.length})',
+      _ => '$f · ${spec.type.label}',
+    };
   }
 
   Widget _card(String title, List<Widget> children) => Padding(

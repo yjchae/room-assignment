@@ -50,6 +50,7 @@ create table if not exists public.gatherings (
   fee jsonb not null default '{}',          -- FeeRule (lib/gathering.dart)
   bank jsonb,                                -- {bank, account, holder}
   form_fields text[] not null default '{}',  -- 사용자 정의 항목
+  field_specs jsonb not null default '{}',   -- 추가 항목 형식 {이름: {type, options}}. 없는 이름 = 텍스트
   hidden_fields text[] not null default '{}',  -- 신청서에서 뺀 기본 항목: birthYear, gender, cell, zone, minister
   shown_fields text[] not null default '{}',   -- 기본이 '안 받음'인 기본 항목 중 켠 것: staff
   required_fields text[] not null default '{birthYear,gender}',  -- 신청서에서 꼭 채워야 하는 기본 항목
@@ -72,6 +73,7 @@ alter table public.gatherings add column if not exists required_fields text[] no
 alter table public.gatherings add column if not exists shown_fields text[] not null default '{}';
 alter table public.gatherings add column if not exists minister_notice_on boolean not null default true;
 alter table public.gatherings add column if not exists minister_notice text;
+alter table public.gatherings add column if not exists field_specs jsonb not null default '{}';
 
 -- 집회별 운영자. 이 집회의 설정·신청·방배정만 만질 수 있다 (새 집회는 못 만든다).
 -- 전체 운영자(public.admins)는 모든 집회를 관리하므로 여기 없어도 된다.

@@ -1225,4 +1225,102 @@ void main() {
       expect(reg('r2', RegStatus.pending, []).assigned, isEmpty);
     });
   });
+  group('추가 항목 형식 (PLAN_GATHERING §21)', () {
+    const church = FieldSpec(type: FieldType.select, options: ['A교회', 'B교회']);
+
+    test('FieldSpec JSON 왕복 — 보기는 셀렉트박스에만, 텍스트는 저장하지 않는다', () {
+      expect(FieldSpec.fromJson(church.toJson()), church);
+      expect(
+        FieldSpec.fromJson({'type': 'toggle', 'options': ['x']}),
+        const FieldSpec(type: FieldType.toggle),
+      );
+      expect(FieldSpec.fromJson(null), const FieldSpec());
+      expect(FieldSpec.fromJson({'type': '모르는 형식'}).type, FieldType.text);
+      expect(
+        fieldSpecsToJson({'교회': church, '메모': const FieldSpec()}).keys,
+        ['교회'],
+      );
+    });
+
+    test('Gathering: 형식을 서버 행으로 주고받고, 없는 이름은 텍스트', () {
+      final g = sample()..fieldSpecs = {'교회': church};
+      final back = Gathering.fromRow({...g.toRow(), 'id': g.id});
+      expect(back.specOf('교회'), church);
+      expect(back.specOf('직분').type, FieldType.text);
+    });
+
+    test('field_specs 칸이 없는 DB 에는 형식이 없을 때 그 칸을 보내지 않는다', () {
+      // 기존 집회 + schema.sql 을 아직 안 돌린 DB: 보내면 저장이 통째로 실패한다.
+      final old = Gathering.fromRow({...sample().toRow(), 'id': 'g1'});
+      expect(old.toRow().containsKey('field_specs'), isFalse);
+      // 칸이 있는 DB 에서 읽은 행은 빈 값도 보낸다 — 형식을 모두 지운 것을 저장하려면.
+      final withCol = Gathering.fromRow({
+        ...sample().toRow(),
+        'id': 'g1',
+        'field_specs': {'교회': church.toJson()},
+      })..fieldSpecs.clear();
+      expect(withCol.toRow()['field_specs'], <String, dynamic>{});
+      expect(withCol.copy().toRow()['field_specs'], <String, dynamic>{});
+    });
+
+    test('Store: 형식 붙여 추가 → 이름 바꾸면 따라가고, 지우면 같이 지워진다', () {
+      final s = tmpStore();
+      expect(s.addCustomField('교회', church), isTrue);
+      expect(s.event.specOf('교회'), church);
+      s.renameCustomField('교회', '소속');
+      expect(s.event.fieldSpecs.keys, ['소속']);
+      s.setFieldSpec('소속', const FieldSpec(type: FieldType.number));
+      expect(s.event.specOf('소속').type, FieldType.number);
+      s.setFieldSpec('소속', const FieldSpec());
+      expect(s.event.fieldSpecs, isEmpty, reason: '텍스트로 되돌리면 저장할 것이 없다');
+      s.setFieldSpec('소속', church);
+      s.removeCustomField('소속');
+      expect(s.event.fieldSpecs, isEmpty);
+    });
+
+    test('형식을 바꿔도 이미 받은 값은 그대로', () {
+      final s = tmpStore();
+      s.addCustomField('교회');
+      s.event.attendees.add(
+        Attendee(
+          id: 'a',
+          name: '가',
+          gender: 'M',
+          age: 30,
+          checkIn: start,
+          checkOut: end,
+          extra: {'교회': '목록에 없는 교회'},
+        ),
+      );
+      s.setFieldSpec('교회', church);
+      expect(s.event.attendees.single.extra['교회'], '목록에 없는 교회');
+    });
+
+    test('방배정 문서: 형식이 없으면 JSON 에 키가 안 생기고, 있으면 왕복한다', () {
+      final e = Event(
+        name: 'x',
+        startDate: start,
+        endDate: end,
+        customFields: ['교회'],
+      );
+      final old = e.toJson();
+      expect(old.containsKey('fieldSpecs'), isFalse);
+      expect(Event.fromJson(old).toJson(), old, reason: '기존 문서는 그대로');
+      e.fieldSpecs['교회'] = church;
+      expect(Event.fromJson(e.toJson()).specOf('교회'), church);
+    });
+
+    test('집회 설정을 열면 서버의 형식을 가져오고, 문서에 있는 형식이 이긴다', () {
+      final s = tmpStore();
+      s.event.customFields.add('직분');
+      s.event.fieldSpecs['직분'] = const FieldSpec(type: FieldType.check);
+      s.applyGathering(
+        sample()
+          ..formFields = ['교회', '직분']
+          ..fieldSpecs = {'교회': church, '직분': const FieldSpec()},
+      );
+      expect(s.event.specOf('교회'), church);
+      expect(s.event.specOf('직분').type, FieldType.check);
+    });
+  });
 }

@@ -8,6 +8,7 @@ import '../responsive.dart';
 import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
+import '../widgets/custom_field_input.dart';
 import '../widgets/room_board.dart' show PayBadge;
 import 'gatherings.dart';
 
@@ -1288,17 +1289,22 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
                   Row(
                     children: [
                       Expanded(
-                        child: TextField(
-                          controller: extras[f],
-                          decoration: InputDecoration(labelText: f),
+                        child: CustomFieldInput(
+                          label: f,
+                          spec: store.event.specOf(f),
+                          controller: extras[f]!,
                         ),
                       ),
                       IconButton(
-                        tooltip: '\'$f\' 항목 이름 바꾸기',
+                        tooltip: '\'$f\' 항목 고치기 (이름·형식)',
                         icon: const Icon(Icons.edit_outlined, size: 18),
                         onPressed: () async {
-                          final ok = await renameCustomFieldDialog(context, f);
-                          if (ok) setLocal(() {});
+                          final to = await editCustomFieldDialog(context, f);
+                          if (to == null) return;
+                          if (to != f) {
+                            extras[to] = extras.remove(f)!;
+                          }
+                          setLocal(() {});
                         },
                       ),
                       IconButton(
@@ -1503,82 +1509,201 @@ Future<void> _splitDialog(BuildContext context, Attendee a) async {
 }
 
 /// 참석자에 새 항목(예: 교회)을 만든다. 만든 이름을 돌려준다.
-Future<String?> addCustomFieldDialog(BuildContext context) async {
-  final ctl = TextEditingController();
+Future<String?> addCustomFieldDialog(BuildContext context) =>
+    _customFieldDialog(context);
+
+/// 항목의 이름·형식을 고친다. 바뀐(또는 그대로인) 이름을 돌려주고, 취소하면 null.
+Future<String?> editCustomFieldDialog(BuildContext context, String name) =>
+    _customFieldDialog(context, editing: name);
+
+/// 항목 추가·고치기 창 하나. 이름 + 형식([텍스트 | 숫자 | 체크박스 | 셀렉트박스 | 토글 버튼]),
+/// 셀렉트박스면 보기 목록까지 (PLAN_GATHERING §21). 이미 받은 값은 형식을 바꿔도 그대로 둔다.
+Future<String?> _customFieldDialog(
+  BuildContext context, {
+  String? editing,
+}) async {
+  final old = editing == null ? const FieldSpec() : store.event.specOf(editing);
+  final ctl = TextEditingController(text: editing ?? '');
+  var type = old.type;
+  final options = [
+    for (final o in old.options) TextEditingController(text: o),
+  ];
+  if (options.isEmpty) options.add(TextEditingController());
   final messenger = ScaffoldMessenger.of(context);
+
+  // 빈 줄은 버리고, 같은 보기는 하나만.
+  List<String> picked() => {
+    for (final o in options)
+      if (o.text.trim().isNotEmpty) o.text.trim(),
+  }.toList();
+
   final ok = await showDialog<bool>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('참석자 항목 추가'),
-      content: SizedBox(
-        width: 320,
-        child: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: '항목 이름',
-            helperText: '예: 교회, 직분 — 모든 참석자에게 생깁니다',
+    builder: (context) => StatefulBuilder(
+      builder: (context, setLocal) {
+        final needOptions = type == FieldType.select && picked().isEmpty;
+        void submit() {
+          if (!needOptions) Navigator.pop(context, true);
+        }
+
+        return AlertDialog(
+          title: Text(editing == null ? '참석자 항목 추가' : '항목 고치기'),
+          content: SizedBox(
+            width: 360,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: ctl,
+                    autofocus: editing == null,
+                    decoration: const InputDecoration(
+                      labelText: '항목 이름',
+                      helperText: '예: 교회, 직분 — 모든 참석자에게 생깁니다',
+                    ),
+                    onSubmitted: (_) => submit(),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '형식',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final t in FieldType.values)
+                        ChoiceChip(
+                          label: Text(t.label),
+                          selected: type == t,
+                          onSelected: (_) => setLocal(() => type = t),
+                        ),
+                    ],
+                  ),
+                  if (editing != null && type != old.type)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        '이미 받은 값은 그대로 둡니다.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ),
+                  if (type == FieldType.select) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      '보기 목록',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    for (var i = 0; i < options.length; i++)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: options[i],
+                              decoration: InputDecoration(
+                                hintText: '보기 ${i + 1}',
+                              ),
+                              onChanged: (_) => setLocal(() {}),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '위로',
+                            icon: const Icon(Icons.arrow_upward, size: 18),
+                            onPressed: i == 0
+                                ? null
+                                : () => setLocal(
+                                    () => options.insert(
+                                      i - 1,
+                                      options.removeAt(i),
+                                    ),
+                                  ),
+                          ),
+                          IconButton(
+                            tooltip: '아래로',
+                            icon: const Icon(Icons.arrow_downward, size: 18),
+                            onPressed: i == options.length - 1
+                                ? null
+                                : () => setLocal(
+                                    () => options.insert(
+                                      i + 1,
+                                      options.removeAt(i),
+                                    ),
+                                  ),
+                          ),
+                          IconButton(
+                            tooltip: '보기 삭제',
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: options.length == 1
+                                ? null
+                                : () => setLocal(() => options.removeAt(i)),
+                          ),
+                        ],
+                      ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('보기 추가'),
+                      onPressed: () =>
+                          setLocal(() => options.add(TextEditingController())),
+                    ),
+                    if (needOptions)
+                      const Text(
+                        '보기를 하나 이상 적으세요.',
+                        style: TextStyle(fontSize: 12, color: AppColors.danger),
+                      ),
+                  ],
+                ],
+              ),
+            ),
           ),
-          onSubmitted: (_) => Navigator.pop(context, true),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('취소'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('추가'),
-        ),
-      ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: needOptions ? null : submit,
+              child: Text(editing == null ? '추가' : '저장'),
+            ),
+          ],
+        );
+      },
     ),
   );
   if (ok != true) return null;
   final name = ctl.text.trim();
-  if (!store.addCustomField(name)) {
+  final spec = FieldSpec(type: type, options: picked());
+  if (editing == null) {
+    if (!store.addCustomField(name, spec)) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(name.isEmpty ? '이름을 입력하세요' : '이미 있는 항목입니다')),
+      );
+      return null;
+    }
+    return name;
+  }
+  if (name != editing && !store.renameCustomField(editing, name)) {
     messenger.showSnackBar(
-      SnackBar(content: Text(name.isEmpty ? '이름을 입력하세요' : '이미 있는 항목입니다')),
+      SnackBar(
+        content: Text(name.isEmpty ? '이름을 입력하세요' : '같은 이름의 항목이 있어 바꾸지 못했습니다'),
+      ),
     );
     return null;
   }
+  if (spec != old) store.setFieldSpec(name, spec);
   return name;
-}
-
-Future<bool> renameCustomFieldDialog(BuildContext context, String from) async {
-  final ctl = TextEditingController(text: from);
-  final messenger = ScaffoldMessenger.of(context);
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('항목 이름 바꾸기'),
-      content: SizedBox(
-        width: 320,
-        child: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: '새 이름'),
-          onSubmitted: (_) => Navigator.pop(context, true),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('취소'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('변경'),
-        ),
-      ],
-    ),
-  );
-  if (ok != true) return false;
-  if (!store.renameCustomField(from, ctl.text)) {
-    messenger.showSnackBar(const SnackBar(content: Text('바꾸지 못했습니다')));
-    return false;
-  }
-  return true;
 }
 
 Future<bool> removeCustomFieldDialog(BuildContext context, String name) async {

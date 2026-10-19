@@ -4,6 +4,8 @@ library;
 
 import 'dart:math' as math;
 
+import 'models.dart' show FieldSpec, fieldSpecsFromJson, fieldSpecsToJson;
+
 enum AgeGroup {
   adult('성인'),
   youth('중고등'),
@@ -338,6 +340,7 @@ class Gathering {
     FeeRule? fee,
     Bank? bank,
     List<String>? formFields,
+    Map<String, FieldSpec>? fieldSpecs,
     List<String>? hiddenFields,
     List<String>? shownFields,
     List<String>? requiredFields,
@@ -352,6 +355,7 @@ class Gathering {
        fee = fee ?? FeeRule(),
        bank = bank ?? Bank(),
        formFields = formFields ?? [],
+       fieldSpecs = fieldSpecs ?? {},
        hiddenFields = hiddenFields ?? [],
        shownFields = shownFields ?? [],
        requiredFields = requiredFields ?? [...defaultRequiredFields];
@@ -383,6 +387,14 @@ class Gathering {
 
   /// 신청서에 나오는 사용자 정의 항목. 관리자 앱의 참석자 항목과 같은 이름.
   List<String> formFields;
+
+  /// 추가 항목의 형식(셀렉트박스·숫자 …). 키가 없으면 텍스트 (PLAN_GATHERING §21).
+  Map<String, FieldSpec> fieldSpecs;
+  FieldSpec specOf(String field) => fieldSpecs[field] ?? const FieldSpec();
+
+  /// 서버에서 읽은 행에 `field_specs` 칸이 있었다. 이때만 빈 값({})도 보낸다 — 칸이 없는
+  /// DB(schema.sql 을 아직 안 돌림)에 보내면 저장이 통째로 실패하기 때문이다.
+  bool _hasSpecsColumn = false;
 
   /// 운영자가 신청서에서 뺀 기본 항목: 'birthYear' · 'gender' · 'cell' · 'zone' · 'minister'.
   /// 출생연도를 빼면 모두 성인 금액으로 계산한다.
@@ -486,6 +498,8 @@ class Gathering {
     'fee': fee.toJson(),
     'bank': bank.toJson(),
     'form_fields': formFields,
+    if (fieldSpecs.isNotEmpty || _hasSpecsColumn)
+      'field_specs': fieldSpecsToJson(fieldSpecs),
     'hidden_fields': hiddenFields,
     'shown_fields': shownFields,
     'required_fields': requiredFields,
@@ -512,6 +526,7 @@ class Gathering {
     fee: FeeRule.fromJson(r['fee']),
     bank: Bank.fromJson(r['bank']),
     formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
+    fieldSpecs: fieldSpecsFromJson(r['field_specs']),
     hiddenFields: [for (final f in (r['hidden_fields'] as List? ?? [])) '$f'],
     shownFields: [for (final f in (r['shown_fields'] as List? ?? [])) '$f'],
     requiredFields: r['required_fields'] is List
@@ -521,7 +536,7 @@ class Gathering {
     deadline: _date(r['deadline']),
     ministerNoticeOn: r['minister_notice_on'] != false,
     ministerNotice: _str(r['minister_notice']),
-  );
+  ).._hasSpecsColumn = r.containsKey('field_specs');
 }
 
 enum RegStatus {
