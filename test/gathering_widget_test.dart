@@ -1449,10 +1449,7 @@ void main() {
       expect(g2.name, '신촌하나교회 가족수양회'); // 이름이 비어 있으면 원본 이름
       expect(g2.bank.account, '000-00-0000'); // 설정 복사
       expect((g2.open, g2.posterUrl), (false, null));
-      // 기존 집회의 설정을 복사해도 새 집회라 숙박비 별도를 켤 수 있다 (꺼진 채로).
-      expect(fake.gs.first.fee.canSeparateLodging, isFalse);
-      expect(g2.fee.canSeparateLodging, isTrue);
-      expect(g2.fee.separatesLodging, isFalse);
+      expect(g2.fee.lodgingSeparate, isFalse, reason: '새 집회도 꺼진 채로 시작');
       final e = Event.fromJson(fake.plans[g2.id]!);
       expect(e.rooms.single.roomNo, '301');
       expect(e.attendees.single.roomId, isNull);
@@ -1624,7 +1621,7 @@ void main() {
 
     testWidgets('집회 설정: 일정표를 적어 저장하면 서버로 간다', (tester) async {
       current.value = sample();
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(tester.takeException(), isNull);
       expect(find.text('일정표'), findsOneWidget);
@@ -1992,7 +1989,7 @@ void main() {
     testWidgets('집회 설정: 추가 항목을 지우고 저장하면 신청서에서 빠진다', (tester) async {
       current.value = sample()..formFields = ['교회'];
       store.event.customFields.add('교회');
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       await tester.tap(find.byTooltip("'교회' 항목 삭제"));
       await tester.pumpAndSettle();
@@ -2008,7 +2005,7 @@ void main() {
 
     testWidgets('집회 설정: 셀렉트박스 항목을 보기와 함께 추가하고 저장한다', (tester) async {
       current.value = sample();
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       await tester.tap(find.widgetWithText(ActionChip, '항목 추가'));
       await tester.pumpAndSettle();
@@ -2041,7 +2038,7 @@ void main() {
     testWidgets('집회 설정: 항목을 눌러 형식을 바꾼다', (tester) async {
       current.value = sample()..formFields = ['차량'];
       store.event.customFields.add('차량');
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       await tester.tap(find.widgetWithText(InputChip, '차량'));
       await tester.pumpAndSettle();
@@ -2054,18 +2051,24 @@ void main() {
       expect(find.text('차량 · 토글 버튼'), findsOneWidget);
     });
 
-    testWidgets('집회 설정: 기존 집회에는 숙박비 별도 스위치가 없다', (tester) async {
+    testWidgets('집회 설정: 기존 집회에도 숙박비 별도 스위치가 꺼진 채로 있다', (tester) async {
       current.value = sample();
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
-      expect(find.text('숙박비 별도'), findsNothing);
+      final sw = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, '숙박비 별도'),
+      );
+      expect(sw.value, isFalse);
       expect(find.text('1박당 (부분 참석)'), findsOneWidget);
+      // 켜지 않고 저장하면 회비 JSON 에 새 키가 생기지 않는다.
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.fee.toJson().containsKey('lodgingSeparate'), isFalse);
     });
 
-    testWidgets('집회 설정: 새 집회는 숙박비 별도를 켜고 연령별 숙박비를 저장한다', (tester) async {
-      fake.gs.single.fee.lodgingSeparate = false;
+    testWidgets('집회 설정: 기존 집회에서 숙박비 별도를 켜고 연령별 숙박비를 저장한다', (tester) async {
       current.value = fake.gs.single.copy();
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(find.text('숙박 1박'), findsNothing);
       await tester.tap(find.widgetWithText(SwitchListTile, '숙박비 별도'));
@@ -2087,7 +2090,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '저장'));
       await tester.pumpAndSettle();
       final saved = fake.gs.single.fee;
-      expect(saved.separatesLodging, isTrue);
+      expect(saved.lodgingSeparate, isTrue);
       expect(saved.lodging[AgeGroup.adult], 30000);
       expect(saved.perNight[AgeGroup.adult], 70000, reason: '숨긴 1박당 금액은 지우지 않는다');
     });

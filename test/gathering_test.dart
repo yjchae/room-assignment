@@ -1367,7 +1367,7 @@ void main() {
         isFalse,
       );
       final back = Gathering.fromRow(row);
-      expect(back.fee.canSeparateLodging, isFalse);
+      expect(back.fee.lodgingSeparate, isFalse);
       expect({...back.toRow(), 'id': 'g1'}, row);
     });
   });

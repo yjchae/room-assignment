@@ -460,9 +460,10 @@ void main() {
       expect(x.nightsIn(fri, sun, separate: true), [fri]);
     });
 
-    test('끈 집회(false)·기존 집회(null)는 stays 가 있어도 지금 계산 그대로', () {
-      for (final sep in [false, null]) {
-        final f = planRule()..lodgingSeparate = sep;
+    test('끈 집회는 stays 가 있어도 지금 계산 그대로', () {
+      {
+        final f = planRule();
+        expect(f.lodgingSeparate, isFalse, reason: '기본은 꺼짐');
         final family = [
           p('아빠', 1985),
           p('엄마', 1987),
@@ -476,21 +477,22 @@ void main() {
       }
     });
 
-    test('JSON: 켠 집회는 왕복, 기존 집회는 키가 안 생긴다', () {
+    test('JSON: 켠 집회는 왕복, 끈 집회는 키가 안 생긴다', () {
       final back = FeeRule.fromJson(rule().toJson());
-      expect(back.separatesLodging, isTrue);
+      expect(back.lodgingSeparate, isTrue);
       expect(back.lodging[AgeGroup.adult], 30000);
 
       final old = planRule().toJson();
       expect(old.containsKey('lodgingSeparate'), isFalse);
       expect(old.containsKey('lodging'), isFalse);
       final reread = FeeRule.fromJson(old);
-      expect(reread.canSeparateLodging, isFalse);
+      expect(reread.lodgingSeparate, isFalse, reason: '키가 없는 기존 집회 = 꺼짐');
       expect(reread.toJson(), old, reason: '기존 집회를 열고 저장해도 그대로');
 
-      final fresh = FeeRule(lodgingSeparate: false);
-      expect(FeeRule.fromJson(fresh.toJson()).canSeparateLodging, isTrue);
-      expect(FeeRule.fromJson(fresh.toJson()).separatesLodging, isFalse);
+      // 켰다가 다시 끄면 키가 빠져 예전 JSON 으로 돌아간다. 숙박비 금액은 남는다.
+      final off = FeeRule.fromJson(rule().toJson())..lodgingSeparate = false;
+      expect(off.toJson().containsKey('lodgingSeparate'), isFalse);
+      expect(FeeRule.fromJson(off.toJson()).lodging[AgeGroup.adult], 30000);
     });
 
     test('Person.stays JSON: 고른 것만 쓰고, 없으면 null', () {

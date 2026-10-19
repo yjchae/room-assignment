@@ -31,7 +31,7 @@ class FeeRule {
     this.fullDiscountPct = 0,
     List<EarlyDiscount>? early,
     List<DateTime>? freeDays,
-    this.lodgingSeparate,
+    this.lodgingSeparate = false,
     Map<AgeGroup, int>? lodging,
   }) : full = full ?? {},
        lodging = lodging ?? {},
@@ -68,11 +68,8 @@ class FeeRule {
   bool isFreeDay(DateTime d) => freeDays.any((f) => _day(f) == _day(d));
 
   /// 숙박비 별도 (PLAN_GATHERING §20). 켜면 참가비(전체 참석 · 하루 참가)와 숙박비(1박)를 따로 받고,
-  /// 신청서에서 숙박할 밤을 따로 고른다.
-  /// null = 이 기능 전에 만든 집회 → 스위치를 안 보이고 켤 수 없다 (§22). 새 집회는 만들 때 false 를 넣는다.
-  bool? lodgingSeparate;
-  bool get canSeparateLodging => lodgingSeparate != null;
-  bool get separatesLodging => lodgingSeparate == true;
+  /// 신청서에서 숙박할 밤을 따로 고른다. 기본은 꺼짐 — 기존 집회도 켤 수 있다 (§22).
+  bool lodgingSeparate;
 
   /// 숙박 1박 [구분]. 숙박비 별도일 때만 쓴다. 키가 없으면 0원.
   Map<AgeGroup, int> lodging;
@@ -108,7 +105,7 @@ class FeeRule {
   /// 숙박비 별도면 쓰지 않는 1박당(perNight) 대신 숙박비(lodging)를 본다.
   bool get isFree => [
     ...full.values,
-    ...(separatesLodging ? lodging.values : perNight.values),
+    ...(lodgingSeparate ? lodging.values : perNight.values),
     ...dayOnly.values,
     perRegistration,
   ].every((v) => v == 0);
@@ -125,8 +122,8 @@ class FeeRule {
         {'fromDays': e.fromDays, 'toDays': e.toDays, 'pct': e.pct},
     ],
     'freeDays': [for (final d in freeDays) ymd(d)],
-    // 기존 집회(null)는 키를 안 쓴다 — 열고 저장해도 회비 JSON 이 그대로다 (§22).
-    'lodgingSeparate': ?lodgingSeparate,
+    // 켰을 때만 쓴다 — 끈 집회는 열고 저장해도 회비 JSON 이 예전 그대로다 (§22).
+    if (lodgingSeparate) 'lodgingSeparate': true,
     if (lodging.isNotEmpty) 'lodging': _groupsOut(lodging),
   };
 
@@ -152,9 +149,7 @@ class FeeRule {
         for (final d in (j['freeDays'] is List ? j['freeDays'] as List : []))
           ?_date(d),
       ],
-      lodgingSeparate: j['lodgingSeparate'] is bool
-          ? j['lodgingSeparate'] as bool
-          : null,
+      lodgingSeparate: j['lodgingSeparate'] == true,
       lodging: _groupsIn(j['lodging']),
     );
   }
@@ -845,7 +840,7 @@ class Quote {
 /// - 일정은 집회 기간 안으로 잘라서 본다.
 /// - 부분 참석 금액은 전체 참석자가 내는 금액을 넘지 않는다.
 /// - 참석자가 없으면 그룹당 금액도 붙지 않는다 (빈 신청서에 금액이 뜨지 않게).
-/// - 숙박비 별도([FeeRule.separatesLodging])면 [_separateLine] — 참가비 + 숙박비 (PLAN_GATHERING §20).
+/// - 숙박비 별도([FeeRule.lodgingSeparate])면 [_separateLine] — 참가비 + 숙박비 (PLAN_GATHERING §20).
 Quote quote(
   FeeRule fee, {
   required DateTime start,
@@ -860,7 +855,7 @@ Quote quote(
   final fullPct = fee.fullDiscountPct.clamp(0, 100);
 
   QuoteLine line(Person p) {
-    if (fee.separatesLodging) return _separateLine(fee, p, s, e);
+    if (fee.lodgingSeparate) return _separateLine(fee, p, s, e);
     final g = fee.groupOf(s.year - p.birthYear);
     final days = p.daysIn(s, e);
 

@@ -854,9 +854,6 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
               ..backgroundUrl = null)
           : Gathering(name: n, start: start, end: end);
       base.kind = kind;
-      // 숙박비 별도는 새 집회부터 켤 수 있다 — 키를 넣어 두면 설정 화면에 스위치가 보인다 (§22).
-      // 기존 집회의 설정을 복사해 만들어도 새 집회다.
-      base.fee.lodgingSeparate ??= false;
       // 홈스테이는 수용 인원을 받아야 방 정원이 정해진다. 신청서 항목으로 넣어 둔다.
       if (base.isHomestay && !base.formFields.contains(homestayCapacityField)) {
         base.formFields.add(homestayCapacityField);

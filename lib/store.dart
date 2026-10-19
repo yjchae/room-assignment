@@ -152,7 +152,7 @@ class Store extends ChangeNotifier {
     final nights = p.nightsIn(
       g.start,
       g.end,
-      separate: g.fee.separatesLodging,
+      separate: g.fee.lodgingSeparate,
     );
     final last = nights.lastOrNull;
     final gap =
@@ -221,7 +221,7 @@ class Store extends ChangeNotifier {
         final nights = p.nightsIn(
           g.start,
           g.end,
-          separate: g.fee.separatesLodging,
+          separate: g.fee.lodgingSeparate,
         );
         if (nights.isEmpty) out.add(attendeeOf(g, r, p));
       }

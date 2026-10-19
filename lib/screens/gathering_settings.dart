@@ -411,7 +411,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       );
     }
     final x = g!;
-    final cols = _feeColsFor(separate: x.fee.separatesLodging);
+    final cols = _feeColsFor(separate: x.fee.lodgingSeparate);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -613,11 +613,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                 ]),
                 _card('회비', [
-                  // 새 집회에만 보인다 — 기존 집회는 예전 방식 그대로 (§22). 하루짜리는 밤이 없고,
+                  // 기본은 꺼짐 — 끈 동안은 예전 방식 그대로 (§22). 하루짜리는 밤이 없고,
                   // 홈스테이 신청자는 재워 주는 가정이라 숙박비가 뜻이 없다.
-                  if (x.fee.canSeparateLodging &&
-                      x.nights > 0 &&
-                      !x.isHomestay) ...[
+                  if (x.nights > 0 && !x.isHomestay) ...[
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('숙박비 별도'),
@@ -625,7 +623,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                         '참가비와 숙박비를 따로 받습니다. 신청서에서 날짜마다 참석·숙박을 따로 고릅니다. '
                         '켜거나 끄면 이미 들어온 신청의 금액도 새 규칙으로 다시 계산됩니다.',
                       ),
-                      value: x.fee.separatesLodging,
+                      value: x.fee.lodgingSeparate,
                       onChanged: (v) =>
                           setState(() => x.fee.lodgingSeparate = v),
                     ),
@@ -665,7 +663,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                                       suffixText: col == 'minAge' ? '세~' : '원',
                                       hintText: col != 'full'
                                           ? '0'
-                                          : x.fee.separatesLodging
+                                          : x.fee.lodgingSeparate
                                           ? '하루×${x.days.length}'
                                           : '1박×${x.nights}',
                                     ),
@@ -678,7 +676,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    x.fee.separatesLodging
+                    x.fee.lodgingSeparate
                         ? '나이는 연 나이(집회 연도 − 출생연도)입니다. 참가비는 전체 참석을 비워 두면 하루 참가 × ${x.days.length}일로 계산하고, '
                               '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다. 숙박비는 묵는 밤마다 숙박 1박 금액을 받습니다.'
                         : '나이는 연 나이(집회 연도 − 출생연도)입니다. 전체 참석을 비워 두면 1박당 × ${x.nights}박으로 계산하고, '

@@ -329,7 +329,7 @@ class _FeeTable extends StatelessWidget {
       return hi <= lo ? '$lo세' : '$lo~$hi세';
     }
 
-    final separate = f.separatesLodging;
+    final separate = f.lodgingSeparate;
     // 전체 참석자가 실제로 내는 금액 (정액 또는 1박×박수, 전체참석 할인 반영).
     // 숙박비 별도면 참가비만 — 정액 또는 하루 참가 × 일수.
     int fullOf(AgeGroup ag) =>
@@ -544,7 +544,7 @@ class _PersonForm {
       relation: relation,
       days: _allOpenDays(g) ? null : ([...days!]..sort()),
       // 숙박비 별도 집회만 숙박을 따로 낸다. 마지막 날 밤은 집회 밖이라 고를 수 없다.
-      stays: g.fee.separatesLodging
+      stays: g.fee.lodgingSeparate
           ? ([
               for (final d in g.days.take(g.nights))
                 if (stays.contains(d)) d,
@@ -955,7 +955,7 @@ class _ApplyPageState extends State<ApplyPage> {
   );
 
   Widget _schedule(_PersonForm f) {
-    if (g.fee.separatesLodging) return _stayTable(f);
+    if (g.fee.lodgingSeparate) return _stayTable(f);
     final days = g.days;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

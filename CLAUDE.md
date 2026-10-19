@@ -36,7 +36,7 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 **회비 계산은 `gathering.dart` 의 `quote()` 하나뿐이다.** 신청 웹·조회·관리자 화면·참석자 가져오기가 모두 이 함수를 부른다. 따로 계산하면 금액이 어긋난다.
 당일 무료 날(`FeeRule.freeDays`, 회비 JSON 안 — 서버 변경 없음)은 그 날 **하루만 당일로** 오면 0원이고, 그 날을 끼고 1박이라도 묵으면 보통 금액이다(`PLAN_GATHERING.md` §18).
-**숙박비 별도**(`FeeRule.lodgingSeparate`, 회비 JSON 안 — 서버 변경 없음)를 켜면 `quote()` 가 `_separateLine` 으로 참가비(전체 참석 · 하루 참가=`dayOnly`)와 숙박비(`lodging[구분]` × 묵는 밤)를 따로 센다. 묵는 밤은 신청서의 날짜 줄 [참석][숙박] 체크로 받은 `Person.stays` 이고, 어디서든 `Person.nightsIn()` 으로 읽는다(`stays` 가 없으면 이어진 날로 센다). **새 집회만 켤 수 있다** — `lodgingSeparate == null` 이면 이 기능 전에 만든 집회라 스위치를 숨기고, [새 집회] 만들기가 `false` 를 넣는다. 기존 집회를 열고 저장해도 회비 JSON 이 바뀌지 않게 null·빈 값은 쓰지 않는다(`PLAN_GATHERING.md` §20·§22).
+**숙박비 별도**(`FeeRule.lodgingSeparate`, 회비 JSON 안 — 서버 변경 없음)를 켜면 `quote()` 가 `_separateLine` 으로 참가비(전체 참석 · 하루 참가=`dayOnly`)와 숙박비(`lodging[구분]` × 묵는 밤)를 따로 센다. 묵는 밤은 신청서의 날짜 줄 [참석][숙박] 체크로 받은 `Person.stays` 이고, 어디서든 `Person.nightsIn()` 으로 읽는다(`stays` 가 없으면 이어진 날로 센다). 기존 집회를 포함해 모든 집회에서 켤 수 있고 **기본은 꺼짐**이다. 끈 집회를 열고 저장해도 회비 JSON 이 바뀌지 않게 `lodgingSeparate` 는 켰을 때만, `lodging` 은 값이 있을 때만 쓴다(`PLAN_GATHERING.md` §20·§22).
 
 **전역 상태** (`lib/main.dart`): `store`(방배정 `Store`, ChangeNotifier), `current`(열어 둔 `Gathering`), `tabIndex`. 탭 번호는 숫자 대신 `settingsTab`/`registrationsTab`/`assignTab` 상수로 쓴다. 서버 호출은 전부 `lib/remote.dart` 의 전역 `remote` 로 하고, 테스트는 여기에 `Remote` 를 상속한 가짜(`FakeRemote`, `PlanRemote`)를 끼운다.
 
