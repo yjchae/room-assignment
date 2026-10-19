@@ -14,6 +14,9 @@ const publicSiteUrl = 'https://yjchae.github.io/room-assignment/';
 /// Supabase 대시보드 → Authentication → URL Configuration → Redirect URLs 에 등록해야 한다.
 const adminSiteUrl = '${publicSiteUrl}admin/';
 
+/// 집회 운영자 초대 링크. 이 링크로 가입하거나 로그인하면 그 집회의 운영자가 된다.
+String inviteLink(String code) => '$adminSiteUrl?join=$code';
+
 /// 카톡으로 공유할 신청 링크.
 String applyLink(String gatheringId) => '$publicSiteUrl?g=$gatheringId';
 

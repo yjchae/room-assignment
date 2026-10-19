@@ -9,6 +9,13 @@ import '../theme.dart';
 /// 운영자 로그인/로그아웃이 일어날 때마다 올라간다. 서버 탭들이 이걸 보고 다시 그린다.
 final signInCount = ValueNotifier<int>(0);
 
+/// 집회 운영자 초대 링크(`admin/?join=<코드>`)로 들어왔을 때의 코드. 로그인(또는 이미 로그인돼
+/// 있으면 집회 목록을 처음 읽을 때)에 그 집회의 운영자로 등록하고 비운다.
+String? pendingInvite = Uri.base.queryParameters['join'];
+
+/// 집회 목록이 계정을 들이지 못하고 로그아웃시켰을 때 그 이유. 로그인 화면이 한 번 보여주고 비운다.
+String? loginNotice;
+
 /// 운영자로 로그인돼 있으면 true. 아니면(로그인이 풀렸으면) 로그인 창을 띄운다.
 Future<bool> ensureAdmin(BuildContext context) async {
   if (remote.signedIn) return true;
@@ -55,8 +62,14 @@ class LoginForm extends StatefulWidget {
 class _LoginFormState extends State<LoginForm> {
   final email = TextEditingController();
   final pw = TextEditingController();
-  String? err, info;
+  String? err = loginNotice, info;
   bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    loginNotice = null;
+  }
 
   @override
   void dispose() {
@@ -81,7 +94,8 @@ class _LoginFormState extends State<LoginForm> {
   }
 
   Future<void> _go() => _run(() async {
-    await remote.signIn(email.text, pw.text);
+    await remote.signIn(email.text, pw.text, invite: pendingInvite);
+    pendingInvite = null;
     widget.onDone();
   });
 
@@ -99,6 +113,13 @@ class _LoginFormState extends State<LoginForm> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (pendingInvite != null) ...[
+          const Text(
+            '집회 운영자 초대 링크로 들어왔습니다. 로그인하거나 아래에서 가입하면 그 집회를 관리할 수 있습니다.',
+            style: TextStyle(fontSize: 12, height: 1.5, color: AppColors.brand),
+          ),
+          const SizedBox(height: 12),
+        ],
         TextField(
           controller: email,
           autofocus: true,
@@ -137,7 +158,10 @@ class _LoginFormState extends State<LoginForm> {
                       context: context,
                       builder: (_) => const _SignUpDialog(),
                     ),
-              child: const Text('운영자 가입 신청', style: TextStyle(fontSize: 12)),
+              child: Text(
+                pendingInvite != null ? '초대받은 운영자로 가입' : '운영자 가입 신청',
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           ],
         ),
@@ -280,7 +304,8 @@ Future<void> _changePasswordDialog(BuildContext context) {
   );
 }
 
-/// 운영자 가입 신청. 기존 운영자가 [운영자 승인]에서 승인해야 로그인할 수 있다.
+/// 운영자 가입. 초대 링크로 왔으면 그 집회 운영자로, 아니면 전체 운영자가 [운영자 승인]에서
+/// 승인해야 로그인해서 집회를 하나 만들 수 있다.
 class _SignUpDialog extends StatefulWidget {
   const _SignUpDialog();
 
@@ -320,7 +345,7 @@ class _SignUpDialogState extends State<_SignUpDialog> {
     });
     if (bad != null) return;
     try {
-      await remote.signUp(name.text, email.text, pw.text);
+      await remote.signUp(name.text, email.text, pw.text, invite: pendingInvite);
       if (mounted) setState(() => done = true);
     } catch (e) {
       if (mounted) setState(() => err = errorText(e));
@@ -330,14 +355,17 @@ class _SignUpDialogState extends State<_SignUpDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('운영자 가입 신청'),
+    title: Text(pendingInvite != null ? '초대받은 운영자로 가입' : '운영자 가입 신청'),
     content: SizedBox(
       width: 340,
       child: done
-          ? const Text(
-              '가입 신청을 보냈습니다.\n'
-              '기존 운영자가 승인하면 로그인할 수 있습니다. '
-              '확인 메일이 오면 메일의 링크도 눌러 주세요.',
+          ? Text(
+              pendingInvite != null
+                  ? '가입했습니다.\n확인 메일이 오면 메일의 링크를 누른 뒤 로그인하세요. '
+                        '초대받은 집회가 바로 보입니다.'
+                  : '가입 신청을 보냈습니다.\n'
+                        '전체 운영자가 승인하면 로그인해서 집회를 하나 만들 수 있습니다. '
+                        '확인 메일이 오면 메일의 링크도 눌러 주세요.',
             )
           : AutofillGroup(
               child: Column(
@@ -400,7 +428,8 @@ class _SignUpDialogState extends State<_SignUpDialog> {
   );
 }
 
-/// 가입 신청 목록. 승인하면 운영자가 되고, 거절하면 그 계정이 지워진다.
+/// 가입 신청 목록. 승인하면 집회를 하나 만들 수 있고, 거절하면 이 앱에 못 들어온다
+/// (계정은 남는다 — 같은 서버를 쓰는 다른 앱 계정일 수 있다).
 class _AdminRequestsDialog extends StatefulWidget {
   const _AdminRequestsDialog();
 
@@ -430,7 +459,8 @@ class _AdminRequestsDialogState extends State<_AdminRequestsDialog> {
     final ok = await confirmDialog(
       context,
       title: '가입 거절',
-      body: '${r.email} 계정을 지웁니다. 다시 쓰려면 가입 신청부터 다시 해야 합니다.',
+      body: '${r.email} 님은 이 앱에 로그인할 수 없게 됩니다. '
+          '계정은 지우지 않습니다(같은 서버를 쓰는 다른 서비스 계정일 수 있습니다).',
       action: '거절',
       danger: true,
     );
@@ -545,7 +575,9 @@ class AdminButton extends StatelessWidget {
               enabled: false,
               child: Text(email, style: const TextStyle(fontSize: 13)),
             ),
-          const PopupMenuItem(value: 'approve', child: Text('운영자 승인')),
+          // 가입 승인은 전체 운영자만 (서버도 막는다).
+          if (remote.fullAdmin)
+            const PopupMenuItem(value: 'approve', child: Text('운영자 승인')),
           const PopupMenuItem(value: 'pw', child: Text('비밀번호 변경')),
           const PopupMenuItem(value: 'out', child: Text('로그아웃')),
         ],
@@ -624,8 +656,8 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
   List<Gathering> list = [];
   Map<String, ({int total, int confirmed})> counts = {};
 
-  /// 로그인한 사람의 권한. 집회별 운영자는 맡은 집회만 보고, 새 집회는 못 만든다.
-  AdminScope scope = (full: false, gatherings: <String>{});
+  /// 로그인한 사람의 권한. 집회별 운영자는 맡은 집회만 보고, 새 집회는 [canCreate] 일 때만.
+  AdminScope scope = (full: false, canCreate: false, gatherings: <String>{});
 
   @override
   void initState() {
@@ -645,11 +677,22 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       loading = true;
       error = null;
     });
+    if (remote.signedIn) {
+      // 메일 확인 링크로 바로 로그인돼 들어온 첫 방문도, 로그인한 채 초대 링크를 연 것도 여기서 들인다.
+      try {
+        await remote.enter(invite: pendingInvite);
+        pendingInvite = null;
+      } catch (e) {
+        loginNotice = errorText(e); // enter 가 로그아웃했다 — 로그인 화면이 이유를 보여준다
+        signInCount.value++;
+        return;
+      }
+    }
     try {
       final signed = remote.signedIn;
       scope = signed
           ? await remote.scope()
-          : (full: false, gatherings: <String>{});
+          : (full: false, canCreate: false, gatherings: <String>{});
       list = await remote.gatherings();
       // 집회별 운영자에게는 맡은 집회만 보여준다 (집회 설정 자체는 누구나 읽을 수 있지만,
       // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).
@@ -905,8 +948,8 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
           ),
           const AdminButton(),
           const SizedBox(width: 8),
-          // 새 집회는 전체 운영자만 만든다 (서버 RLS 도 같이 막는다).
-          if (scope.full)
+          // 새 집회는 전체 운영자, 또는 승인된 가입자가 하나만 (서버 RLS 도 같이 막는다).
+          if (scope.canCreate)
             FilledButton.icon(
               onPressed: offline || loading ? null : _create,
               icon: const Icon(Icons.add, size: 18),
@@ -932,9 +975,9 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                 if (list.isEmpty && !offline)
                   EmptyNotice(
                     icon: Icons.event_note_outlined,
-                    text: scope.full || !remote.signedIn
+                    text: scope.canCreate || !remote.signedIn
                         ? '아직 집회가 없습니다. [새 집회]로 시작하세요.'
-                        : '맡은 집회가 없습니다. 집회 담당자에게 운영자 등록을 요청하세요.',
+                        : '맡은 집회가 없습니다. 집회 담당자에게 초대 링크를 요청하세요.',
                   ),
                 Wrap(
                   spacing: 16,

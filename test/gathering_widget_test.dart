@@ -23,6 +23,12 @@ class FakeRemote extends Remote {
   bool full = true;
   final managed = <String>{};
 
+  /// 승인된 가입자(owner)인가 — 전체 운영자가 아니어도 집회를 하나 만들 수 있다.
+  bool owner = false;
+
+  /// 로그인·목록이 받은 초대 코드.
+  final invites = <String>[];
+
   /// 집회 id → 그 집회의 운영자 (이메일).
   final gAdmins = <String, List<GatheringAdmin>>{};
 
@@ -41,10 +47,20 @@ class FakeRemote extends Remote {
   String? get adminEmail => admin ? 'admin@test' : null;
 
   @override
-  Future<void> signIn(String email, String password) async {
+  Future<void> signIn(String email, String password, {String? invite}) async {
     if (password != 'pw') throw const RemoteError('Invalid login credentials');
     admin = true;
+    await enter(invite: invite);
   }
+
+  @override
+  Future<void> enter({String? invite}) async {
+    if (invite != null) invites.add(invite);
+  }
+
+  @override
+  Future<String> gatheringInvite(String gatheringId, {bool renew = false}) async =>
+      'https://invite/$gatheringId${renew ? '/new' : ''}';
 
   String? newPassword;
 
@@ -60,8 +76,12 @@ class FakeRemote extends Remote {
   final approved = <String>[];
 
   @override
-  Future<void> signUp(String name, String email, String password) async =>
-      requests.add((
+  Future<void> signUp(
+    String name,
+    String email,
+    String password, {
+    String? invite,
+  }) async => requests.add((
         id: 'u${requests.length + 1}',
         email: email,
         name: name,
@@ -87,7 +107,8 @@ class FakeRemote extends Remote {
   @override
   Future<AdminScope> scope() async {
     if (scopeError) throw const RemoteError('서버에 연결하지 못했습니다.');
-    return (full: full, gatherings: {...managed});
+    fullAdmin = full;
+    return (full: full, canCreate: full || owner, gatherings: {...managed});
   }
 
   @override
@@ -1275,7 +1296,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '가입 신청'));
       await tester.pumpAndSettle();
       expect(fake.requests.single.email, 'new@test');
-      expect(find.textContaining('기존 운영자가 승인하면'), findsOneWidget);
+      expect(find.textContaining('전체 운영자가 승인하면'), findsOneWidget);
     });
 
     testWidgets('운영자 승인: 승인하면 목록에서 빠지고, 거절은 한 번 더 묻는다', (tester) async {
@@ -1330,6 +1351,19 @@ void main() {
       expect(find.text('신촌하나교회 가족수양회'), findsOneWidget);
       expect(find.text('남의 집회'), findsNothing);
       expect(find.widgetWithText(FilledButton, '새 집회'), findsNothing);
+      // 가입 승인은 전체 운영자만
+      await tester.tap(find.text('admin@test'));
+      await tester.pumpAndSettle();
+      expect(find.text('운영자 승인'), findsNothing);
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
+
+      // 승인된 가입자(owner)는 전체 운영자가 아니어도 집회를 하나 만든다
+      fake.owner = true;
+      await tester.tap(find.byTooltip('새로고침'));
+      await tester.pumpAndSettle();
+      expect(find.text('남의 집회'), findsNothing);
+      expect(find.widgetWithText(FilledButton, '새 집회'), findsOneWidget);
 
       // 전체 운영자는 전부 보고 새 집회도 만든다
       fake.full = true;
@@ -1346,6 +1380,7 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('이 집회의 운영자'), findsOneWidget);
       expect(find.textContaining('등록된 운영자가 없습니다'), findsOneWidget);
+
 
       // 가입하지 않은 이메일은 막는다
       await tester.enterText(
@@ -1373,6 +1408,15 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '해제'));
       await tester.pumpAndSettle();
       expect(fake.gAdmins['g1'], isEmpty);
+    });
+
+    testWidgets('집회 설정: 초대 링크를 복사한다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      await tester.tap(find.text('초대 링크 복사'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('초대 링크를 복사했습니다'), findsOneWidget);
     });
 
     testWidgets('집회 설정: [집회 삭제]는 전체 운영자에게만 보인다', (tester) async {

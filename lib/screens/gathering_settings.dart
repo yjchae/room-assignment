@@ -145,6 +145,28 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     }
   }
 
+  /// 초대 링크를 복사한다. [renew] 면 새 링크로 바꿔 예전 링크를 막는다.
+  Future<void> _copyInvite({bool renew = false}) async {
+    final c = current.value;
+    if (c == null) return;
+    if (renew &&
+        !await confirmDialog(
+          context,
+          title: '초대 링크 새로 만들기',
+          body: '예전 링크로는 더 이상 가입할 수 없습니다. 이미 등록된 운영자는 그대로입니다.',
+          action: '새로 만들기',
+        )) {
+      return;
+    }
+    try {
+      final link = await remote.gatheringInvite(c.id, renew: renew);
+      Clipboard.setData(ClipboardData(text: link));
+      _snack('초대 링크를 복사했습니다. 받은 사람이 가입하거나 로그인하면 이 집회의 운영자가 됩니다.');
+    } catch (e) {
+      _snack(errorText(e));
+    }
+  }
+
   Future<void> _removeAdmin(GatheringAdmin a) async {
     final c = current.value;
     if (c == null) return;
@@ -1048,12 +1070,29 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   const Text(
                     '여기 등록한 사람은 이 집회의 설정·신청·방배정만 다룰 수 있습니다. '
                     '새 집회를 만들거나 다른 집회를 열 수는 없습니다.\n'
-                    '먼저 운영자 웹에서 [가입 신청]으로 계정을 만든 뒤, 그 이메일을 넣으세요.',
+                    '초대 링크를 보내면 받은 사람이 가입하거나 로그인해서 바로 등록됩니다. '
+                    '이미 이 앱 계정이 있는 사람은 이메일로 등록해도 됩니다.',
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.6,
                       color: AppColors.textMuted,
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.link, size: 18),
+                        label: const Text('초대 링크 복사'),
+                        onPressed: _copyInvite,
+                      ),
+                      TextButton(
+                        onPressed: () => _copyInvite(renew: true),
+                        child: const Text('링크 새로 만들기'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   if (adminsError != null)

@@ -20,7 +20,12 @@ class Remote {
   static bool ready = false;
 
   static Future<void> init() async {
-    await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
+    // 같은 프로젝트를 다른 앱도 쓰므로 이 앱 테이블·함수는 room 스키마에 있다 (supabase/schema.sql).
+    await Supabase.initialize(
+      url: supabaseUrl,
+      publishableKey: supabaseKey,
+      postgrestOptions: const PostgrestClientOptions(schema: 'room'),
+    );
     ready = true;
     // 지난 이벤트도 다시 흘려주는 스트림이라, initialize 중에 링크를 처리했어도 여기서 받는다.
     Supabase.instance.client.auth.onAuthStateChange.listen(
@@ -49,19 +54,35 @@ class Remote {
   bool get signedIn =>
       ready && Supabase.instance.client.auth.currentUser != null;
 
-  /// 로그인. 전체 운영자도 아니고 어느 집회의 운영자도 아니면 바로 로그아웃하고 에러.
-  Future<void> signIn(String email, String password) async {
+  /// 로그인. 초대 링크로 왔으면 [invite] 집회의 운영자로 등록한다. 들어올 수 없는 계정이면
+  /// 바로 로그아웃하고 에러 ([enter]).
+  Future<void> signIn(String email, String password, {String? invite}) async {
     await _db.auth.signInWithPassword(email: email.trim(), password: password);
-    if (await _db.rpc('can_manage') != true) {
+    await enter(invite: invite);
+  }
+
+  /// 로그인한 계정을 이 앱에 들인다. 같은 Supabase 계정을 다른 앱도 쓰므로 이 앱 가입자인지
+  /// 서버(enter_app)가 가린다. 가입 직후 첫 로그인이면 서버가 여기서 가입자 표에 넣는다.
+  /// 들어올 수 없으면 로그아웃하고 [RemoteError].
+  Future<void> enter({String? invite}) async {
+    try {
+      if (invite != null) await _db.rpc('join_app', params: {'p_invite': invite});
+      final s = await _db.rpc('enter_app');
+      if (s == 'ok') return;
+      throw RemoteError(switch (s) {
+        'pending' => '가입 신청을 확인하고 있습니다. 전체 운영자가 승인하면 로그인할 수 있습니다.',
+        'rejected' => '가입 신청이 승인되지 않았습니다. 집회 담당자에게 문의하세요.',
+        'helper' => '맡은 집회가 없습니다. 집회 담당자에게 초대 링크를 다시 받으세요.',
+        _ => '이 앱에 가입하지 않은 계정입니다. 아래 [운영자 가입 신청]으로 먼저 가입하세요.',
+      });
+    } catch (_) {
       await _db.auth.signOut();
-      throw const RemoteError(
-        '아직 승인되지 않은 계정입니다. 기존 운영자에게 승인이나 집회 운영자 등록을 요청하세요.',
-      );
+      rethrow;
     }
   }
 
-  /// 로그인한 사람이 무엇을 할 수 있는지. [full] 이면 모든 집회 + 새 집회 만들기,
-  /// 아니면 [gatherings] 에 있는 집회만 관리한다.
+  /// 로그인한 사람이 무엇을 할 수 있는지. [full] 이면 모든 집회, 아니면 [gatherings] 에 있는
+  /// 집회만 관리한다. [canCreate] = 새 집회를 만들 수 있음(전체 운영자, 또는 승인된 가입자가 하나).
   ///
   /// 로그인 전이면 [RemoteError] — "맡은 집회가 하나도 없다"와 구별해야 한다.
   /// 둘을 같은 값으로 돌려주면 세션이 풀렸을 때 집회 목록이 빈 채로 "운영자 등록을 요청하세요"가 뜬다.
@@ -70,9 +91,18 @@ class Remote {
       throw const RemoteError('로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인하세요.');
     }
     final full = await _db.rpc('is_admin') == true;
+    final canCreate = await _db.rpc('can_create') == true;
     final mine = await _db.rpc('my_gatherings') as List;
-    return (full: full, gatherings: {for (final g in mine) '$g'});
+    fullAdmin = full;
+    return (
+      full: full,
+      canCreate: canCreate,
+      gatherings: {for (final g in mine) '$g'},
+    );
   }
+
+  /// 마지막 [scope] 결과의 [AdminScope.full]. 계정 메뉴의 [운영자 승인]을 가린다.
+  bool fullAdmin = false;
 
   // --- 집회별 운영자 --------------------------------------------------------
 
@@ -98,6 +128,15 @@ class Remote {
     );
   }
 
+  /// 이 집회의 운영자 초대 링크. [renew] 면 새 코드로 바꿔 예전 링크를 막는다.
+  Future<String> gatheringInvite(String gatheringId, {bool renew = false}) async {
+    final code = await _db.rpc(
+      'gathering_invite',
+      params: {'p_gathering': gatheringId, 'p_renew': renew},
+    );
+    return inviteLink('$code');
+  }
+
   Future<void> removeGatheringAdmin(String gatheringId, String userId) async {
     await _db.rpc(
       'remove_gathering_admin',
@@ -105,15 +144,51 @@ class Remote {
     );
   }
 
-  /// 운영자 가입 신청. 계정만 만들고 바로 로그아웃 — 기존 운영자가 승인해야 쓸 수 있다.
+  /// 운영자 가입. 계정만 만들고 바로 로그아웃한다. 초대 링크([invite])로 왔으면 첫 로그인에
+  /// 그 집회 운영자가 되고, 아니면 전체 운영자가 승인해야 집회를 하나 만들 수 있다.
+  /// data 의 room_signup·room_invite 는 서버 enter_app 이 첫 로그인 때 읽는다.
   /// 대시보드에서 메일 확인을 켜 두었으면 확인 메일의 링크도 눌러야 로그인된다.
-  Future<void> signUp(String name, String email, String password) async {
-    await _db.auth.signUp(
-      email: email.trim(),
-      password: password,
-      data: {'name': name.trim()},
-      emailRedirectTo: adminSiteUrl,
-    );
+  ///
+  /// 같은 이메일로 다른 앱(같은 Supabase 프로젝트) 계정이 이미 있으면 새 계정이 안 생긴다.
+  /// 그때는 입력한 비밀번호로 그 계정에 로그인해 이 앱에 가입시킨다(join_app).
+  Future<void> signUp(
+    String name,
+    String email,
+    String password, {
+    String? invite,
+  }) async {
+    var exists = false;
+    try {
+      final res = await _db.auth.signUp(
+        email: email.trim(),
+        password: password,
+        data: {'name': name.trim(), 'room_signup': 'true', 'room_invite': ?invite},
+        emailRedirectTo: adminSiteUrl,
+      );
+      // 메일 확인을 켜 두면 이미 있는 주소도 에러 없이 identities 가 빈 가짜 계정을 돌려준다.
+      exists = res.user?.identities?.isEmpty ?? false;
+    } on AuthException catch (e) {
+      if (e.code != 'user_already_exists') rethrow;
+      exists = true;
+    }
+    if (exists) {
+      try {
+        await _db.auth.signInWithPassword(
+          email: email.trim(),
+          password: password,
+        );
+      } on AuthException {
+        throw const RemoteError(
+          '이미 가입된 이메일입니다(같은 서버를 쓰는 다른 서비스 포함). 그 계정의 비밀번호를 입력하세요.',
+        );
+      }
+      try {
+        await _db.rpc('join_app', params: {'p_invite': invite});
+      } finally {
+        await _db.auth.signOut();
+      }
+      return;
+    }
     await _db.auth.signOut();
   }
 
@@ -135,12 +210,15 @@ class Remote {
     await _db.rpc('approve_admin', params: {'p_user': userId});
   }
 
-  /// 거절하면 그 계정이 지워진다.
+  /// 거절해도 계정은 남는다(다른 앱도 쓰는 계정일 수 있다). 이 앱에만 못 들어온다.
   Future<void> rejectAdmin(String userId) async {
     await _db.rpc('reject_admin', params: {'p_user': userId});
   }
 
-  Future<void> signOut() => _db.auth.signOut();
+  Future<void> signOut() {
+    fullAdmin = false;
+    return _db.auth.signOut();
+  }
 
   /// 비밀번호 재설정 메일. 링크를 누르면 운영자 웹이 열리고 새 비밀번호를 정한다.
   /// 없는 이메일이어도 에러가 안 난다 (계정 유무를 흘리지 않으려는 Supabase 동작).
@@ -468,7 +546,7 @@ typedef StaffDuty = ({Duty duty, List<String> members});
 typedef AdminRequest = ({String id, String email, String name, DateTime at});
 
 /// 로그인한 사람의 권한 범위 ([Remote.scope]).
-typedef AdminScope = ({bool full, Set<String> gatherings});
+typedef AdminScope = ({bool full, bool canCreate, Set<String> gatherings});
 
 /// 집회 하나에 등록된 운영자 ([Remote.gatheringAdmins]).
 typedef GatheringAdmin = ({String userId, String email});
@@ -510,7 +588,8 @@ String errorText(Object e) {
     'NOT_EDITABLE': '입금이 확인됐거나 취소된 신청은 바꿀 수 없습니다. 담당자에게 문의하세요.',
     'FORBIDDEN': '권한이 없습니다. 맡은 담당구역이 맞는지, 이 집회의 운영자인지 확인하세요.',
     'NO_ACCOUNT':
-        '그 이메일로 가입한 계정이 없습니다. 먼저 운영자 웹에서 [가입 신청]을 하도록 안내한 뒤 다시 등록하세요.',
+        '그 이메일로 가입한 계정이 없습니다. 위 [초대 링크 복사]로 링크를 보내 가입하게 하세요.',
+    'BAD_INVITE': '초대 링크가 틀렸거나 새 링크로 바뀌었습니다. 집회 담당자에게 새 링크를 받으세요.',
     // 로그인 없이(anon) 운영자 전용 테이블을 건드렸다 — 세션이 끊겼거나 로그인 전이다.
     'permission denied for table': '로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인한 뒤 집회를 다시 여세요.',
     'NOT_FOUND': '신청을 찾지 못했습니다.',

@@ -26,10 +26,11 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 ## 구조
 
-**서버는 Supabase 하나다.** 테이블은 `gatherings`(집회 설정), `registrations`(신청), `room_plans`(방배정), `admins`.
+**서버는 Supabase 하나다.** 같은 프로젝트를 다른 앱(토라포션)도 `public` 에서 쓰므로 이 앱은 전부 **`room` 스키마**에 둔다(`Remote.init` 의 `PostgrestClientOptions(schema: 'room')`, 대시보드 Exposed schemas 에 `room`). `public` 으로 되돌리거나 거기 새로 만들지 않는다. 테이블은 `gatherings`(집회 설정), `registrations`(신청), `room_plans`(방배정), `admins`, `members`(이 앱 가입자), `gathering_invites`. 옮긴 이력은 `supabase/move_to_room.sql`, 운영 DB 백업은 `sh tool/backup_db.sh`.
 - 방배정은 집회마다 `room_plans` 행 하나에 `Event` JSON 문서 전체를 저장한다(`lib/store.dart`). 요구사항·설계 이유는 `PLAN.md`(방배정)·`PLAN_GATHERING.md`(집회관리)에 있고, 처음 기획(로컬 JSON·로컬 잠금)에서 달라진 점은 `PLAN_GATHERING.md` §10 에 모아 두었다.
 - 권한은 RLS 가 막는다. 신청자는 `registrations` 테이블에 직접 닿지 못하고 `submit_/lookup_/update_/cancel_registration` RPC(휴대폰+PIN)로만 드나든다.
-- **운영자는 두 종류다.** 전체 운영자 = `admins` 에 있는 사람(모든 집회 + 계정 승인 + 새 집회 만들기·삭제). 집회별 운영자 = `gathering_admins` 에 그 집회로 등록된 사람(그 집회의 설정·신청·방배정만). 판정은 SQL 함수 `manages(집회id)` 하나로 한다 — RLS 정책도 운영자 RPC(`save_room_plan`·`admin_add_registration`·`reset_pin`)도 이걸 부른다. 등록은 집회 설정 화면의 [이 집회의 운영자] 카드에서 이메일로 한다(`add_gathering_admin`, 계정이 없으면 `NO_ACCOUNT`). 앱은 `remote.scope()` 로 범위를 읽어 집회 목록과 [새 집회]·[집회 삭제]를 가린다.
+- **로그인 계정(`auth.users`)은 다른 앱과 같이 쓴다.** 이 앱 사람인지는 `room.members` 로 가리고, 로그인마다 `enter_app()`(앱 `remote.enter`)이 판정한다. auth.users 를 지우거나 그 전체를 목록으로 보여 주는 함수를 만들지 않는다 — 다른 앱 계정이다.
+- **운영자는 세 종류다.** 전체 운영자 = `admins`(가입으로는 못 됨, SQL 로만 넣음. 모든 집회 + 가입 승인 + 삭제). 승인된 가입자 = `members.status='owner'`(운영자 웹에서 직접 가입 → 전체 운영자가 승인 → 집회 **하나**를 만들어 `gatherings.created_by` 로 관리). 집회별 운영자 = `gathering_admins`(그 집회의 초대 링크 `admin/?join=<코드>` 로 가입·로그인하거나 이메일로 등록, 그 집회만). 판정은 SQL 함수 `manages(집회id)` 하나로 한다 — RLS 정책도 운영자 RPC(`save_room_plan`·`admin_add_registration`·`reset_pin`)도 이걸 부른다. 만들기는 `can_create()`. 앱은 `remote.scope()` 로 범위를 읽어 집회 목록과 [새 집회]·[집회 삭제]를 가린다.
 - `lib/config.dart` 에는 publishable 키만 둔다. 저장소가 공개라서 service_role 키, 실명·실제 전화번호가 든 데이터는 커밋하지 않는다.
 
 **웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `models.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `widgets/duty_tasks.dart`, `widgets/custom_field_input.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
