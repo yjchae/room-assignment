@@ -1201,6 +1201,7 @@ bool get unpaid => pay == 'pending';
 
 | # | 질문 | 이대로 만듦 | 다른 선택지 |
 |---|---|---|---|
+| 0 | 기본값 | **꺼짐.** 새 집회도 꺼진 채로 만들어지고, 회비 JSON 에 키가 없는 기존 집회도 꺼짐으로 읽는다 (2026-10-19 사용자 결정) | — |
 | 1 | 스위치를 어디에 두나 | **`FeeRule.lodgingSeparate`(회비 JSON 안).** 회비 규칙이라 `quote()` 가 이미 받는 `fee` 로 끝나고 §18 무료 날처럼 **서버·스키마 변경이 없다** | `gatherings.lodging_separate` 칸 |
 | 2 | 1박당 숙박비는 | **연령 구분별** — 회비표에 `숙박 1박` 열을 하나 더한다(`FeeRule.lodging`). 영유아 0원처럼 구분마다 다른 경우가 많아서. 한 금액만 쓰려면 모든 칸에 같은 값을 넣으면 된다 | 집회 하나에 금액 하나 |
 | 3 | 켜면 참가비는 어떻게 세나 | **회비표 열이 `전체 참석 · 하루 참가 · 숙박 1박` 으로 바뀐다.** 전체 참석 = 모든 날 참가(정액, 비우면 하루 × 일수). 부분 참가 = 하루 × 참가일수, 전체 참석 금액을 넘지 않는다. `하루 참가` 는 지금의 `dayOnly`(당일) 값을 그대로 쓰고 `1박당`(`perNight`) 열은 숨긴다(값은 지우지 않음 — 끄면 되살아난다) | 1박당·당일 열을 그대로 두고 숙박비만 더함 |
@@ -1215,7 +1216,7 @@ bool get unpaid => pay == 'pending';
 
 ```dart
 // FeeRule (toJson 'lodgingSeparate', 'lodging' — 없으면 false / {})
-bool lodgingSeparate;
+bool lodgingSeparate = false;   // 기본 꺼짐
 Map<AgeGroup, int> lodging;            // 숙박 1박 [구분]
 
 // Person (registrations.people jsonb 안 — 서버 변경 없음)
