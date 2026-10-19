@@ -262,6 +262,9 @@ select t.ok((select array_agg(email) from room.admin_requests()) = array['b@x'],
 select room.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select t.ok((select count(*) from room.admin_requests()) = 0, '승인하면 목록에서 빠진다');
 reset role;
+select t.ok((select email_confirmed_at from auth.users where email = 'b@x') is not null,
+  '승인하면 메일 확인도 끝난다 (확인 메일을 못 받아도 로그인된다)');
+select t.ok((select email_confirmed_at from auth.users where email = 'c@x') is null, '거절한 사람은 그대로');
 select t.ok((select array_agg(user_id::text || ':' || status order by status) from room.members)
               = array['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb:owner', 'cccccccc-cccc-cccc-cccc-cccccccccccc:rejected'],
   '가입자 표: b 승인, c 거절, x 는 없다');

@@ -732,6 +732,8 @@ language sql stable security definer set search_path = '' as $$
 $$;
 
 -- 가입 승인 = 집회 하나를 만들 수 있게 한다(owner). 전체 운영자로 만들지는 않는다.
+-- 메일 확인도 끝낸 것으로 친다 — 전체 운영자가 사람을 보고 승인한 게 본인 확인이다.
+-- (기본 메일 서버는 프로젝트 팀원에게만 메일을 보내서, 확인 메일을 못 받아 로그인을 못 한다.)
 create or replace function room.approve_admin(p_user uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
@@ -739,6 +741,8 @@ begin
   if not exists (select 1 from auth.users where id = p_user) then raise exception 'NOT_FOUND'; end if;
   insert into room.members (user_id, status) values (p_user, 'owner')
   on conflict (user_id) do update set status = 'owner';
+  update auth.users set email_confirmed_at = now()
+   where id = p_user and email_confirmed_at is null;
 end $$;
 
 -- 가입 거절. 계정은 지우지 않는다 — 같은 프로젝트의 다른 앱도 쓰는 계정일 수 있다.

@@ -596,6 +596,9 @@ String errorText(Object e) {
     'registrations_active_phone': '같은 번호로 진행 중인 다른 신청이 있어 되돌릴 수 없습니다.',
     'invalid input syntax for type uuid': '잘못된 링크입니다. 받은 링크를 다시 확인하세요.',
     'Invalid login credentials': '이메일 또는 비밀번호가 다릅니다.',
+    'Email not confirmed':
+        '아직 메일 확인이 안 된 계정입니다. 가입 신청이면 전체 운영자가 승인하면 로그인됩니다. '
+        '초대 링크로 가입했으면 확인 메일의 링크를 누르거나 집회 담당자에게 알리세요.',
     'User already registered': '이미 가입된 이메일입니다. 승인을 기다리는 중이면 기존 운영자에게 알리세요.',
     'Signups not allowed': '지금은 가입을 받지 않습니다. 기존 운영자에게 문의하세요.',
     'Password should': '비밀번호가 너무 짧거나 쉽습니다. 더 길게 정하세요.',
