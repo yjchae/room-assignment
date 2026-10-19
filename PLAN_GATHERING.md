@@ -1359,11 +1359,42 @@ Map<String, Map<String, dynamic>> fieldSpecs;   // models.dart 는 gathering.dar
 
 ---
 
-## 22. 구현 순서 (§20 · §21)
+## 22. 이미 만든 집회는 그대로 (2026-10-19 사용자 요구)
+
+§20·§21 은 **켠 집회·형식을 정한 항목에만** 효과가 있어야 한다. 이미 만들어 둔 집회는 신청서 모양·금액·참석자·방배정이
+한 글자도 바뀌지 않는다. 이를 위해 지키는 것:
+
+| 어디 | 지키는 규칙 |
+|---|---|
+| 회비 JSON (`gatherings.fee`) | `lodgingSeparate` 는 **켰을 때만**, `lodging` 은 **값이 있을 때만** 쓴다. 기존 집회를 열고 저장해도 JSON 이 지금과 같다. 없으면 꺼짐·{} 로 읽는다 |
+| 회비 계산 `quote()` | 꺼진 집회는 **지금 식을 그대로** 탄다(새 식은 `if (fee.lodgingSeparate)` 안에만). |
+| 신청 (`registrations.people`) | `Person.stays` 는 고른 게 있을 때만 쓴다. 기존 신청은 손대지 않고, 꺼진 집회는 `stays` 가 있어도 보지 않는다 |
+| 참석자 동기화 | `nightsIn(separate: false)` = 지금의 `nightsOf(daysIn)` 그대로. 기존 참석자의 일정·방이 다시 계산돼 바뀌지 않는다 |
+| 서버 칸 `field_specs` | `add column if not exists ... default '{}'` — 기존 행은 `{}` = 모두 텍스트. RPC·RLS 는 그대로 |
+| 집회 저장 (`toRow`) | `field_specs` 는 **비어 있지 않을 때만** 보낸다. 그래서 `schema.sql` 을 아직 안 돌린 DB 에서도 기존 집회 저장이 깨지지 않는다 |
+| 방배정 문서 (`room_plans`) | `Event.fieldSpecs` 는 비어 있지 않을 때만 JSON 에 쓴다. 기존 문서·버전이 바뀌지 않는다 |
+| 홈스테이 `수용 인원` 숫자 형식 | **새로 만드는 집회에만.** 기존 홈스테이 집회는 텍스트 그대로 |
+| 화면 | 꺼진 집회의 신청서·회비표·`QuoteTable`·참석자 편집 창은 지금 위젯 그대로(형식 없는 항목 = 지금의 글자 칸) |
+
+**배포 순서**: ① `schema.sql` 을 SQL Editor 에서 실행(칸 하나 추가, 기존 데이터 변경 없음) → ② `main` 에 push(웹 배포)
+→ ③ 운영자 데스크톱 앱(macOS/Windows)도 새로 빌드해 배포.
+ponytail: ③ 전의 옛 데스크톱 앱으로 **숙박비 별도를 켠 집회**를 저장하면 옛 앱이 모르는 `lodgingSeparate`·`field_specs` 가
+빠진 채 저장될 수 있다(기존 집회는 해당 없음). 필요하면 옛 앱을 막는 최소 버전 검사를 붙인다.
+
+**확인 (회귀 테스트)** — `test/gathering_test.dart` 에 "기존 집회 그대로" 묶음:
+- 지금 형식의 집회 행(`lodgingSeparate`·`lodging`·`field_specs` 없음) → `fromRow` → `toRow` 가 **원래 행과 같다**(새 키가 안 생김).
+- 같은 행으로 `quote()` 한 결과가 지금 테스트의 기대값과 같다(§3.3 예시 415,000원, §18 무료 날 묶음 그대로 통과).
+- `stays` 가 들어 있는 신청이라도 꺼진 집회에선 금액·참석자 밤이 `stays` 없을 때와 같다.
+- `fieldSpecs` 없는 옛 방배정 문서 → `fromJson` → `toJson` 이 원래 JSON 과 같다.
+- 기존 테스트 전부(`flutter test`) 그대로 통과 — 기대값을 고친 테스트가 있으면 그건 기존 집회가 바뀐 것이므로 멈추고 다시 본다.
+
+---
+
+## 23. 구현 순서 (§20 · §21 · §22)
 
 1. §21 데이터: `FieldSpec`·`Gathering.fieldSpecs`·`Event.fieldSpecs`·Store 함수·`schema.sql` + 테스트
 2. §21 화면: 항목 추가/편집 창 → `CustomFieldInput` → 신청 웹·참석자 편집 창
 3. §20 계산: `FeeRule.lodgingSeparate/lodging`·`Person.stays/nightsIn`·`quote()`·`QuoteLine.lodging` + `fee_test`
 4. §20 동기화: `Store.attendeeOf` 등이 `nightsIn` 사용 + 테스트
 5. §20 화면: 회비 카드 스위치·숙박 1박 열 → 신청 웹 회비표·날짜 줄 [참석][숙박] 체크 → `QuoteTable` 참가비/숙박비 합계
-6. `flutter analyze && flutter test`, CLAUDE.md 에 두 기능 한 단락씩
+6. §22 회귀 테스트(1단계부터 같이 넣고 매 단계 통과 확인) · `flutter analyze && flutter test` · CLAUDE.md 에 두 기능 한 단락씩
