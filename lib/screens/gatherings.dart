@@ -361,8 +361,7 @@ class _SignUpDialogState extends State<_SignUpDialog> {
       child: done
           ? Text(
               pendingInvite != null
-                  ? '가입했습니다.\n초대해 준 집회 담당자에게 가입했다고 알려 주세요. '
-                        '담당자가 확인하면 로그인할 수 있고, 초대받은 집회가 바로 보입니다.'
+                  ? '가입했습니다.\n이제 로그인하면 초대받은 집회가 바로 보입니다.'
                   : '가입 신청을 보냈습니다.\n'
                         '전체 운영자가 승인하면 로그인해서 집회를 하나 만들 수 있습니다.',
             )
