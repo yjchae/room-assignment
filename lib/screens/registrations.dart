@@ -1510,9 +1510,17 @@ class _Detail extends StatelessWidget {
     final t = r.createdAt;
     final free = q.freeDayOnly;
     // 부분 참석자의 고른 날짜 (사람 id → "10-09(금) 10-10(토)").
+    // 숙박비 별도 집회는 숙박한 밤도 붙인다 (전체 참석이어도 숙박은 사람마다 다르다).
     final days = {
       for (final l in q.lines)
-        if (!l.full) l.person.id: l.days.map(mdw).join(' '),
+        if (!l.full || l.separate)
+          l.person.id: [
+            if (!l.full) l.days.map(mdw).join(' '),
+            if (l.separate)
+              l.stayNights!.isEmpty
+                  ? '숙박 안 함'
+                  : '숙박 ${l.stayNights!.map(mdw).join(' ')}',
+          ].join(' · '),
     };
     Widget kv(String k, String v) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),

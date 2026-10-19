@@ -31,7 +31,10 @@ class FeeRule {
     this.fullDiscountPct = 0,
     List<EarlyDiscount>? early,
     List<DateTime>? freeDays,
+    this.lodgingSeparate,
+    Map<AgeGroup, int>? lodging,
   }) : full = full ?? {},
+       lodging = lodging ?? {},
        perNight = perNight ?? {},
        dayOnly = dayOnly ?? {},
        minAge = minAge ?? {...defaultMinAge},
@@ -64,6 +67,16 @@ class FeeRule {
   List<DateTime> freeDays;
   bool isFreeDay(DateTime d) => freeDays.any((f) => _day(f) == _day(d));
 
+  /// 숙박비 별도 (PLAN_GATHERING §20). 켜면 참가비(전체 참석 · 하루 참가)와 숙박비(1박)를 따로 받고,
+  /// 신청서에서 숙박할 밤을 따로 고른다.
+  /// null = 이 기능 전에 만든 집회 → 스위치를 안 보이고 켤 수 없다 (§22). 새 집회는 만들 때 false 를 넣는다.
+  bool? lodgingSeparate;
+  bool get canSeparateLodging => lodgingSeparate != null;
+  bool get separatesLodging => lodgingSeparate == true;
+
+  /// 숙박 1박 [구분]. 숙박비 별도일 때만 쓴다. 키가 없으면 0원.
+  Map<AgeGroup, int> lodging;
+
   static const defaultMinAge = {
     AgeGroup.adult: 19,
     AgeGroup.youth: 13,
@@ -92,9 +105,10 @@ class FeeRule {
   }
 
   /// 받는 돈이 하나도 없다 (모든 금액이 0 이거나 비어 있음). 신청 웹에서 회비·계좌를 숨긴다.
+  /// 숙박비 별도면 쓰지 않는 1박당(perNight) 대신 숙박비(lodging)를 본다.
   bool get isFree => [
     ...full.values,
-    ...perNight.values,
+    ...(separatesLodging ? lodging.values : perNight.values),
     ...dayOnly.values,
     perRegistration,
   ].every((v) => v == 0);
@@ -111,6 +125,9 @@ class FeeRule {
         {'fromDays': e.fromDays, 'toDays': e.toDays, 'pct': e.pct},
     ],
     'freeDays': [for (final d in freeDays) ymd(d)],
+    // 기존 집회(null)는 키를 안 쓴다 — 열고 저장해도 회비 JSON 이 그대로다 (§22).
+    'lodgingSeparate': ?lodgingSeparate,
+    if (lodging.isNotEmpty) 'lodging': _groupsOut(lodging),
   };
 
   factory FeeRule.fromJson(Object? json) {
@@ -135,6 +152,10 @@ class FeeRule {
         for (final d in (j['freeDays'] is List ? j['freeDays'] as List : []))
           ?_date(d),
       ],
+      lodgingSeparate: j['lodgingSeparate'] is bool
+          ? j['lodgingSeparate'] as bool
+          : null,
+      lodging: _groupsIn(j['lodging']),
     );
   }
 }
@@ -156,6 +177,7 @@ class Person {
     this.minister = false,
     this.staff = false,
     this.church,
+    this.stays,
     Map<String, String>? extra,
   }) : id = id ?? newPersonId(),
        extra = extra ?? {},
@@ -170,6 +192,10 @@ class Person {
 
   /// 참석하는 날 (신청 웹의 날짜 체크). null = 전체 참석.
   List<DateTime>? days;
+
+  /// 숙박하는 밤 (그 밤이 시작되는 날짜). 숙박비 별도 집회의 신청서에서 따로 고른다.
+  /// null = 고르지 않음(예전 신청·숙박비 별도가 아닌 집회) → 이어서 고른 날 사이를 숙박으로 본다.
+  List<DateTime>? stays;
 
   /// 예전 신청서 형식(도착일~출발일). [days] 가 없을 때만 본다. null 이면 집회 시작일/종료일.
   DateTime? checkIn, checkOut;
@@ -216,6 +242,22 @@ class Person {
     return [for (final d in out) DateTime(d.year, d.month, d.day)];
   }
 
+  /// 집회 [start]~[end] 중 이 사람이 묵는 밤 (정렬). 숙박비 별도 집회([separate])이고 숙박을 골랐으면
+  /// 고른 밤, 아니면 이어서 고른 날 사이 밤([nightsOf]). 마지막 날 밤은 집회 밖이라 버린다.
+  List<DateTime> nightsIn(
+    DateTime start,
+    DateTime end, {
+    required bool separate,
+  }) {
+    if (!separate || stays == null) return nightsOf(daysIn(start, end));
+    final s = _day(start), e = _day(end);
+    final out = {
+      for (final d in stays!.map(_day))
+        if (!d.isBefore(s) && d.isBefore(e)) d,
+    }.toList()..sort();
+    return [for (final d in out) DateTime(d.year, d.month, d.day)];
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -231,6 +273,7 @@ class Person {
     if (minister) 'minister': true,
     if (staff) 'staff': true,
     if (church != null) 'church': church,
+    if (stays != null) 'stays': stays!.map(ymd).toList(),
     'extra': extra,
   };
 
@@ -255,6 +298,9 @@ class Person {
     minister: j['minister'] == true,
     staff: j['staff'] == true,
     church: _str(j['church']),
+    stays: j['stays'] is List
+        ? [for (final d in j['stays'] as List) ?_date(d)]
+        : null,
     extra: {
       if (j['extra'] is Map)
         for (final e in (j['extra'] as Map).entries) '${e.key}': '${e.value}',
@@ -661,6 +707,8 @@ class QuoteLine {
     this.full,
     this.amount, {
     this.freeDay = false,
+    this.lodging = 0,
+    this.stayNights,
   });
   final Person person;
   final AgeGroup group;
@@ -673,11 +721,26 @@ class QuoteLine {
   /// 무료 날 하루만 당일로 온다 (묵는 날 없이, 당일로 오는 날이 모두 무료 날).
   final bool freeDay;
 
-  /// 이 사람이 묵는 박수. 0 = 당일만.
-  int get nights => nightsOf(days).length;
+  /// 숙박비. [amount] 에 들어 있다. 숙박비 별도가 아닌 집회는 0.
+  final int lodging;
 
-  /// "전체" / "1박" / "당일" / "1박 + 당일" / "당일(무료)"
+  /// 참가비 = 이 사람 금액에서 숙박비를 뺀 것.
+  int get participation => amount - lodging;
+
+  /// 숙박비 별도 집회에서 묵는 밤([Person.nightsIn]). null = 숙박비 별도가 아님 → 이어진 날로 센다.
+  final List<DateTime>? stayNights;
+  bool get separate => stayNights != null;
+
+  /// 이 사람이 묵는 박수. 0 = 당일만.
+  int get nights => stayNights?.length ?? nightsOf(days).length;
+
+  /// "전체" / "1박" / "당일" / "1박 + 당일" / "당일(무료)".
+  /// 숙박비 별도면 "전체 · 숙박 2박" / "2일 · 숙박 안 함" / "1일(무료) · 숙박 1박".
   String get stay {
+    if (separate) {
+      final attend = full ? '전체' : '${days.length}일${freeDay ? '(무료)' : ''}';
+      return '$attend · ${nights > 0 ? '숙박 $nights박' : '숙박 안 함'}';
+    }
     if (full) return '전체';
     final visits = dayVisits(days);
     return [
@@ -736,6 +799,13 @@ class Quote {
 
   int get subtotal => lines.fold(0, (s, l) => s + l.amount);
 
+  /// 숙박비 별도 집회의 신청인가. 금액 표가 참가비·숙박비 합계를 나눠 보인다.
+  bool get separatesLodging => lines.any((l) => l.separate);
+
+  /// 참가비 합계 / 숙박비 합계 (할인 전). 둘을 더하면 [subtotal].
+  int get participationTotal => subtotal - lodgingTotal;
+  int get lodgingTotal => lines.fold(0, (s, l) => s + l.lodging);
+
   /// 무료 날 당일로만 오는 신청 (날짜를 아직 안 고른 사람은 빼고 본다). 입금이 없다.
   bool get freeDayOnly => _freeDayOnly(lines);
 
@@ -775,6 +845,7 @@ class Quote {
 /// - 일정은 집회 기간 안으로 잘라서 본다.
 /// - 부분 참석 금액은 전체 참석자가 내는 금액을 넘지 않는다.
 /// - 참석자가 없으면 그룹당 금액도 붙지 않는다 (빈 신청서에 금액이 뜨지 않게).
+/// - 숙박비 별도([FeeRule.separatesLodging])면 [_separateLine] — 참가비 + 숙박비 (PLAN_GATHERING §20).
 Quote quote(
   FeeRule fee, {
   required DateTime start,
@@ -789,6 +860,7 @@ Quote quote(
   final fullPct = fee.fullDiscountPct.clamp(0, 100);
 
   QuoteLine line(Person p) {
+    if (fee.separatesLodging) return _separateLine(fee, p, s, e);
     final g = fee.groupOf(s.year - p.birthYear);
     final days = p.daysIn(s, e);
 
@@ -827,6 +899,44 @@ Quote quote(
             amount: math.max(0, discount.amount),
             note: discount.note,
           ),
+  );
+}
+
+/// 숙박비 별도 집회의 한 사람.
+/// - 참가비: 모든 날 참가 = 전체 참석 정액(비우면 하루 × 일수, 전체참석 할인).
+///   아니면 하루 참가 × 참가일수 — 당일 무료 날은 세지 않고, 전체 참석 금액을 넘지 않는다.
+/// - 숙박비: 숙박 1박 × 고른 밤 수. 상한·전체참석 할인 없음.
+/// 1박당(perNight) 금액은 쓰지 않는다 — 끄면 되살아나도록 지우지는 않는다.
+QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
+  final g = fee.groupOf(s.year - p.birthYear);
+  final days = p.daysIn(s, e);
+  final nights = p.nightsIn(s, e, separate: true);
+  final allDays = _nights(s, e) + 1;
+
+  final day = fee.dayOnly[g] ?? 0;
+  final fullBase = fee.full[g] ?? day * allDays;
+  final fullPrice = fullBase * (100 - fee.fullDiscountPct.clamp(0, 100)) ~/ 100;
+
+  final isFull = days.length == allDays;
+  final participation = isFull
+      ? fullPrice
+      : math.min(day * days.where((d) => !fee.isFreeDay(d)).length, fullPrice);
+  final lodging = (fee.lodging[g] ?? 0) * nights.length;
+  // 무료 날에만 오고 묵지도 않는다 = 낼 돈이 없다.
+  final freeDay =
+      !isFull &&
+      days.isNotEmpty &&
+      nights.isEmpty &&
+      days.every(fee.isFreeDay);
+  return QuoteLine(
+    p,
+    g,
+    days,
+    isFull,
+    participation + lodging,
+    freeDay: freeDay,
+    lodging: lodging,
+    stayNights: nights,
   );
 }
 

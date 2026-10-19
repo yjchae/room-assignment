@@ -146,9 +146,14 @@ class Store extends ChangeNotifier {
   /// 신청의 한 사람 → 참석자. [p] 는 집회 기간 안에 오는 날이 하루 이상 있어야 한다.
   /// 당일(0박)만 오는 사람은 체크인 = 체크아웃 = 그날이 된다. 이런 사람은 참석자 화면의
   /// 날짜별(식수) 통계에만 쓰고 방배정 참석자로는 넣지 않는다([_wanted]).
+  /// 숙박비 별도 집회는 신청서에서 따로 고른 밤([Person.nightsIn])으로 묵는 기간을 정한다.
   Attendee attendeeOf(Gathering g, Registration r, Person p) {
     final days = p.daysIn(g.start, g.end);
-    final nights = nightsOf(days);
+    final nights = p.nightsIn(
+      g.start,
+      g.end,
+      separate: g.fee.separatesLodging,
+    );
     final last = nights.lastOrNull;
     final gap =
         nights.isNotEmpty && nightsOf(nights).length != nights.length - 1;
@@ -213,7 +218,12 @@ class Store extends ChangeNotifier {
       for (final p in r.people) {
         final days = p.daysIn(g.start, g.end);
         if (days.isEmpty || have.contains(p.id)) continue;
-        if (nightsOf(days).isEmpty) out.add(attendeeOf(g, r, p));
+        final nights = p.nightsIn(
+          g.start,
+          g.end,
+          separate: g.fee.separatesLodging,
+        );
+        if (nights.isEmpty) out.add(attendeeOf(g, r, p));
       }
     }
     return out;

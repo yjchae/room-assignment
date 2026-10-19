@@ -374,4 +374,137 @@ void main() {
       expect(FeeRule.fromJson({}).freeDays, isEmpty);
     });
   });
+
+  group('숙박비 별도 (PLAN_GATHERING §20)', () {
+    // 금~일 2박3일. 성인: 전체 15만 · 하루 6만 · 숙박 1박 3만. 영유아 숙박 0원.
+    final fri = DateTime(2026, 10, 9), sat = DateTime(2026, 10, 10);
+    final sun = DateTime(2026, 10, 11);
+    FeeRule rule({int fullPct = 0, List<DateTime>? free}) => FeeRule(
+      full: {AgeGroup.adult: 150000},
+      perNight: {AgeGroup.adult: 70000}, // 숙박비 별도면 쓰지 않는다
+      dayOnly: {AgeGroup.adult: 60000, AgeGroup.infant: 0},
+      lodging: {AgeGroup.adult: 30000, AgeGroup.infant: 0},
+      fullDiscountPct: fullPct,
+      freeDays: free,
+      early: [],
+      lodgingSeparate: true,
+    );
+    Person on(List<DateTime>? days, List<DateTime>? stays, {int y = 1980}) =>
+        Person(name: '가', gender: 'M', birthYear: y, days: days, stays: stays);
+    QuoteLine line(Person x, {FeeRule? f}) =>
+        q(f ?? rule(), [x]).lines.single;
+
+    test('전체 참가 + 숙박 2박 = 15만 + 6만', () {
+      final l = line(on(null, [fri, sat]));
+      expect((l.participation, l.lodging, l.amount), (150000, 60000, 210000));
+      expect(l.stay, '전체 · 숙박 2박');
+      expect(l.nights, 2);
+    });
+
+    test('전체 참가 + 숙박 안 함 = 15만, 묵는 밤 없음', () {
+      final l = line(on(null, []));
+      expect((l.participation, l.lodging), (150000, 0));
+      expect(l.stay, '전체 · 숙박 안 함');
+      expect(l.nights, 0);
+    });
+
+    test('토 하루 참가 + 토밤 숙박 = 6만 + 3만', () {
+      final l = line(on([sat], [sat]));
+      expect((l.participation, l.lodging), (60000, 30000));
+      expect(l.stay, '1일 · 숙박 1박');
+    });
+
+    test('부분 참가 참가비는 전체 금액을 넘지 않는다 (숙박비는 상한 없음)', () {
+      final f = rule()..full[AgeGroup.adult] = 100000;
+      final l = line(on([fri, sat], [fri, sat]), f: f);
+      expect((l.participation, l.lodging), (100000, 60000));
+    });
+
+    test('전체 참석을 비우면 하루 참가 × 일수', () {
+      final f = rule()..full.clear();
+      expect(line(on(null, []), f: f).participation, 180000);
+    });
+
+    test('전체참석 할인은 참가비에만, 사전등록 할인은 합계에', () {
+      final l = line(on(null, [fri]), f: rule(fullPct: 10));
+      expect((l.participation, l.lodging), (135000, 30000));
+      final f = rule()..early = [earlyBird];
+      final r = q(f, [on(null, [fri])]);
+      expect(r.subtotal, 180000);
+      expect(r.earlyDiscount, 18000);
+      expect((r.participationTotal, r.lodgingTotal), (150000, 30000));
+    });
+
+    test('당일 무료 날: 그 날 참가비는 0, 숙박하면 숙박비는 받는다', () {
+      final f = rule(free: [sun]);
+      final only = line(on([sun], []), f: f);
+      expect((only.amount, only.freeDay), (0, true));
+      expect(q(f, [on([sun], [])]).freeDayOnly, isTrue);
+      final stay = line(on([sat, sun], [sat]), f: f);
+      expect((stay.participation, stay.lodging), (60000, 30000));
+      expect(stay.freeDay, isFalse);
+    });
+
+    test('영유아는 숙박비 0원', () {
+      expect(line(on(null, [fri, sat], y: 2025)).lodging, 0);
+    });
+
+    test('숙박을 따로 고르지 않은 신청은 이어진 날 사이 밤으로 센다', () {
+      final l = line(on([fri, sat], null));
+      expect(l.stayNights, [fri]);
+      expect(l.lodging, 30000);
+    });
+
+    test('마지막 날 밤·기간 밖 밤은 버린다', () {
+      final x = on(null, [sun, DateTime(2026, 10, 1), fri]);
+      expect(x.nightsIn(fri, sun, separate: true), [fri]);
+    });
+
+    test('끈 집회(false)·기존 집회(null)는 stays 가 있어도 지금 계산 그대로', () {
+      for (final sep in [false, null]) {
+        final f = planRule()..lodgingSeparate = sep;
+        final family = [
+          p('아빠', 1985),
+          p('엄마', 1987),
+          p('첫째', 2012),
+          p('둘째', 2021, checkIn: DateTime(2026, 10, 10)),
+        ]..first.stays = [];
+        final r = q(f, family);
+        expect(r.total, 415000, reason: '§3.3 예시');
+        expect(r.separatesLodging, isFalse);
+        expect(r.lines.first.nights, 2);
+      }
+    });
+
+    test('JSON: 켠 집회는 왕복, 기존 집회는 키가 안 생긴다', () {
+      final back = FeeRule.fromJson(rule().toJson());
+      expect(back.separatesLodging, isTrue);
+      expect(back.lodging[AgeGroup.adult], 30000);
+
+      final old = planRule().toJson();
+      expect(old.containsKey('lodgingSeparate'), isFalse);
+      expect(old.containsKey('lodging'), isFalse);
+      final reread = FeeRule.fromJson(old);
+      expect(reread.canSeparateLodging, isFalse);
+      expect(reread.toJson(), old, reason: '기존 집회를 열고 저장해도 그대로');
+
+      final fresh = FeeRule(lodgingSeparate: false);
+      expect(FeeRule.fromJson(fresh.toJson()).canSeparateLodging, isTrue);
+      expect(FeeRule.fromJson(fresh.toJson()).separatesLodging, isFalse);
+    });
+
+    test('Person.stays JSON: 고른 것만 쓰고, 없으면 null', () {
+      final x = Person.fromJson(on(null, [fri]).toJson());
+      expect(x.stays, [fri]);
+      expect(on(null, null).toJson().containsKey('stays'), isFalse);
+      expect(Person.fromJson(on(null, null).toJson()).stays, isNull);
+    });
+
+    test('isFree: 숙박비 별도면 1박당 대신 숙박비를 본다', () {
+      final f = FeeRule(perNight: {AgeGroup.adult: 1000}, lodgingSeparate: true);
+      expect(f.isFree, isTrue);
+      f.lodging[AgeGroup.adult] = 1000;
+      expect(f.isFree, isFalse);
+    });
+  });
 }

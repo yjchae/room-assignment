@@ -9,6 +9,7 @@ import '../theme.dart';
 const _tabular = [FontFeature.tabularFigures()];
 
 /// 사람별 금액 → 소계 → 할인 → 그룹당 → 합계.
+/// 숙박비 별도 집회는 사람 줄에 참가비·숙박비를 나눠 적고, 소계 대신 참가비 합계·숙박비 합계를 보인다.
 class QuoteTable extends StatelessWidget {
   const QuoteTable(this.q, {super.key});
   final Quote q;
@@ -17,6 +18,7 @@ class QuoteTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final extra =
         q.earlyPct > 0 || q.perRegistration > 0 || q.specialDiscount > 0;
+    final separate = q.separatesLodging;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -26,13 +28,18 @@ class QuoteTable extends StatelessWidget {
             won(l.amount),
             sub:
                 '${l.group.label} · ${l.stay}'
-                '${l.person.staff ? ' · 스탭' : ''}',
+                '${l.person.staff ? ' · 스탭' : ''}'
+                '${separate ? ' · 참가 ${won(l.participation)} + 숙박 ${won(l.lodging)}' : ''}',
           ),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 6),
           child: Divider(),
         ),
-        if (extra) _Row('소계', won(q.subtotal)),
+        if (separate) ...[
+          _Row('참가비 합계', won(q.participationTotal)),
+          _Row('숙박비 합계', won(q.lodgingTotal)),
+        ] else if (extra)
+          _Row('소계', won(q.subtotal)),
         if (q.earlyPct > 0)
           _Row('사전등록 할인 ${q.earlyPct}%', '-${won(q.earlyDiscount)}'),
         if (q.perRegistration > 0)

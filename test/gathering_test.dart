@@ -1323,4 +1323,52 @@ void main() {
       expect(s.event.specOf('직분').type, FieldType.check);
     });
   });
+
+  group('숙박비 별도 — 참석자·기존 집회 (PLAN_GATHERING §20·§22)', () {
+    final sat = DateTime(2026, 10, 10);
+    Gathering separate() =>
+        sample()..fee = (sample().fee..lodgingSeparate = true);
+    Person staying(String name, List<DateTime>? stays) =>
+        person(name, 1985)..stays = stays;
+
+    test('전체 참가·숙박 안 함 → 참석자로 안 올라오고, 고른 밤만 묵는다', () {
+      final s = tmpStore();
+      final regs = [
+        reg('r1', RegStatus.confirmed, [
+          staying('출퇴근', []),
+          staying('토밤만', [sat]),
+          staying('이틀', [start, sat]),
+        ]),
+      ];
+      s.syncRegistrations(separate(), regs);
+      expect(s.event.attendees.map((a) => a.name), ['토밤만', '이틀']);
+      final one = s.event.attendees.first;
+      expect((one.checkIn, one.checkOut), (sat, end));
+      expect(
+        s.everyone(separate(), regs).map((a) => a.name),
+        contains('출퇴근'),
+        reason: '방은 없어도 오는 사람 명단에는 있다',
+      );
+    });
+
+    test('기존 집회(키 없음)는 stays 가 있어도 이어진 날로 센다', () {
+      final s = tmpStore();
+      s.syncRegistrations(sample(), [
+        reg('r1', RegStatus.confirmed, [staying('가', [])]),
+      ]);
+      final a = s.event.attendees.single;
+      expect((a.checkIn, a.checkOut), (start, end));
+    });
+
+    test('기존 집회 행은 읽고 다시 저장해도 같은 행이다 (새 키가 안 생김)', () {
+      final row = {...sample().toRow(), 'id': 'g1'};
+      expect(
+        (row['fee'] as Map).containsKey('lodgingSeparate'),
+        isFalse,
+      );
+      final back = Gathering.fromRow(row);
+      expect(back.fee.canSeparateLodging, isFalse);
+      expect({...back.toRow(), 'id': 'g1'}, row);
+    });
+  });
 }
