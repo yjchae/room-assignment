@@ -586,7 +586,7 @@ Future<void> openGathering(BuildContext context, Gathering g) async {
       startDate: dateOnly(g.start),
       endDate: dateOnly(g.end),
       customFields: [...g.formFields],
-    ),
+    )..fieldSpecs = {...g.fieldSpecs},
   );
   current.value = g;
   store.applyGathering(g);
@@ -854,9 +854,14 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
               ..backgroundUrl = null)
           : Gathering(name: n, start: start, end: end);
       base.kind = kind;
+      // 숙박비 별도는 홈스테이에 뜻이 없고 스위치도 숨는다 — 집회에서 설정을 복사해도 끈다.
+      if (base.isHomestay) base.fee.lodgingSeparate = false;
       // 홈스테이는 수용 인원을 받아야 방 정원이 정해진다. 신청서 항목으로 넣어 둔다.
       if (base.isHomestay && !base.formFields.contains(homestayCapacityField)) {
         base.formFields.add(homestayCapacityField);
+        base.fieldSpecs[homestayCapacityField] = const FieldSpec(
+          type: FieldType.number,
+        );
       }
       final g = await remote.saveGathering(
         base

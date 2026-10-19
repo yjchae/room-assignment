@@ -8,7 +8,8 @@ import '../main.dart';
 import '../models.dart';
 import '../remote.dart';
 import '../theme.dart';
-import 'attendees.dart' show addCustomFieldDialog, removeCustomFieldDialog;
+import 'attendees.dart'
+    show addCustomFieldDialog, editCustomFieldDialog, removeCustomFieldDialog;
 import 'gatherings.dart';
 
 /// 집회 설정 (서버). 저장하면 이 PC 의 방배정 파일 이름·날짜·항목도 같이 바뀐다.
@@ -44,7 +45,19 @@ const _feeCols = {
   'full': '전체 참석',
   'perNight': '1박당 (부분 참석)',
   'dayOnly': '당일',
+  'lodging': '숙박 1박',
 };
+
+/// 지금 보이는 회비표 열. 숙박비 별도면 1박당 대신 숙박 1박을 따로 받고,
+/// 당일 금액이 곧 하루 참가비가 된다 (PLAN_GATHERING §20 결정 3).
+Map<String, String> _feeColsFor({required bool separate}) => separate
+    ? {
+        'minAge': _feeCols['minAge']!,
+        'full': _feeCols['full']!,
+        'dayOnly': '하루 참가',
+        'lodging': _feeCols['lodging']!,
+      }
+    : {for (final k in ['minAge', 'full', 'perNight', 'dayOnly']) k: _feeCols[k]!};
 
 class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   /// 고치는 중인 사본. 저장 전까지 서버·[current] 와 다를 수 있다.
@@ -177,6 +190,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       fee['dayOnly:${ag.name}'] = TextEditingController(
         text: x.fee.dayOnly[ag]?.toString() ?? '',
       );
+      fee['lodging:${ag.name}'] = TextEditingController(
+        text: x.fee.lodging[ag]?.toString() ?? '',
+      );
     }
     early
       ..clear()
@@ -260,6 +276,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       perRegistration: number(perReg.text, '가족당 금액') ?? 0,
       fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
+      // 스위치를 숨기는 집회(하루짜리·홈스테이)는 끈다 — 날짜를 줄여 숨겨진 뒤에도 켜진 채 남지 않게.
+      lodgingSeparate:
+          x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
+      lodging: column('lodging'),
       // 일정 없는 날로 끈 날은 무료 날에서도 뺀다 (화면에선 꺼져 보이는데 0원으로 계산되지 않게).
       freeDays: [
         for (final d in x.fee.freeDays)
@@ -284,7 +304,12 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     if (!await ensureAdmin(context)) return;
     setState(() => saving = true);
     try {
-      g!.formFields = [...store.event.customFields];
+      g!
+        ..formFields = [...store.event.customFields]
+        ..fieldSpecs = {
+          for (final f in store.event.customFields)
+            f: ?store.event.fieldSpecs[f],
+        };
       final saved = await remote.saveGathering(g!);
       current.value = saved;
       store.applyGathering(saved);
@@ -388,6 +413,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       );
     }
     final x = g!;
+    final cols = _feeColsFor(separate: x.fee.lodgingSeparate);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -589,6 +615,22 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                 ]),
                 _card('회비', [
+                  // 기본은 꺼짐 — 끈 동안은 예전 방식 그대로 (§22). 하루짜리는 밤이 없고,
+                  // 홈스테이 신청자는 재워 주는 가정이라 숙박비가 뜻이 없다.
+                  if (x.nights > 0 && !x.isHomestay) ...[
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('숙박비 별도'),
+                      subtitle: const Text(
+                        '참가비와 숙박비를 따로 받습니다. 신청서에서 날짜마다 참석·숙박을 따로 고릅니다. '
+                        '켜거나 끄면 이미 들어온 신청의 금액도 새 규칙으로 다시 계산됩니다.',
+                      ),
+                      value: x.fee.lodgingSeparate,
+                      onChanged: (v) =>
+                          setState(() => x.fee.lodgingSeparate = v),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Table(
@@ -600,7 +642,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                         TableRow(
                           children: [
                             _th('구분'),
-                            for (final label in _feeCols.values) _th(label),
+                            for (final label in cols.values) _th(label),
                           ],
                         ),
                         for (final ag in AgeGroup.values)
@@ -612,7 +654,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              for (final col in _feeCols.keys)
+                              for (final col in cols.keys)
                                 Padding(
                                   padding: const EdgeInsets.all(4),
                                   child: TextField(
@@ -621,9 +663,11 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                                     textAlign: TextAlign.right,
                                     decoration: InputDecoration(
                                       suffixText: col == 'minAge' ? '세~' : '원',
-                                      hintText: col == 'full'
-                                          ? '1박×${x.nights}'
-                                          : '0',
+                                      hintText: col != 'full'
+                                          ? '0'
+                                          : x.fee.lodgingSeparate
+                                          ? '하루×${x.days.length}'
+                                          : '1박×${x.nights}',
                                     ),
                                   ),
                                 ),
@@ -634,8 +678,11 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '나이는 연 나이(집회 연도 − 출생연도)입니다. 전체 참석을 비워 두면 1박당 × ${x.nights}박으로 계산하고, '
-                    '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
+                    x.fee.lodgingSeparate
+                        ? '나이는 연 나이(집회 연도 − 출생연도)입니다. 참가비는 전체 참석을 비워 두면 하루 참가 × ${x.days.length}일로 계산하고, '
+                              '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다. 숙박비는 묵는 밤마다 숙박 1박 금액을 받습니다.'
+                        : '나이는 연 나이(집회 연도 − 출생연도)입니다. 전체 참석을 비워 두면 1박당 × ${x.nights}박으로 계산하고, '
+                              '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
                     style: const TextStyle(
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -660,9 +707,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       '당일 무료인 날',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                     ),
-                    const Text(
-                      '이 날 하루만 당일로 오면 무료입니다. 이 날을 포함해 1박 이상 묵으면 회비표대로 받습니다.',
-                      style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                    Text(
+                      x.fee.lodgingSeparate
+                          ? '이 날은 참가비를 받지 않습니다(전체 참석은 정액 그대로). 숙박하면 숙박비는 받습니다.'
+                          : '이 날 하루만 당일로 오면 무료입니다. 이 날을 포함해 1박 이상 묵으면 회비표대로 받습니다.',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
@@ -955,7 +1007,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   const Text(
-                    '참석자 탭의 사용자 정의 항목이 신청서에 그대로 나옵니다. '
+                    '참석자 탭의 사용자 정의 항목이 신청서에 그대로 나옵니다. 항목을 누르면 형식(숫자·체크박스·셀렉트박스 등)을 고칠 수 있습니다. '
                     '추가·삭제한 뒤 [저장]해야 신청서에 반영됩니다. 삭제하면 참석자들의 그 항목 값도 지워집니다.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
@@ -965,8 +1017,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     runSpacing: 8,
                     children: [
                       for (final f in store.event.customFields)
-                        Chip(
-                          label: Text(f),
+                        InputChip(
+                          label: Text(_fieldChipLabel(f)),
+                          tooltip: '눌러서 이름·형식 고치기',
+                          onPressed: () async {
+                            await editCustomFieldDialog(context, f);
+                            if (mounted) setState(() {});
+                          },
                           deleteButtonTooltipMessage: "'$f' 항목 삭제",
                           onDeleted: () async {
                             final ok = await removeCustomFieldDialog(
@@ -1191,6 +1248,16 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// "교회 · 셀렉트박스(5)" — 텍스트 항목은 이름만.
+  String _fieldChipLabel(String f) {
+    final spec = store.event.specOf(f);
+    return switch (spec.type) {
+      FieldType.text => f,
+      FieldType.select => '$f · ${spec.type.label}(${spec.options.length})',
+      _ => '$f · ${spec.type.label}',
+    };
   }
 
   Widget _card(String title, List<Widget> children) => Padding(

@@ -16,6 +16,7 @@ import 'gathering.dart';
 import 'models.dart';
 import 'remote.dart';
 import 'theme.dart';
+import 'widgets/custom_field_input.dart';
 import 'widgets/duty_tasks.dart';
 import 'widgets/quote_table.dart';
 
@@ -328,12 +329,10 @@ class _FeeTable extends StatelessWidget {
       return hi <= lo ? '$lo세' : '$lo~$hi세';
     }
 
+    final separate = f.lodgingSeparate;
     // 전체 참석자가 실제로 내는 금액 (정액 또는 1박×박수, 전체참석 할인 반영).
-    int fullOf(AgeGroup ag) =>
-        (f.full[ag] ??
-            (n > 0 ? (f.perNight[ag] ?? 0) * n : (f.dayOnly[ag] ?? 0))) *
-        (100 - f.fullDiscountPct.clamp(0, 100)) ~/
-        100;
+    // 숙박비 별도면 참가비만 — 정액 또는 하루 참가 × 일수.
+    int fullOf(AgeGroup ag) => f.fullPrice(ag, n);
     String money(int v) => v == 0 ? '무료' : won(v);
     Widget cell(String t, {bool head = false}) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
@@ -363,8 +362,13 @@ class _FeeTable extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                 ),
                 cell('전체 참석', head: true),
-                if (n > 0) cell('1박', head: true),
-                cell('당일', head: true),
+                if (separate) ...[
+                  cell('하루 참가', head: true),
+                  cell('숙박 1박', head: true),
+                ] else ...[
+                  if (n > 0) cell('1박', head: true),
+                  cell('당일', head: true),
+                ],
               ],
             ),
             // 출생연도를 안 받으면 모두 성인 금액이라 성인 줄만.
@@ -395,8 +399,13 @@ class _FeeTable extends StatelessWidget {
                     ),
                   ),
                   cell(money(fullOf(ag))),
-                  if (n > 0) cell(money(f.perNight[ag] ?? 0)),
-                  cell(money(f.dayOnly[ag] ?? 0)),
+                  if (separate) ...[
+                    cell(money(f.dayOnly[ag] ?? 0)),
+                    cell(money(f.lodging[ag] ?? 0)),
+                  ] else ...[
+                    if (n > 0) cell(money(f.perNight[ag] ?? 0)),
+                    cell(money(f.dayOnly[ag] ?? 0)),
+                  ],
                 ],
               ),
           ],
@@ -407,7 +416,11 @@ class _FeeTable extends StatelessWidget {
           if (byAge && !g.requires('birthYear')) '출생연도를 비워 두면 성인 금액으로 계산합니다.',
           if (f.fullDiscountPct > 0)
             '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
-          '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
+          if (separate) ...[
+            '참가비와 숙박비를 따로 받습니다. 숙박비는 묵는 밤마다 받습니다.',
+            '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다.',
+          ] else
+            '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
           for (final e in f.early)
             '사전등록 할인: ${mdw(daysBefore(g.start, e.fromDays))} ~ '
                 '${mdw(daysBefore(g.start, e.toDays))} 신청 시 ${e.pct}%',
@@ -416,7 +429,9 @@ class _FeeTable extends StatelessWidget {
           if (n > 0)
             for (final d in g.days)
               if (f.isFreeDay(d) && !g.isOff(d))
-                '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).',
+                separate
+                    ? '${mdw(d)} 참가비는 무료입니다 (숙박하면 숙박비는 받습니다).'
+                    : '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).',
         ])
           Text(
             '· $line',
@@ -460,8 +475,9 @@ class _PersonForm {
       for (final e in copyFrom.extras.entries) {
         extras[e.key] = TextEditingController(text: e.value.text);
       }
-      // 가족은 보통 같이 오므로 신청자가 고른 날짜로 시작한다.
+      // 가족은 보통 같이 오므로 신청자가 고른 날짜(와 숙박)로 시작한다.
       days = copyFrom.days == null ? null : {...copyFrom.days!};
+      stays = {...copyFrom.stays};
     }
   }
 
@@ -479,6 +495,13 @@ class _PersonForm {
   Set<DateTime>? days;
 
   bool get full => days == null;
+
+  /// 숙박하는 밤 (숙박비 별도 집회만). 그 날 밤에 자고 다음 날로 넘어간다.
+  Set<DateTime> stays = {};
+
+  /// 고치는 신청에 원래 있던 숙박([Person.stays]). 숙박비 별도를 끈 동안 [수정]해도 지우지 않고
+  /// 그대로 낸다 — 다시 켜면 살아난다 (PLAN_GATHERING §22.2).
+  List<DateTime>? keptStays;
 
   /// 참석일을 정했다 (전체 참석이거나 하루 이상 골랐다).
   bool get picked => full || days!.isNotEmpty;
@@ -516,6 +539,13 @@ class _PersonForm {
       birthYear: y,
       relation: relation,
       days: _allOpenDays(g) ? null : ([...days!]..sort()),
+      // 숙박비 별도 집회만 숙박을 따로 낸다. 마지막 날 밤은 집회 밖이라 고를 수 없다.
+      stays: g.fee.lodgingSeparate
+          ? ([
+              for (final d in g.days.take(g.nights))
+                if (stays.contains(d)) d,
+            ])
+          : keptStays,
       phone: phone ?? this.phone,
       cell: t(cell),
       zone: t(zone),
@@ -578,7 +608,12 @@ class _ApplyPageState extends State<ApplyPage> {
     super.initState();
     final r = widget.editing;
     forms = r == null
-        ? [_PersonForm(applicant: true)..days = _newDays]
+        ? [
+            _PersonForm(applicant: true)
+              ..days = _newDays
+              // 운영자 접수는 전체 참석으로 시작하므로 숙박도 모든 밤으로 (숙박비 별도 집회).
+              ..stays = widget.admin ? {...g.days.take(g.nights)} : {},
+          ]
         : [
             for (final (i, p) in r.people.indexed)
               _PersonForm(p: p, applicant: i == 0),
@@ -594,6 +629,11 @@ class _ApplyPageState extends State<ApplyPage> {
       for (final (i, p) in r.people.indexed) {
         final d = p.daysIn(g.start, g.end);
         if (d.length < g.days.length) forms[i].days = d.toSet();
+        // 숙박을 따로 고르기 전의 신청은 이어서 고른 날 사이 밤으로 채워 둔다 —
+        // 그대로 [수정]해도 묵는 밤이 바뀌지 않게 (PLAN_GATHERING §22.2).
+        forms[i]
+          ..stays = p.nightsIn(g.start, g.end, separate: true).toSet()
+          ..keptStays = p.stays;
       }
       depositor.text = r.depositor ?? '';
       memo.text = r.memo ?? '';
@@ -878,9 +918,10 @@ class _ApplyPageState extends State<ApplyPage> {
         for (final field in g.formFields)
           Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: TextFormField(
+            child: CustomFieldInput(
+              label: field,
+              spec: g.specOf(field),
               controller: f.extra(field),
-              decoration: InputDecoration(labelText: field),
             ),
           ),
         const SizedBox(height: 4),
@@ -889,7 +930,10 @@ class _ApplyPageState extends State<ApplyPage> {
           Align(
             alignment: Alignment.centerRight,
             child: Text(
-              '${line.group.label} · ${line.stay} · ${won(line.amount)}',
+              line.separate
+                  ? '${line.group.label} · ${line.stay} · '
+                        '참가 ${won(line.participation)} + 숙박 ${won(line.lodging)}'
+                  : '${line.group.label} · ${line.stay} · ${won(line.amount)}',
               style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 color: AppColors.brand,
@@ -914,6 +958,7 @@ class _ApplyPageState extends State<ApplyPage> {
   );
 
   Widget _schedule(_PersonForm f) {
+    if (g.fee.lodgingSeparate) return _stayTable(f);
     final days = g.days;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -972,6 +1017,141 @@ class _ApplyPageState extends State<ApplyPage> {
               style: TextStyle(fontSize: 12, color: AppColors.danger),
             ),
         ],
+      ],
+    );
+  }
+
+  /// 숙박비 별도 집회의 일정 — 날짜 한 줄에 [참석] [숙박] 체크 두 개 (PLAN_GATHERING §20.2).
+  /// 맨 위 '전체' 줄은 그 열을 모두 켜고 끈다. 숙박 = 그 날 밤에 잔다. 마지막 날은 밤이 없다.
+  /// 일정 없는 날은 참석만 막는다 — 그 날 밤 자고 다음 날 오는 사람이 있다.
+  Widget _stayTable(_PersonForm f) {
+    final days = g.days;
+    final nights = days.take(g.nights).toList();
+    bool attends(DateTime d) => f.full || f.days!.contains(d);
+    final allStay = nights.isNotEmpty && nights.every(f.stays.contains);
+
+    Widget head(String t) => SizedBox(
+      width: 56,
+      child: Text(
+        t,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+      ),
+    );
+    Widget box(Key key, bool? value, ValueChanged<bool?>? onChanged) =>
+        SizedBox(
+          width: 56,
+          child: Checkbox(
+            key: key,
+            tristate: value == null,
+            value: value,
+            onChanged: onChanged,
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                '참석·숙박하는 날을 고르세요. 숙박은 그 날 밤에 자는 것입니다.',
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
+            ),
+            head('참석'),
+            head('숙박'),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '전체 · ${mdw(g.start)} ~ ${mdw(g.end)}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            box(
+              const ValueKey('attend-all'),
+              f.full ? true : (f.days!.isEmpty ? false : null),
+              (_) => setState(() => f.days = f.full ? {} : null),
+            ),
+            box(
+              const ValueKey('stay-all'),
+              allStay ? true : (f.stays.isEmpty ? false : null),
+              (_) => setState(
+                () => f.stays = allStay ? {} : {...nights},
+              ),
+            ),
+          ],
+        ),
+        const Divider(height: 8),
+        for (final d in days)
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      g.fee.isFreeDay(d) && !g.isOff(d)
+                          ? '${mdw(d)} · 참가 무료'
+                          : mdw(d),
+                    ),
+                    if (g.isOff(d))
+                      const Text('일정 없음', style: _subStyle)
+                    else if (g.scheduleOn(d).isNotEmpty)
+                      Text(
+                        [
+                          for (final s in g.scheduleOn(d))
+                            '${s.time} ${s.title}'.trim(),
+                        ].join('\n'),
+                        style: _subStyle,
+                      ),
+                  ],
+                ),
+              ),
+              box(
+                ValueKey('attend-${ymd(d)}'),
+                attends(d),
+                g.isOff(d)
+                    ? null
+                    : (v) => setState(() {
+                        // 전체 참석에서 하루를 빼면 나머지 날을 모두 고른 부분 참석이 된다.
+                        f.days ??= {
+                          for (final x in days)
+                            if (!g.isOff(x)) x,
+                        };
+                        if (v == true) {
+                          f.days!.add(d);
+                        } else {
+                          f.days!.remove(d);
+                        }
+                      }),
+              ),
+              if (nights.contains(d))
+                box(
+                  ValueKey('stay-${ymd(d)}'),
+                  f.stays.contains(d),
+                  (v) => setState(() {
+                    if (v == true) {
+                      f.stays.add(d);
+                    } else {
+                      f.stays.remove(d);
+                    }
+                  }),
+                )
+              else
+                head('–'),
+            ],
+          ),
+        if (tried && !f.picked)
+          const Text(
+            '참석하는 날을 하루 이상 고르세요',
+            style: TextStyle(fontSize: 12, color: AppColors.danger),
+          ),
       ],
     );
   }
@@ -1608,7 +1788,7 @@ class _StayRow extends StatelessWidget {
               ),
             ),
             Text(
-              line.full ? '전체 참석' : line.stay,
+              line.full && !line.separate ? '전체 참석' : line.stay,
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,

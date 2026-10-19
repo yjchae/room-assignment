@@ -114,7 +114,26 @@ class Store extends ChangeNotifier {
       ..name = g.name
       ..startDate = s
       ..endDate = end;
-    if (_addFields(g.formFields) > 0 || changed) commit();
+    final known = {...event.customFields};
+    final added = _addFields(g.formFields) + _addSpecs(g.fieldSpecs, known);
+    if (added > 0 || changed) commit();
+  }
+
+  /// 서버에 저장된 항목 형식 중 이번에 처음 가져온 항목([known] 에 없던 것)의 것만 문서에 넣는다. 개수.
+  /// 문서에 이미 있던 항목은 문서 쪽이 이긴다 — 형식이 없으면(텍스트) 운영자가 텍스트로 되돌리고
+  /// 아직 [저장] 안 한 것일 수 있어서, 서버 형식으로 덮으면 고친 것이 되살아난다.
+  int _addSpecs(Map<String, FieldSpec> specs, Set<String> known) {
+    var n = 0;
+    for (final e in specs.entries) {
+      if (known.contains(e.key) ||
+          !event.customFields.contains(e.key) ||
+          event.fieldSpecs.containsKey(e.key)) {
+        continue;
+      }
+      event.fieldSpecs[e.key] = e.value;
+      n++;
+    }
+    return n;
   }
 
   /// 취소되지 않은 신청의 사람들 (사람 id → 참석자). 입금대기도 넣는다 — 입금 전에도
@@ -130,9 +149,14 @@ class Store extends ChangeNotifier {
   /// 신청의 한 사람 → 참석자. [p] 는 집회 기간 안에 오는 날이 하루 이상 있어야 한다.
   /// 당일(0박)만 오는 사람은 체크인 = 체크아웃 = 그날이 된다. 이런 사람은 참석자 화면의
   /// 날짜별(식수) 통계에만 쓰고 방배정 참석자로는 넣지 않는다([_wanted]).
+  /// 숙박비 별도 집회는 신청서에서 따로 고른 밤([Person.nightsIn])으로 묵는 기간을 정한다.
   Attendee attendeeOf(Gathering g, Registration r, Person p) {
     final days = p.daysIn(g.start, g.end);
-    final nights = nightsOf(days);
+    final nights = p.nightsIn(
+      g.start,
+      g.end,
+      separate: g.fee.lodgingSeparate,
+    );
     final last = nights.lastOrNull;
     final gap =
         nights.isNotEmpty && nightsOf(nights).length != nights.length - 1;
@@ -197,7 +221,12 @@ class Store extends ChangeNotifier {
       for (final p in r.people) {
         final days = p.daysIn(g.start, g.end);
         if (days.isEmpty || have.contains(p.id)) continue;
-        if (nightsOf(days).isEmpty) out.add(attendeeOf(g, r, p));
+        final nights = p.nightsIn(
+          g.start,
+          g.end,
+          separate: g.fee.lodgingSeparate,
+        );
+        if (nights.isEmpty) out.add(attendeeOf(g, r, p));
       }
     }
     return out;
@@ -590,19 +619,32 @@ class Store extends ChangeNotifier {
   // --- 사용자 정의 참석자 항목 ---
 
   /// 항목 추가. 이미 있거나 기본 항목과 이름이 겹치면 false.
-  bool addCustomField(String name) {
+  bool addCustomField(String name, [FieldSpec spec = const FieldSpec()]) {
     final n = name.trim();
     if (n.isEmpty) return false;
     if (event.customFields.contains(n)) return false;
     if (builtinFieldLabels.values.contains(n)) return false;
     event.customFields.add(n);
+    if (!spec.isPlain) event.fieldSpecs[n] = spec;
     commit();
     return true;
+  }
+
+  /// 항목 형식을 바꾼다. 이미 받은 값은 그대로 둔다 — 보기에 없는 값은 화면이 글자로 보여 준다.
+  void setFieldSpec(String name, FieldSpec spec) {
+    if (!event.customFields.contains(name)) return;
+    if (spec.isPlain) {
+      event.fieldSpecs.remove(name);
+    } else {
+      event.fieldSpecs[name] = spec;
+    }
+    commit();
   }
 
   /// 항목 삭제. 참석자들이 갖고 있던 값도 같이 지운다.
   void removeCustomField(String name) {
     event.customFields.remove(name);
+    event.fieldSpecs.remove(name);
     for (final a in event.attendees) {
       a.extra.remove(name);
     }
@@ -618,6 +660,8 @@ class Store extends ChangeNotifier {
     final i = event.customFields.indexOf(from);
     if (i < 0) return false;
     event.customFields[i] = n;
+    final spec = event.fieldSpecs.remove(from);
+    if (spec != null) event.fieldSpecs[n] = spec;
     for (final a in event.attendees) {
       final v = a.extra.remove(from);
       if (v != null) a.extra[n] = v;

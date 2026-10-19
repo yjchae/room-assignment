@@ -32,10 +32,11 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - **운영자는 두 종류다.** 전체 운영자 = `admins` 에 있는 사람(모든 집회 + 계정 승인 + 새 집회 만들기·삭제). 집회별 운영자 = `gathering_admins` 에 그 집회로 등록된 사람(그 집회의 설정·신청·방배정만). 판정은 SQL 함수 `manages(집회id)` 하나로 한다 — RLS 정책도 운영자 RPC(`save_room_plan`·`admin_add_registration`·`reset_pin`)도 이걸 부른다. 등록은 집회 설정 화면의 [이 집회의 운영자] 카드에서 이메일로 한다(`add_gathering_admin`, 계정이 없으면 `NO_ACCOUNT`). 앱은 `remote.scope()` 로 범위를 읽어 집회 목록과 [새 집회]·[집회 삭제]를 가린다.
 - `lib/config.dart` 에는 publishable 키만 둔다. 저장소가 공개라서 service_role 키, 실명·실제 전화번호가 든 데이터는 커밋하지 않는다.
 
-**웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `models.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `widgets/duty_tasks.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
+**웹 빌드에 같이 들어가는 파일** — `gathering.dart`, `models.dart`, `remote.dart`, `theme.dart`, `widgets/quote_table.dart`, `widgets/duty_tasks.dart`, `widgets/custom_field_input.dart`, `main_public.dart` 는 `dart:io` 를 import 하면 안 된다. `main_public.dart` 는 이 파일들만 가져온다.
 
 **회비 계산은 `gathering.dart` 의 `quote()` 하나뿐이다.** 신청 웹·조회·관리자 화면·참석자 가져오기가 모두 이 함수를 부른다. 따로 계산하면 금액이 어긋난다.
 당일 무료 날(`FeeRule.freeDays`, 회비 JSON 안 — 서버 변경 없음)은 그 날 **하루만 당일로** 오면 0원이고, 그 날을 끼고 1박이라도 묵으면 보통 금액이다(`PLAN_GATHERING.md` §18).
+**숙박비 별도**(`FeeRule.lodgingSeparate`, 회비 JSON 안 — 서버 변경 없음)를 켜면 `quote()` 가 `_separateLine` 으로 참가비(전체 참석 · 하루 참가=`dayOnly`)와 숙박비(`lodging[구분]` × 묵는 밤)를 따로 센다. 묵는 밤은 신청서의 날짜 줄 [참석][숙박] 체크로 받은 `Person.stays` 이고, 어디서든 `Person.nightsIn()` 으로 읽는다(`stays` 가 없으면 이어진 날로 센다). 기존 집회를 포함해 모든 집회에서 켤 수 있고 **기본은 꺼짐**이다. 끈 집회를 열고 저장해도 회비 JSON 이 바뀌지 않게 `lodgingSeparate` 는 켰을 때만, `lodging` 은 값이 있을 때만 쓴다(`PLAN_GATHERING.md` §20·§22).
 
 **전역 상태** (`lib/main.dart`): `store`(방배정 `Store`, ChangeNotifier), `current`(열어 둔 `Gathering`), `tabIndex`. 탭 번호는 숫자 대신 `settingsTab`/`registrationsTab`/`assignTab` 상수로 쓴다. 서버 호출은 전부 `lib/remote.dart` 의 전역 `remote` 로 하고, 테스트는 여기에 `Remote` 를 상속한 가짜(`FakeRemote`, `PlanRemote`)를 끼운다.
 
@@ -52,6 +53,8 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - 화면은 같은 걸 쓰고 이름만 바꾼다(`방 관리 → 가정 관리`). 홈스테이의 [신청에서 가져오기]는 참석자 화면이 아니라 **가정 관리** 화면에 있다.
 
 **기간을 나눈 참석자** (`Attendee.splitOf`): 한 사람이 기간별로 다른 방(홈스테이는 다른 집)에 묵으면 참석자 행이 조각으로 나뉜다. `Store.splitStay`(경계 날짜로 자르기)·`assignRange`(고른 기간만 배정, 나머지는 미배정 조각)가 만들고, 같은 사람은 `Attendee.personId` 로 묶어 화면에서 한 줄로 그린다. 조각도 제 일정을 가진 보통 참석자라 정원·보드·자동배정은 손댈 필요가 없다. 나뉜 조각은 `registrationId` 를 떼고 원본에 `editedByAdmin` 을 붙여 [신청에서 가져오기]가 되돌리지 않게 한다.
+
+**신청서 추가 항목 형식** (`FieldSpec`, `models.dart`): 텍스트·숫자·체크박스·셀렉트박스(보기 목록)·토글 버튼. 이름처럼 방배정 문서(`Event.fieldSpecs`)에 살다가 집회 설정 [저장] 때 `gatherings.field_specs` 로 복사된다. 키가 없으면 텍스트, 값은 형식과 상관없이 `extra` 의 문자열 하나(켜고 끄는 형식은 `fieldOn`='예'). 신청 웹·참석자 편집 창은 `widgets/custom_field_input.dart` 의 `CustomFieldInput` 하나로 그리고, 추가·고치기는 `attendees.dart` 의 `_customFieldDialog` 하나다. `field_specs` 는 칸이 있는 DB 에서 읽었거나 형식이 있을 때만 보낸다(schema.sql 전 DB 에서도 저장이 안 깨지게). 요구사항은 `PLAN_GATHERING.md` §21.
 
 **신청서 기본 항목**: 운영자가 칸마다 [안 받음 | 선택 | 필수]를 정한다. 보통 칸은 뺀 목록(`hidden_fields`)으로,
 나중에 생긴 칸(`Gathering.optInFields` = 지금은 `staff`)은 켠 목록(`shown_fields`)으로 관리한다 — 기본이 '안 받음'이라

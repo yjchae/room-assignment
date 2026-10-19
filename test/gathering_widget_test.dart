@@ -12,6 +12,7 @@ import 'package:room_assignment/screens/gatherings.dart';
 import 'package:room_assignment/screens/registrations.dart';
 import 'package:room_assignment/screens/rooms.dart';
 import 'package:room_assignment/theme.dart';
+import 'package:room_assignment/widgets/custom_field_input.dart';
 
 /// 메모리 서버. 실제 서버 함수(supabase/schema.sql)와 같은 규칙만 흉내 낸다.
 class FakeRemote extends Remote {
@@ -574,6 +575,132 @@ void main() {
       final p = (fake.lastSubmit!['people'] as List<Person>).single;
       expect((p.minister, p.church), (true, '신촌하나교회'));
       expect(find.text(Gathering.defaultMinisterNotice), findsOneWidget);
+    });
+
+    testWidgets('추가 항목이 형식대로 나오고 고른 값이 신청에 들어간다', (tester) async {
+      setView(tester, const Size(400, 3000));
+      final g = sample()
+        ..requiredFields = []
+        ..formFields = ['교회', '인원', '차량', '간식', '메모']
+        ..fieldSpecs = {
+          '교회': const FieldSpec(
+            type: FieldType.select,
+            options: ['A교회', 'B교회'],
+          ),
+          '인원': const FieldSpec(type: FieldType.number),
+          '차량': const FieldSpec(type: FieldType.check),
+          '간식': const FieldSpec(type: FieldType.toggle),
+        };
+      await pumpPage(tester, ApplyPage(gathering: g));
+      expect(tester.takeException(), isNull);
+      await tester.enterText(field('이름 *'), '홍길동');
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('B교회').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(field('인원'), '3명');
+      await tester.tap(find.widgetWithText(CheckboxListTile, '차량'));
+      await tester.tap(find.widgetWithText(FilterChip, '간식'));
+      await tester.enterText(field('메모'), '늦게 도착');
+      await attendAll(tester);
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      final p = (fake.lastSubmit!['people'] as List<Person>).single;
+      expect(p.extra, {
+        '교회': 'B교회',
+        '인원': '3',
+        '차량': fieldOn,
+        '간식': fieldOn,
+        '메모': '늦게 도착',
+      });
+    });
+
+    testWidgets('보기에서 지운 값을 가진 신청도 깨지지 않고 그 값을 보여 준다', (tester) async {
+      setView(tester, const Size(400, 600));
+      final c = TextEditingController(text: '옛 교회');
+      await pumpPage(
+        tester,
+        Scaffold(
+          body: CustomFieldInput(
+            label: '교회',
+            spec: const FieldSpec(type: FieldType.select, options: ['A교회']),
+            controller: c,
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.text('옛 교회 (목록에 없음)'), findsOneWidget);
+    });
+
+    testWidgets('숙박비 별도: 날짜 줄마다 참석·숙박을 고르고, 참가비·숙박비 합계를 보인다', (tester) async {
+      setView(tester, const Size(400, 3000));
+      final g = sample()
+        ..requiredFields = []
+        ..fee.lodgingSeparate = true
+        ..fee.dayOnly[AgeGroup.adult] = 60000
+        ..fee.lodging[AgeGroup.adult] = 30000;
+      await pumpPage(tester, ApplyPage(gathering: g));
+      expect(tester.takeException(), isNull);
+      expect(find.widgetWithText(SwitchListTile, '전체 참석'), findsNothing);
+      expect(find.byKey(const ValueKey('stay-2026-10-11')), findsNothing, reason: '마지막 날은 밤이 없다');
+      await tester.enterText(field('이름 *'), '홍길동');
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await tester.tap(find.byKey(const ValueKey('attend-all')));
+      await tester.tap(find.byKey(const ValueKey('stay-2026-10-10')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('참가 150,000원 + 숙박 30,000원'), findsWidgets);
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      expect(find.text('참가비 합계'), findsOneWidget);
+      expect(find.text('숙박비 합계'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      final p = (fake.lastSubmit!['people'] as List<Person>).single;
+      expect(p.days, isNull, reason: '전체 참석');
+      expect(p.stays, [DateTime(2026, 10, 10)]);
+    });
+
+    testWidgets('숙박비 별도: 켜기 전 신청을 고치면 숙박 칸이 이어진 날 사이 밤으로 채워져 있다', (tester) async {
+      setView(tester, const Size(400, 3000));
+      final g = sample()..fee.lodgingSeparate = true;
+      final r = pendingReg()
+        ..people.first.days = [DateTime(2026, 10, 9), DateTime(2026, 10, 10)];
+      await pumpPage(
+        tester,
+        ApplyPage(gathering: g, editing: r, phone: r.phone, pin: '1234'),
+      );
+      expect(tester.takeException(), isNull);
+      bool? box(String key) =>
+          tester.widget<Checkbox>(find.byKey(ValueKey(key)).first).value;
+      expect(box('stay-2026-10-09'), isTrue);
+      expect(box('stay-2026-10-10'), isFalse);
+      expect(box('attend-2026-10-11'), isFalse);
+    });
+
+    testWidgets('숙박비 별도: 전체 참석에서 하루를 빼면 나머지 날만 참석', (tester) async {
+      setView(tester, const Size(400, 3000));
+      final g = sample()..fee.lodgingSeparate = true;
+      await pumpPage(tester, ApplyPage(gathering: g));
+      await tester.tap(find.byKey(const ValueKey('attend-all')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('attend-2026-10-09')));
+      await tester.tap(find.byKey(const ValueKey('stay-all')));
+      await tester.pumpAndSettle();
+      final attend = tester.widget<Checkbox>(
+        find.byKey(const ValueKey('attend-all')),
+      );
+      expect(attend.value, isNull, reason: '일부만 고름');
+      final stay = tester.widget<Checkbox>(
+        find.byKey(const ValueKey('stay-2026-10-09')),
+      );
+      expect(stay.value, isTrue);
     });
 
     testWidgets('스탭 칸은 켠 집회에만 나오고, 필수면 체크해야 신청된다', (tester) async {
@@ -1322,6 +1449,7 @@ void main() {
       expect(g2.name, '신촌하나교회 가족수양회'); // 이름이 비어 있으면 원본 이름
       expect(g2.bank.account, '000-00-0000'); // 설정 복사
       expect((g2.open, g2.posterUrl), (false, null));
+      expect(g2.fee.lodgingSeparate, isFalse, reason: '새 집회도 꺼진 채로 시작');
       final e = Event.fromJson(fake.plans[g2.id]!);
       expect(e.rooms.single.roomNo, '301');
       expect(e.attendees.single.roomId, isNull);
@@ -1345,6 +1473,7 @@ void main() {
       final g2 = fake.gs.firstWhere((g) => g.id != 'g1');
       expect(g2.kind, GatheringKind.homestay);
       expect(g2.formFields, [homestayCapacityField]);
+      expect(g2.specOf(homestayCapacityField).type, FieldType.number);
     });
 
     testWidgets('신청·입금: 홈스테이는 신청만 해도 가정이 생기고, 확정하면 입금대기 표시가 사라진다', (tester) async {
@@ -1492,7 +1621,7 @@ void main() {
 
     testWidgets('집회 설정: 일정표를 적어 저장하면 서버로 간다', (tester) async {
       current.value = sample();
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(tester.takeException(), isNull);
       expect(find.text('일정표'), findsOneWidget);
@@ -1860,7 +1989,7 @@ void main() {
     testWidgets('집회 설정: 추가 항목을 지우고 저장하면 신청서에서 빠진다', (tester) async {
       current.value = sample()..formFields = ['교회'];
       store.event.customFields.add('교회');
-      setView(tester, const Size(1400, 3000));
+      setView(tester, const Size(1400, 3600));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       await tester.tap(find.byTooltip("'교회' 항목 삭제"));
       await tester.pumpAndSettle();
@@ -1872,6 +2001,98 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(fake.gs.single.formFields, isEmpty);
       expect(store.event.customFields, isEmpty);
+    });
+
+    testWidgets('집회 설정: 셀렉트박스 항목을 보기와 함께 추가하고 저장한다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      await tester.tap(find.widgetWithText(ActionChip, '항목 추가'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '항목 이름'), '교회');
+      await tester.tap(find.widgetWithText(ChoiceChip, '셀렉트박스'));
+      await tester.pumpAndSettle();
+      FilledButton add() =>
+          tester.widget(find.widgetWithText(FilledButton, '추가'));
+      expect(add().onPressed, isNull, reason: '보기 없이는 못 만든다');
+      expect(find.text('보기를 하나 이상 적으세요.'), findsOneWidget);
+      await tester.enterText(find.widgetWithText(TextField, '보기 1'), 'A교회');
+      await tester.tap(find.text('보기 추가'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '보기 2'), 'B교회');
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '추가'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('교회 · 셀렉트박스(2)'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.formFields, ['교회']);
+      expect(
+        fake.gs.single.specOf('교회'),
+        const FieldSpec(type: FieldType.select, options: ['A교회', 'B교회']),
+      );
+    });
+
+    testWidgets('집회 설정: 항목을 눌러 형식을 바꾼다', (tester) async {
+      current.value = sample()..formFields = ['차량'];
+      store.event.customFields.add('차량');
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      await tester.tap(find.widgetWithText(InputChip, '차량'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '토글 버튼'));
+      await tester.pumpAndSettle();
+      expect(find.text('이미 받은 값은 그대로 둡니다.'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await tester.pumpAndSettle();
+      expect(store.event.specOf('차량').type, FieldType.toggle);
+      expect(find.text('차량 · 토글 버튼'), findsOneWidget);
+    });
+
+    testWidgets('집회 설정: 기존 집회에도 숙박비 별도 스위치가 꺼진 채로 있다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      final sw = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, '숙박비 별도'),
+      );
+      expect(sw.value, isFalse);
+      expect(find.text('1박당 (부분 참석)'), findsOneWidget);
+      // 켜지 않고 저장하면 회비 JSON 에 새 키가 생기지 않는다.
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.fee.toJson().containsKey('lodgingSeparate'), isFalse);
+    });
+
+    testWidgets('집회 설정: 기존 집회에서 숙박비 별도를 켜고 연령별 숙박비를 저장한다', (tester) async {
+      current.value = fake.gs.single.copy();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('숙박 1박'), findsNothing);
+      await tester.tap(find.widgetWithText(SwitchListTile, '숙박비 별도'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('숙박 1박'), findsOneWidget);
+      expect(find.text('하루 참가'), findsOneWidget);
+      expect(find.text('1박당 (부분 참석)'), findsNothing);
+      // 숙박 1박 열(성인 줄 = 첫 번째 '0' 힌트 칸들 중 숙박 열)에 금액을 넣는다.
+      final adultLodging = find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.controller != null &&
+            w.decoration?.suffixText == '원' &&
+            w.decoration?.hintText == '0',
+      );
+      // 성인 줄: [하루 참가, 숙박 1박] 순서.
+      await tester.enterText(adultLodging.at(1), '30000');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      final saved = fake.gs.single.fee;
+      expect(saved.lodgingSeparate, isTrue);
+      expect(saved.lodging[AgeGroup.adult], 30000);
+      expect(saved.perNight[AgeGroup.adult], 70000, reason: '숨긴 1박당 금액은 지우지 않는다');
     });
 
     testWidgets('집회 설정: 계좌 없이 신청을 받으려 하면 막는다', (tester) async {

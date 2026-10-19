@@ -16,6 +16,11 @@ class Event {
   /// 값은 [Attendee.extra] 에 같은 이름을 키로 들어간다.
   List<String> customFields;
 
+  /// 사용자 정의 항목의 형식(셀렉트박스·숫자 …). 키가 없는 항목은 텍스트다.
+  /// 이름처럼 이 문서에 살다가 집회 설정 [저장] 때 `gatherings.field_specs` 로 복사된다.
+  Map<String, FieldSpec> fieldSpecs = {};
+  FieldSpec specOf(String field) => fieldSpecs[field] ?? const FieldSpec();
+
   /// 운영자가 지운, 신청에서 온 참석자 id. 다시 가져올 때 되살릴지 묻는 데 쓴다.
   Set<String> deletedIds = {};
 
@@ -55,6 +60,8 @@ class Event {
     'attendees': attendees.map((a) => a.toJson()).toList(),
     'duties': duties.map((d) => d.toJson()).toList(),
     'customFields': customFields,
+    // 형식을 정한 항목이 있을 때만 쓴다 — 기존 문서가 한 글자도 바뀌지 않게 (PLAN_GATHERING §22).
+    if (fieldSpecs.isNotEmpty) 'fieldSpecs': fieldSpecsToJson(fieldSpecs),
     'deletedIds': deletedIds.toList(),
   };
 
@@ -72,8 +79,84 @@ class Event {
         .map((e) => Duty.fromJson(e as Map<String, dynamic>))
         .toList(),
     customFields: (j['customFields'] as List? ?? []).map((e) => '$e').toList(),
-  )..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'};
+  )
+    ..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'}
+    ..fieldSpecs = fieldSpecsFromJson(j['fieldSpecs']);
 }
+
+/// 사용자 정의 항목의 형식. 값은 형식과 상관없이 늘 문자열 하나로 저장한다([Attendee.extra]).
+enum FieldType {
+  text('텍스트'),
+  number('숫자'),
+  check('체크박스'),
+  select('셀렉트박스'),
+  toggle('토글 버튼');
+
+  const FieldType(this.label);
+  final String label;
+
+  static FieldType parse(Object? s) => values.asNameMap()['$s'] ?? text;
+}
+
+/// 켜고 끄는 항목(체크박스·토글 버튼)이 켜졌을 때 저장하는 값. 꺼지면 값을 지운다.
+const fieldOn = '예';
+
+/// 사용자 정의 항목 하나의 형식과 보기 목록 (PLAN_GATHERING §21).
+class FieldSpec {
+  const FieldSpec({this.type = FieldType.text, this.options = const []});
+  final FieldType type;
+
+  /// 셀렉트박스의 보기. 다른 형식에서는 쓰지 않는다.
+  final List<String> options;
+
+  bool get hasOptions => type == FieldType.select;
+
+  /// 값이 '예'/없음 두 가지뿐인 형식.
+  bool get isOnOff => type == FieldType.check || type == FieldType.toggle;
+
+  /// 텍스트이고 보기도 없다 = 저장할 것이 없다 (형식을 안 정한 항목과 같다).
+  bool get isPlain => type == FieldType.text && options.isEmpty;
+
+  Map<String, dynamic> toJson() => {
+    'type': type.name,
+    if (hasOptions) 'options': options,
+  };
+
+  factory FieldSpec.fromJson(Object? j) {
+    if (j is! Map) return const FieldSpec();
+    final type = FieldType.parse(j['type']);
+    return FieldSpec(
+      type: type,
+      options: type == FieldType.select && j['options'] is List
+          ? [for (final o in j['options'] as List) '$o']
+          : const [],
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is FieldSpec &&
+      other.type == type &&
+      other.options.length == options.length &&
+      Iterable.generate(options.length)
+          .every((i) => other.options[i] == options[i]);
+
+  @override
+  int get hashCode => Object.hash(type, Object.hashAll(options));
+}
+
+/// 텍스트(형식 없음)는 빼고 쓴다.
+Map<String, dynamic> fieldSpecsToJson(Map<String, FieldSpec> specs) => {
+  for (final e in specs.entries)
+    if (!e.value.isPlain) e.key: e.value.toJson(),
+};
+
+Map<String, FieldSpec> fieldSpecsFromJson(Object? j) => {
+  if (j is Map)
+    for (final e in j.entries)
+      if (!FieldSpec.fromJson(e.value).isPlain)
+        '${e.key}': FieldSpec.fromJson(e.value),
+};
 
 /// 담당구역의 할 일 한 줄. 스탭 페이지와 운영자 화면이 같은 표로 고친다.
 /// [qty] 는 문자열이다 — "3", "2박스", "넉넉히" 가 다 들어간다 (합계를 내지 않는다).
@@ -425,6 +508,8 @@ Event copyEvent(
     endDate: dateOnly(end),
     customFields: attendees ? [...src.customFields] : [],
   );
+  // 항목을 가져가면 형식(셀렉트박스·숫자 …)도 같이 — 안 그러면 모두 텍스트가 된다.
+  if (attendees) e.fieldSpecs = {...src.fieldSpecs};
   if (rooms) {
     e.rooms = [
       // 신청 연결은 푼다 — 새 집회엔 그 신청이 없다 (참석자의 registrationId 와 같은 이유).
