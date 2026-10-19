@@ -1296,6 +1296,36 @@ void main() {
       expect(s.event.attendees.single.extra['교회'], '목록에 없는 교회');
     });
 
+    test('텍스트로 되돌린 항목은 집회를 다시 열어도 서버의 옛 형식으로 돌아가지 않는다', () {
+      final s = tmpStore();
+      s.addCustomField('교회', church);
+      s.setFieldSpec('교회', const FieldSpec()); // 설정 [저장] 전에 텍스트로 되돌림
+      s.applyGathering(
+        sample()
+          ..formFields = ['교회']
+          ..fieldSpecs = {'교회': church},
+      );
+      expect(s.event.specOf('교회').type, FieldType.text);
+    });
+
+    test('참석자를 복사해 새 집회를 만들면 항목 형식도 따라간다', () {
+      final src = Event(
+        name: 'x',
+        startDate: start,
+        endDate: end,
+        customFields: ['교회'],
+      )..fieldSpecs['교회'] = church;
+      final e = copyEvent(
+        src,
+        name: 'y',
+        start: start,
+        end: end,
+        rooms: false,
+        attendees: true,
+      );
+      expect(e.specOf('교회'), church);
+    });
+
     test('방배정 문서: 형식이 없으면 JSON 에 키가 안 생기고, 있으면 왕복한다', () {
       final e = Event(
         name: 'x',

@@ -1684,7 +1684,11 @@ Future<String?> _customFieldDialog(
   );
   if (ok != true) return null;
   final name = ctl.text.trim();
-  final spec = FieldSpec(type: type, options: picked());
+  // 보기는 셀렉트박스만 — 다른 형식에 남기면 텍스트도 '형식 있음'(isPlain 아님)으로 저장된다.
+  final spec = FieldSpec(
+    type: type,
+    options: type == FieldType.select ? picked() : const [],
+  );
   if (editing == null) {
     if (!store.addCustomField(name, spec)) {
       messenger.showSnackBar(

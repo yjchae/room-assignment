@@ -332,15 +332,7 @@ class _FeeTable extends StatelessWidget {
     final separate = f.lodgingSeparate;
     // 전체 참석자가 실제로 내는 금액 (정액 또는 1박×박수, 전체참석 할인 반영).
     // 숙박비 별도면 참가비만 — 정액 또는 하루 참가 × 일수.
-    int fullOf(AgeGroup ag) =>
-        (f.full[ag] ??
-            (separate
-                ? (f.dayOnly[ag] ?? 0) * (n + 1)
-                : n > 0
-                ? (f.perNight[ag] ?? 0) * n
-                : (f.dayOnly[ag] ?? 0))) *
-        (100 - f.fullDiscountPct.clamp(0, 100)) ~/
-        100;
+    int fullOf(AgeGroup ag) => f.fullPrice(ag, n);
     String money(int v) => v == 0 ? '무료' : won(v);
     Widget cell(String t, {bool head = false}) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
@@ -507,6 +499,10 @@ class _PersonForm {
   /// 숙박하는 밤 (숙박비 별도 집회만). 그 날 밤에 자고 다음 날로 넘어간다.
   Set<DateTime> stays = {};
 
+  /// 고치는 신청에 원래 있던 숙박([Person.stays]). 숙박비 별도를 끈 동안 [수정]해도 지우지 않고
+  /// 그대로 낸다 — 다시 켜면 살아난다 (PLAN_GATHERING §22.2).
+  List<DateTime>? keptStays;
+
   /// 참석일을 정했다 (전체 참석이거나 하루 이상 골랐다).
   bool get picked => full || days!.isNotEmpty;
 
@@ -549,7 +545,7 @@ class _PersonForm {
               for (final d in g.days.take(g.nights))
                 if (stays.contains(d)) d,
             ])
-          : null,
+          : keptStays,
       phone: phone ?? this.phone,
       cell: t(cell),
       zone: t(zone),
@@ -612,7 +608,12 @@ class _ApplyPageState extends State<ApplyPage> {
     super.initState();
     final r = widget.editing;
     forms = r == null
-        ? [_PersonForm(applicant: true)..days = _newDays]
+        ? [
+            _PersonForm(applicant: true)
+              ..days = _newDays
+              // 운영자 접수는 전체 참석으로 시작하므로 숙박도 모든 밤으로 (숙박비 별도 집회).
+              ..stays = widget.admin ? {...g.days.take(g.nights)} : {},
+          ]
         : [
             for (final (i, p) in r.people.indexed)
               _PersonForm(p: p, applicant: i == 0),
@@ -630,7 +631,9 @@ class _ApplyPageState extends State<ApplyPage> {
         if (d.length < g.days.length) forms[i].days = d.toSet();
         // 숙박을 따로 고르기 전의 신청은 이어서 고른 날 사이 밤으로 채워 둔다 —
         // 그대로 [수정]해도 묵는 밤이 바뀌지 않게 (PLAN_GATHERING §22.2).
-        forms[i].stays = p.nightsIn(g.start, g.end, separate: true).toSet();
+        forms[i]
+          ..stays = p.nightsIn(g.start, g.end, separate: true).toSet()
+          ..keptStays = p.stays;
       }
       depositor.text = r.depositor ?? '';
       memo.text = r.memo ?? '';
@@ -1025,7 +1028,7 @@ class _ApplyPageState extends State<ApplyPage> {
     final days = g.days;
     final nights = days.take(g.nights).toList();
     bool attends(DateTime d) => f.full || f.days!.contains(d);
-    final allStay = nights.every(f.stays.contains);
+    final allStay = nights.isNotEmpty && nights.every(f.stays.contains);
 
     Widget head(String t) => SizedBox(
       width: 56,

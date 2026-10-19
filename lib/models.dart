@@ -508,6 +508,8 @@ Event copyEvent(
     endDate: dateOnly(end),
     customFields: attendees ? [...src.customFields] : [],
   );
+  // 항목을 가져가면 형식(셀렉트박스·숫자 …)도 같이 — 안 그러면 모두 텍스트가 된다.
+  if (attendees) e.fieldSpecs = {...src.fieldSpecs};
   if (rooms) {
     e.rooms = [
       // 신청 연결은 푼다 — 새 집회엔 그 신청이 없다 (참석자의 registrationId 와 같은 이유).

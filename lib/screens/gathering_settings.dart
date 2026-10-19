@@ -276,7 +276,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       perRegistration: number(perReg.text, '가족당 금액') ?? 0,
       fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
-      lodgingSeparate: x.fee.lodgingSeparate,
+      // 스위치를 숨기는 집회(하루짜리·홈스테이)는 끈다 — 날짜를 줄여 숨겨진 뒤에도 켜진 채 남지 않게.
+      lodgingSeparate:
+          x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
       lodging: column('lodging'),
       // 일정 없는 날로 끈 날은 무료 날에서도 뺀다 (화면에선 꺼져 보이는데 0원으로 계산되지 않게).
       freeDays: [

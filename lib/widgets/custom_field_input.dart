@@ -23,38 +23,43 @@ class CustomFieldInput extends StatelessWidget {
   final TextEditingController controller;
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: controller,
-    builder: (context, v, _) => switch (spec.type) {
-      FieldType.text => TextFormField(
-        controller: controller,
-        decoration: InputDecoration(labelText: label),
+  Widget build(BuildContext context) => switch (spec.type) {
+    // 글자 칸은 controller 가 스스로 다시 그린다 — 글자마다 바깥까지 다시 그리지 않게 builder 밖에 둔다.
+    FieldType.text => TextFormField(
+      controller: controller,
+      decoration: InputDecoration(labelText: label),
+    ),
+    // 고칠 때 숫자만 남긴다 — 텍스트일 때 받은 값이 있어도 열기만 해서는 바뀌지 않는다.
+    FieldType.number => TextFormField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(labelText: label),
+    ),
+    _ => ValueListenableBuilder(
+      valueListenable: controller,
+      builder: (context, v, _) => _onOffOrSelect(v.text),
+    ),
+  };
+
+  Widget _onOffOrSelect(String value) => switch (spec.type) {
+    FieldType.check => CheckboxListTile(
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.leading,
+      title: Text(label),
+      value: value.isNotEmpty,
+      onChanged: (on) => _set(on == true ? fieldOn : ''),
+    ),
+    FieldType.toggle => Align(
+      alignment: Alignment.centerLeft,
+      child: FilterChip(
+        label: Text(label),
+        selected: value.isNotEmpty,
+        onSelected: (on) => _set(on ? fieldOn : ''),
       ),
-      // 고칠 때 숫자만 남긴다 — 텍스트일 때 받은 값이 있어도 열기만 해서는 바뀌지 않는다.
-      FieldType.number => TextFormField(
-        controller: controller,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: InputDecoration(labelText: label),
-      ),
-      FieldType.check => CheckboxListTile(
-        contentPadding: EdgeInsets.zero,
-        controlAffinity: ListTileControlAffinity.leading,
-        title: Text(label),
-        value: v.text.isNotEmpty,
-        onChanged: (on) => _set(on == true ? fieldOn : ''),
-      ),
-      FieldType.toggle => Align(
-        alignment: Alignment.centerLeft,
-        child: FilterChip(
-          label: Text(label),
-          selected: v.text.isNotEmpty,
-          onSelected: (on) => _set(on ? fieldOn : ''),
-        ),
-      ),
-      FieldType.select => _select(v.text),
-    },
-  );
+    ),
+    _ => _select(value),
+  };
 
   Widget _select(String value) {
     final stray = value.isNotEmpty && !spec.options.contains(value);

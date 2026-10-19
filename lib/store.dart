@@ -114,16 +114,19 @@ class Store extends ChangeNotifier {
       ..name = g.name
       ..startDate = s
       ..endDate = end;
-    final added = _addFields(g.formFields) + _addSpecs(g.fieldSpecs);
+    final known = {...event.customFields};
+    final added = _addFields(g.formFields) + _addSpecs(g.fieldSpecs, known);
     if (added > 0 || changed) commit();
   }
 
-  /// 서버에 저장된 항목 형식 중 방배정 문서에 없는 것을 가져온다. 개수.
-  /// 문서에 이미 있으면 문서 쪽이 이긴다 — 운영자가 고치고 아직 [저장] 안 한 형식일 수 있다.
-  int _addSpecs(Map<String, FieldSpec> specs) {
+  /// 서버에 저장된 항목 형식 중 이번에 처음 가져온 항목([known] 에 없던 것)의 것만 문서에 넣는다. 개수.
+  /// 문서에 이미 있던 항목은 문서 쪽이 이긴다 — 형식이 없으면(텍스트) 운영자가 텍스트로 되돌리고
+  /// 아직 [저장] 안 한 것일 수 있어서, 서버 형식으로 덮으면 고친 것이 되살아난다.
+  int _addSpecs(Map<String, FieldSpec> specs, Set<String> known) {
     var n = 0;
     for (final e in specs.entries) {
-      if (!event.customFields.contains(e.key) ||
+      if (known.contains(e.key) ||
+          !event.customFields.contains(e.key) ||
           event.fieldSpecs.containsKey(e.key)) {
         continue;
       }

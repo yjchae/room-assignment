@@ -101,6 +101,20 @@ class FeeRule {
         .fold(0, (m, e) => math.max(m, e.pct));
   }
 
+  /// 전체 참석자가 내는 금액 ([nights]박 집회, 전체참석 할인 반영). 정액이 비었으면
+  /// 숙박비 별도 = 하루 참가 × 일수, 아니면 1박당 × 박수(하루짜리는 당일 금액).
+  /// [quote] 와 신청 웹 회비표가 같이 쓴다.
+  int fullPrice(AgeGroup g, int nights) {
+    final base =
+        full[g] ??
+        (lodgingSeparate
+            ? (dayOnly[g] ?? 0) * (nights + 1)
+            : nights > 0
+            ? (perNight[g] ?? 0) * nights
+            : (dayOnly[g] ?? 0));
+    return base * (100 - fullDiscountPct.clamp(0, 100)) ~/ 100;
+  }
+
   /// 받는 돈이 하나도 없다 (모든 금액이 0 이거나 비어 있음). 신청 웹에서 회비·계좌를 숨긴다.
   /// 숙박비 별도면 쓰지 않는 1박당(perNight) 대신 숙박비(lodging)를 본다.
   bool get isFree => [
@@ -852,7 +866,6 @@ Quote quote(
   final s = _day(start);
   final e = _day(end).isBefore(s) ? s : _day(end);
   final allNights = _nights(s, e);
-  final fullPct = fee.fullDiscountPct.clamp(0, 100);
 
   QuoteLine line(Person p) {
     if (fee.lodgingSeparate) return _separateLine(fee, p, s, e);
@@ -861,8 +874,7 @@ Quote quote(
 
     final nightly = fee.perNight[g] ?? 0;
     final day = fee.dayOnly[g] ?? 0;
-    final fullBase = fee.full[g] ?? (allNights > 0 ? nightly * allNights : day);
-    final fullPrice = fullBase * (100 - fullPct) ~/ 100;
+    final fullPrice = fee.fullPrice(g, allNights);
 
     final isFull = days.length == allNights + 1;
     final freeDay =
@@ -909,8 +921,7 @@ QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
   final allDays = _nights(s, e) + 1;
 
   final day = fee.dayOnly[g] ?? 0;
-  final fullBase = fee.full[g] ?? day * allDays;
-  final fullPrice = fullBase * (100 - fee.fullDiscountPct.clamp(0, 100)) ~/ 100;
+  final fullPrice = fee.fullPrice(g, allDays - 1);
 
   final isFull = days.length == allDays;
   final participation = isFull
