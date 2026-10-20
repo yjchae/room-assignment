@@ -26,6 +26,9 @@ class FakeRemote extends Remote {
   /// [managed] 중 운영스탭으로만 맡은 집회 (집회 설정을 못 고친다).
   final staffOf = <String>{};
 
+  /// [managed] 중 내가 만든 집회 (집회관리자 — 삭제·운영자 승인).
+  final ownedSet = <String>{};
+
   /// 승인된 가입자(owner)인가 — 전체 운영자가 아니어도 집회를 하나 만들 수 있다.
   bool owner = false;
 
@@ -116,6 +119,7 @@ class FakeRemote extends Remote {
       canCreate: full || owner,
       gatherings: {...managed},
       configures: {...managed.difference(staffOf)},
+      owned: {...ownedSet},
     );
   }
 
@@ -133,7 +137,16 @@ class FakeRemote extends Remote {
       userId: 'u-$email',
       email: email.trim(),
       role: GatheringRole.staff, // 서버처럼 운영스탭으로 시작
+      approved: true, // 이메일 등록은 승인까지 끝난다
     ));
+  }
+
+  @override
+  Future<void> approveGatheringAdmin(String gatheringId, String userId) async {
+    final list = gAdmins[gatheringId]!;
+    final i = list.indexWhere((a) => a.userId == userId);
+    final a = list[i];
+    list[i] = (userId: userId, email: a.email, role: a.role, approved: true);
   }
 
   @override
@@ -144,7 +157,12 @@ class FakeRemote extends Remote {
   ) async {
     final list = gAdmins[gatheringId]!;
     final i = list.indexWhere((a) => a.userId == userId);
-    list[i] = (userId: userId, email: list[i].email, role: role);
+    list[i] = (
+      userId: userId,
+      email: list[i].email,
+      role: role,
+      approved: list[i].approved,
+    );
   }
 
   @override
@@ -1424,10 +1442,10 @@ void main() {
       expect(find.text('helper@x'), findsOneWidget);
       expect(fake.gAdmins['g1']!.single.role, GatheringRole.staff);
 
-      // 집회관리자로 올린다
-      await tester.tap(find.text('집회관리자'));
+      // 보조운영자로 올린다
+      await tester.tap(find.text('보조운영자'));
       await tester.pumpAndSettle();
-      expect(fake.gAdmins['g1']!.single.role, GatheringRole.manager);
+      expect(fake.gAdmins['g1']!.single.role, GatheringRole.assistant);
 
       // 해제
       await tester.tap(find.widgetWithText(TextButton, '해제'));
@@ -1465,7 +1483,7 @@ void main() {
       expect(find.byType(RoomsScreen), findsOneWidget);
     });
 
-    testWidgets('집회관리자: 집회를 열면 [집회 설정]에서 시작한다', (tester) async {
+    testWidgets('보조운영자: 집회를 열면 [집회 설정]에서 시작한다', (tester) async {
       fake
         ..full = false
         ..managed.add('g1');
@@ -1501,6 +1519,51 @@ void main() {
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(find.text('집회 삭제'), findsNothing);
       expect(find.text('이 집회의 운영자'), findsOneWidget);
+
+      // 집회를 만든 집회관리자는 자기 집회를 지운다
+      fake.ownedSet.add('g1');
+      await tester.pumpWidget(const SizedBox());
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('집회 삭제'), findsWidgets);
+    });
+
+    testWidgets('집회 설정: 초대 링크 가입자를 승인하고, 보조운영자는 승인을 못 한다', (
+      tester,
+    ) async {
+      current.value = sample();
+      fake.gAdmins['g1'] = [
+        (
+          userId: 'u-new',
+          email: 'new@x',
+          role: GatheringRole.staff,
+          approved: false,
+        ),
+      ];
+      // 보조운영자: 대기자가 보이지만 승인·거절이 꺼져 있다
+      fake
+        ..full = false
+        ..managed.add('g1');
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('new@x'), findsOneWidget);
+      expect(find.text('승인 대기 · 초대 링크로 가입'), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '승인')).onPressed,
+        isNull,
+      );
+      expect(find.textContaining('집회관리자만 할 수 있습니다'), findsOneWidget);
+
+      // 집회관리자(만든 사람): 승인하면 운영스탭으로 들어온다
+      fake.ownedSet.add('g1');
+      await tester.pumpWidget(const SizedBox());
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      await tester.tap(find.widgetWithText(FilledButton, '승인'));
+      await tester.pumpAndSettle();
+      final a = fake.gAdmins['g1']!.single;
+      expect(a.approved, isTrue);
+      expect(a.role, GatheringRole.staff);
+      expect(find.text('승인 대기 · 초대 링크로 가입'), findsNothing);
+      expect(find.text('운영스탭'), findsWidgets);
     });
 
     testWidgets('집회 설정: 운영자 목록을 못 읽으면 이유를 보여주고 [집회 삭제]를 숨기지 않는다', (

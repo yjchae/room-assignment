@@ -115,7 +115,8 @@ class _LoginFormState extends State<LoginForm> {
       children: [
         if (pendingInvite != null) ...[
           const Text(
-            '집회 운영자 초대 링크로 들어왔습니다. 로그인하거나 아래에서 가입하면 그 집회를 관리할 수 있습니다.',
+            '집회 운영자 초대 링크로 들어왔습니다. 로그인하거나 아래에서 가입한 뒤, '
+            '그 집회의 집회관리자가 승인하면 관리할 수 있습니다.',
             style: TextStyle(fontSize: 12, height: 1.5, color: AppColors.brand),
           ),
           const SizedBox(height: 12),
@@ -304,8 +305,8 @@ Future<void> _changePasswordDialog(BuildContext context) {
   );
 }
 
-/// 운영자 가입. 초대 링크로 왔으면 그 집회 운영자로, 아니면 전체 운영자가 [운영자 승인]에서
-/// 승인해야 로그인해서 집회를 하나 만들 수 있다.
+/// 운영자 가입. 초대 링크로 왔으면 그 집회의 집회관리자가, 아니면 전체 운영자가 [운영자 승인]에서
+/// 승인해야 로그인할 수 있다(앞은 운영스탭, 뒤는 집회를 하나 만드는 집회관리자).
 class _SignUpDialog extends StatefulWidget {
   const _SignUpDialog();
 
@@ -361,7 +362,8 @@ class _SignUpDialogState extends State<_SignUpDialog> {
       child: done
           ? Text(
               pendingInvite != null
-                  ? '가입했습니다.\n이제 로그인하면 초대받은 집회가 바로 보입니다.'
+                  ? '가입했습니다.\n'
+                        '초대한 집회의 집회관리자가 승인하면 로그인해서 그 집회를 관리할 수 있습니다.'
                   : '가입 신청을 보냈습니다.\n'
                         '전체 운영자가 승인하면 로그인해서 집회를 하나 만들 수 있습니다.',
             )
@@ -668,6 +670,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
     canCreate: false,
     gatherings: <String>{},
     configures: <String>{},
+    owned: <String>{},
   );
 
   @override

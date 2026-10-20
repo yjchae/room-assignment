@@ -424,7 +424,7 @@ class _SideNav extends StatelessWidget {
     );
     if (locked) {
       return Tooltip(
-        message: '$label은 집회관리자만 열 수 있습니다',
+        message: '$label은 집회관리자·보조운영자만 열 수 있습니다',
         preferBelow: false,
         child: item,
       );

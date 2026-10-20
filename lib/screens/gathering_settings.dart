@@ -94,8 +94,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   final adminEmail = TextEditingController();
   bool addingAdmin = false;
 
-  /// 로그인한 사람이 전체 운영자인가 (집회 삭제는 전체 운영자만).
-  bool fullAdmin = false;
+  /// 이 집회의 주인인가 = 전체 운영자이거나 이 집회를 만든 집회관리자.
+  /// 집회 삭제와 운영자 승인·역할·해제·이메일 등록은 주인만 한다(보조운영자는 못 한다).
+  bool owner = false;
   ImageKind? uploading;
   String? imageInfo;
 
@@ -117,7 +118,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       final list = await remote.gatheringAdmins(c.id);
       if (mounted) {
         setState(() {
-          fullAdmin = scope.full;
+          owner = scope.full || scope.owned.contains(c.id);
           admins = list;
           adminsError = null;
         });
@@ -161,45 +162,122 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     try {
       final link = await remote.gatheringInvite(c.id, renew: renew);
       Clipboard.setData(ClipboardData(text: link));
-      _snack('초대 링크를 복사했습니다. 받은 사람이 가입하거나 로그인하면 이 집회의 운영자가 됩니다.');
+      _snack('초대 링크를 복사했습니다. 받은 사람이 가입하거나 로그인하면 아래 승인 대기에 나옵니다.');
     } catch (e) {
       _snack(errorText(e));
     }
   }
 
-  /// 집회관리자 ↔ 운영스탭. 운영스탭은 [집회 설정]을 못 열고 나머지 메뉴만 쓴다.
+  /// 초대 링크로 들어온 사람을 승인한다. 운영스탭으로 시작한다.
+  Future<void> _approve(GatheringAdmin a) async {
+    final c = current.value;
+    if (c == null) return;
+    try {
+      await remote.approveGatheringAdmin(c.id, a.userId);
+      await _loadAdmins();
+      _snack('${a.email} 님을 운영스탭으로 승인했습니다.');
+    } catch (e) {
+      _snack(errorText(e));
+    }
+  }
+
+  /// 보조운영자 ↔ 운영스탭. 운영스탭은 [집회 설정]을 못 열고 나머지 메뉴만 쓴다.
   Future<void> _setRole(GatheringAdmin a, GatheringRole role) async {
     final c = current.value;
     if (c == null || a.role == role) return;
     try {
       await remote.setGatheringAdminRole(c.id, a.userId, role);
       await _loadAdmins();
-      final to = role == GatheringRole.manager ? '집회관리자로' : '운영스탭으로';
+      final to = role == GatheringRole.assistant ? '보조운영자로' : '운영스탭으로';
       _snack('${a.email} 님을 $to 바꿨습니다.');
     } catch (e) {
       _snack(errorText(e));
     }
   }
 
+  /// 해제. 승인 대기인 사람에게는 거절이다.
   Future<void> _removeAdmin(GatheringAdmin a) async {
     final c = current.value;
     if (c == null) return;
+    final what = a.approved ? '해제' : '거절';
     final ok = await confirmDialog(
       context,
-      title: '운영자 해제',
-      body: '${a.email} 님은 이 집회를 더 이상 열 수 없게 됩니다.',
-      action: '해제',
+      title: '운영자 $what',
+      body: a.approved
+          ? '${a.email} 님은 이 집회를 더 이상 열 수 없게 됩니다.'
+          : '${a.email} 님의 가입을 거절합니다. 다시 받으려면 새 초대 링크를 보내야 합니다.',
+      action: what,
       danger: true,
     );
     if (!ok) return;
     try {
       await remote.removeGatheringAdmin(c.id, a.userId);
       await _loadAdmins();
-      _snack('${a.email} 님을 해제했습니다.');
+      _snack('${a.email} 님을 $what했습니다.');
     } catch (e) {
       _snack(errorText(e));
     }
   }
+
+  /// 승인된 운영자 한 줄: 역할 세그먼트 + [해제]. 주인이 아니면 둘 다 꺼진다.
+  Widget _adminTile(GatheringAdmin a) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    dense: true,
+    leading: const Icon(
+      Icons.person_outline,
+      size: 20,
+      color: AppColors.textMuted,
+    ),
+    title: Text(a.email),
+    // 휴대폰에서도 이메일 옆이 좁아지지 않게 역할은 아랫줄에 둔다.
+    subtitle: Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SegmentedButton<GatheringRole>(
+          showSelectedIcon: false,
+          segments: [
+            for (final r in GatheringRole.values)
+              ButtonSegment(value: r, label: Text(r.label)),
+          ],
+          selected: {a.role},
+          onSelectionChanged: owner ? (v) => _setRole(a, v.single) : null,
+        ),
+      ),
+    ),
+    trailing: TextButton(
+      style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+      onPressed: owner ? () => _removeAdmin(a) : null,
+      child: const Text('해제'),
+    ),
+  );
+
+  /// 초대 링크로 들어와 승인을 기다리는 사람: [거절] [승인].
+  Widget _pendingTile(GatheringAdmin a) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    dense: true,
+    leading: const Icon(
+      Icons.pending_outlined,
+      size: 20,
+      color: AppColors.warn,
+    ),
+    title: Text(a.email),
+    subtitle: const Text('승인 대기 · 초대 링크로 가입'),
+    trailing: Wrap(
+      spacing: 4,
+      children: [
+        TextButton(
+          style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+          onPressed: owner ? () => _removeAdmin(a) : null,
+          child: const Text('거절'),
+        ),
+        FilledButton(
+          onPressed: owner ? () => _approve(a) : null,
+          child: const Text('승인'),
+        ),
+      ],
+    ),
+  );
 
   void _fill(Gathering x) {
     g = x;
@@ -1082,11 +1160,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                 ]),
                 _card('이 집회의 운영자', [
                   const Text(
-                    '여기 등록한 사람은 이 집회만 다룰 수 있고, 새 집회를 만들거나 다른 집회를 열 수는 없습니다.\n'
-                    '집회관리자: 집회 설정과 운영자 목록까지 전부 고칩니다.\n'
-                    '운영스탭: 신청·참석자·방·방배정·담당구역만 다루고 집회 설정은 열지 못합니다.\n'
-                    '초대 링크나 이메일로 새로 등록한 사람은 운영스탭으로 시작합니다. '
-                    '이미 이 앱 계정이 있는 사람은 이메일로 등록해도 됩니다.',
+                    '초대 링크로 가입한 사람은 승인 대기로 들어옵니다. 승인하면 운영스탭으로 시작합니다.\n'
+                    '보조운영자: 이 집회의 설정까지 고칩니다. 집회 삭제와 운영자 관리는 못 합니다.\n'
+                    '운영스탭: 신청 확정·참석자·방·방배정·담당구역만 다루고 집회 설정은 열지 못합니다.\n'
+                    '이미 이 앱 계정이 있는 사람은 이메일로 바로 등록해도 됩니다(운영스탭).',
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.6,
@@ -1138,41 +1215,21 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       '등록된 운영자가 없습니다. (전체 운영자는 모든 집회를 관리합니다.)',
                       style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                     )
-                  else
-                    for (final a in admins!)
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        leading: const Icon(
-                          Icons.person_outline,
-                          size: 20,
-                          color: AppColors.textMuted,
-                        ),
-                        title: Text(a.email),
-                        // 휴대폰에서도 이메일 옆이 좁아지지 않게 역할은 아랫줄에 둔다.
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: SegmentedButton<GatheringRole>(
-                              showSelectedIcon: false,
-                              segments: [
-                                for (final r in GatheringRole.values)
-                                  ButtonSegment(value: r, label: Text(r.label)),
-                              ],
-                              selected: {a.role},
-                              onSelectionChanged: (v) => _setRole(a, v.single),
-                            ),
+                  else ...[
+                    if (!owner)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          '승인·역할·해제는 이 집회를 만든 집회관리자만 할 수 있습니다.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
                           ),
-                        ),
-                        trailing: TextButton(
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.danger,
-                          ),
-                          onPressed: () => _removeAdmin(a),
-                          child: const Text('해제'),
                         ),
                       ),
+                    for (final a in admins!)
+                      if (a.approved) _adminTile(a) else _pendingTile(a),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -1183,12 +1240,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                             labelText: '운영자 이메일',
                             hintText: 'helper@example.com',
                           ),
+                          enabled: owner,
                           onSubmitted: (_) => addingAdmin ? null : _addAdmin(),
                         ),
                       ),
                       const SizedBox(width: 8),
                       FilledButton.icon(
-                        onPressed: addingAdmin ? null : _addAdmin,
+                        onPressed: addingAdmin || !owner ? null : _addAdmin,
                         icon: const Icon(Icons.person_add_alt, size: 18),
                         label: Text(addingAdmin ? '등록 중…' : '운영자 등록'),
                       ),
@@ -1196,8 +1254,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                 ]),
                 // 권한을 못 읽었으면(adminsError) 숨기지 않는다 — 위 카드가 이유를 보여주고,
-                // 삭제는 서버 RLS 가 어차피 전체 운영자만 통과시킨다.
-                if (fullAdmin || adminsError != null)
+                // 삭제는 서버 RLS 가 어차피 주인(전체 운영자·만든 집회관리자)만 통과시킨다.
+                if (owner || adminsError != null)
                   _card('집회 삭제', [
                   const Text(
                     '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',
