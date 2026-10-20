@@ -206,9 +206,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     final ok = await confirmDialog(
       context,
       title: '운영자 $what',
-      body: a.approved
-          ? '${a.email} 님은 이 집회를 더 이상 열 수 없게 됩니다.'
-          : '${a.email} 님의 가입을 거절합니다. 다시 받으려면 새 초대 링크를 보내야 합니다.',
+      // 서버가 해제·거절할 때 초대 링크를 새로 바꾼다(remove_gathering_admin).
+      body:
+          '${a.email} 님은 ${a.approved ? '이 집회를 더 이상 열 수 없게' : '가입이 거절'}됩니다.\n'
+          '초대 링크가 새로 바뀝니다 — 다른 사람을 초대하려면 [초대 링크 복사]로 새 링크를 보내세요.',
       action: what,
       danger: true,
     );
@@ -1174,22 +1175,25 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.link, size: 18),
-                        label: const Text('초대 링크 복사'),
-                        onPressed: _copyInvite,
-                      ),
-                      TextButton(
-                        onPressed: () => _copyInvite(renew: true),
-                        child: const Text('링크 새로 만들기'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
+                  // 초대 링크는 운영자 관리라 주인만 (서버 gathering_invite 도 owns 로 막는다).
+                  if (owner) ...[
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.link, size: 18),
+                          label: const Text('초대 링크 복사'),
+                          onPressed: _copyInvite,
+                        ),
+                        TextButton(
+                          onPressed: () => _copyInvite(renew: true),
+                          child: const Text('링크 새로 만들기'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   if (adminsError != null)
                     Row(
                       children: [

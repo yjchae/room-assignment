@@ -704,8 +704,19 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
         inviteJustUsed = inviteJustUsed || pendingInvite != null;
         pendingInvite = null;
       } catch (e) {
-        loginNotice = errorText(e); // enter 가 로그아웃했다 — 로그인 화면이 이유를 보여준다
-        signInCount.value++;
+        if (!remote.signedIn) {
+          loginNotice = errorText(e); // enter 가 로그아웃했다 — 로그인 화면이 이유를 보여준다
+          signInCount.value++;
+          return;
+        }
+        // 네트워크 오류: 로그인은 그대로 두고 목록 화면에 이유와 [새로고침]을 보여준다.
+        if (mounted) {
+          setState(() {
+            error = errorText(e);
+            list = [];
+            loading = false;
+          });
+        }
         return;
       }
     }
@@ -955,6 +966,8 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
           await remote.saveRoomPlan(g.id, e.toJson(), 0);
         }
       }
+      // 만들기 전에 읽은 권한에는 새 집회가 없다 — 그대로 열면 만든 사람의 [집회 설정]이 잠긴다.
+      scope = await remote.scope();
       if (mounted) await _open(g);
     } catch (e) {
       _snack(errorText(e));

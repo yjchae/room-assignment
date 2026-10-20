@@ -1529,6 +1529,8 @@ void main() {
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(find.text('집회 삭제'), findsNothing);
       expect(find.text('이 집회의 운영자'), findsOneWidget);
+      // 초대 링크도 주인만 (보조운영자가 바꾸면 집회관리자가 보낸 링크가 몰래 막힌다)
+      expect(find.text('초대 링크 복사'), findsNothing);
 
       // 집회를 만든 집회관리자는 자기 집회를 지운다
       fake.ownedSet.add('g1');

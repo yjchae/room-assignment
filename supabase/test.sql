@@ -351,7 +351,7 @@ do $$ begin
   delete from room.gatherings where id = '00000000-0000-0000-0000-0000000000b1';
   perform t.ok(not found, '보조운영자는 집회를 못 지운다');
 end $$;
-select t.ok(room.gathering_invite('00000000-0000-0000-0000-0000000000b1', false) = current_setting('t.code'), '보조운영자도 초대 링크를 복사한다');
+select t.err($q$select room.gathering_invite('00000000-0000-0000-0000-0000000000b1', true)$q$, 'FORBIDDEN');  -- 초대 링크는 주인만
 select t.err($q$select room.approve_gathering_admin('00000000-0000-0000-0000-0000000000b1', '99999999-9999-9999-9999-999999999999')$q$, 'FORBIDDEN');
 select t.err($q$select room.set_gathering_admin_role('00000000-0000-0000-0000-0000000000b1', 'ffffffff-ffff-ffff-ffff-ffffffffffff', 'staff')$q$, 'FORBIDDEN');
 select t.err($q$select room.remove_gathering_admin('00000000-0000-0000-0000-0000000000b1', '99999999-9999-9999-9999-999999999999')$q$, 'FORBIDDEN');
@@ -360,17 +360,44 @@ select t.ok(not room.can_create(), '보조운영자도 집회는 못 만든다')
 
 -- 새 코드로 바꾸면 예전 링크는 막힌다. 거절·해제하면 다시 못 들어온다
 set request.jwt.claim.sub = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-select t.ok(room.gathering_invite('00000000-0000-0000-0000-0000000000b1', true) <> current_setting('t.code'),
-  '새 코드로 바꾼다');
+select set_config('t.code2', room.gathering_invite('00000000-0000-0000-0000-0000000000b1', true), false);
+select t.ok(current_setting('t.code2') <> current_setting('t.code'), '새 코드로 바꾼다');
+set role anon;
+select t.ok(room.invite_ok(current_setting('t.code2')) and not room.invite_ok(current_setting('t.code')),
+  '가입 전(로그인 안 함)에도 코드가 맞는지 본다');
+set role authenticated;
 select t.ok((select count(*) from room.gathering_admin_list('00000000-0000-0000-0000-0000000000b1')) = 2,
   '만든 사람이 초대한 운영자 목록을 본다');
 select room.remove_gathering_admin('00000000-0000-0000-0000-0000000000b1', '99999999-9999-9999-9999-999999999999');  -- 승인 대기 거절
 select room.remove_gathering_admin('00000000-0000-0000-0000-0000000000b1', 'ffffffff-ffff-ffff-ffff-ffffffffffff');
+select t.ok(room.gathering_invite('00000000-0000-0000-0000-0000000000b1', false) <> current_setting('t.code2'),
+  '해제·거절하면 초대 링크가 바뀐다 (같은 링크로 다시 대기에 오르지 않게)');
 set request.jwt.claim.sub = '99999999-9999-9999-9999-999999999999';
 select t.ok(room.enter_app() = 'helper', '거절된 사람은 들어오지 못한다');
 set request.jwt.claim.sub = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
-select t.err($q$select room.join_app(current_setting('t.code'))$q$, 'BAD_INVITE');
+select t.err($q$select room.join_app(current_setting('t.code2'))$q$, 'BAD_INVITE');
 select t.ok(room.enter_app() = 'helper', '해제된 사람은 다음 로그인에 가입 때 코드로 되살아나지 않는다');
+
+-- 옛 링크로 가입한 사람: 집회관리자 신청 목록(수퍼어드민)에 엉뚱하게 오르지 않는다
+reset role;
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('77777777-7777-7777-7777-777777777777', 'old@x', '{"room_signup":"true","room_invite":"옛코드"}');
+set role authenticated;
+set request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+select t.ok(room.enter_app() = 'none', '옛 코드로 가입한 사람은 가입자 표에 안 들어간다');
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select t.ok((select count(*) from room.admin_requests() where email = 'old@x') = 0, '수퍼어드민 신청 목록에도 없다');
+
+-- 승인했던 집회관리자를 나중에 거절하면, 남은 세션으로도 자기 집회를 못 다룬다
+select room.reject_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+set request.jwt.claim.sub = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+select t.ok(room.enter_app() = 'rejected', '거절되면 로그인이 막힌다');
+select t.ok(not room.owns('00000000-0000-0000-0000-0000000000b1')
+            and not room.manages('00000000-0000-0000-0000-0000000000b1'), '만든 집회도 못 다룬다');
+select t.ok((select count(*) from room.my_gatherings()) = 0, '맡은 집회 목록도 비어 있다');
+select t.ok((select count(*) from room.registrations) = 0, '신청(전화번호)도 안 보인다');
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select room.approve_admin('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');  -- 아래 검사들을 위해 되돌린다
 
 -- 집회관리자는 자기 집회를 지운다. 지우면 다시 하나를 만들 수 있다(한 번에 하나)
 set request.jwt.claim.sub = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';

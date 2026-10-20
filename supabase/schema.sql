@@ -212,13 +212,21 @@ language sql stable security definer set search_path = '' as $$
   select exists (select 1 from room.admins where user_id = auth.uid())
 $$;
 
+-- 승인된 집회관리자(owner)인가. 거절(rejected)되면 만든 집회도 못 다룬다.
+create or replace function room._is_owner() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from room.members where user_id = auth.uid() and status = 'owner')
+$$;
+
 -- 이 집회의 주인인가 = 수퍼어드민이거나 이 집회를 만든 집회관리자.
--- 집회 삭제, 초대 링크 가입자 승인·역할 부여·해제, 이메일로 운영자 등록.
+-- 집회 삭제, 초대 링크(만들기·바꾸기), 초대 링크 가입자 승인·역할 부여·해제, 이메일로 운영자 등록.
+-- 만든 사람이 지금도 승인된 집회관리자(owner)여야 한다 — 나중에 거절되면 남은 세션으로도 못 다룬다.
 create or replace function room.owns(p_gathering uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
   select room.is_admin()
-      or exists (select 1 from room.gatherings
-                  where id = p_gathering and created_by = auth.uid())
+      or (exists (select 1 from room.gatherings
+                   where id = p_gathering and created_by = auth.uid())
+          and room._is_owner())
 $$;
 
 -- 이 집회를 다루는가(신청·방배정) = 주인이거나, 승인된 보조운영자·운영스탭.
@@ -263,7 +271,7 @@ create or replace function room.my_gatherings() returns setof uuid
 language sql stable security definer set search_path = '' as $$
   select gathering_id from room.gathering_admins where user_id = auth.uid() and approved
   union
-  select id from room.gatherings where created_by = auth.uid()
+  select id from room.gatherings where created_by = auth.uid() and room._is_owner()
 $$;
 
 -- 내가 설정까지 고칠 수 있는 집회들. 앱이 운영스탭에게 [집회 설정] 메뉴를 막는 데 쓴다.
@@ -272,7 +280,7 @@ language sql stable security definer set search_path = '' as $$
   select gathering_id from room.gathering_admins
    where user_id = auth.uid() and approved and role = 'assistant'
   union
-  select id from room.gatherings where created_by = auth.uid()
+  select id from room.gatherings where created_by = auth.uid() and room._is_owner()
 $$;
 
 alter table room.admins enable row level security;           -- 정책 없음 = API 로는 아무도 못 봄
@@ -698,6 +706,9 @@ begin
    where gathering_id = p_gathering and user_id = p_user;
   -- NOT_FOUND 는 신청 조회에서 쓰는 코드라 안내 문구가 엉뚱해진다.
   if not found then raise exception 'NO_SUCH_ADMIN'; end if;
+  -- 초대 링크를 바꾼다. 안 바꾸면 해제·거절한 사람이 같은 링크로 다시 승인 대기에 오른다.
+  update room.gathering_invites set code = encode(extensions.gen_random_bytes(12), 'hex')
+   where gathering_id = p_gathering;
 end $$;
 
 -- 승인된 사람의 역할을 바꾼다: assistant(보조운영자) / staff(운영스탭). 집회관리자·수퍼어드민만.
@@ -751,7 +762,13 @@ begin
   if auth.uid() is null then raise exception 'FORBIDDEN'; end if;
   if not room.is_admin() and not exists (select 1 from room.members where user_id = auth.uid()) then
     select raw_user_meta_data into meta from auth.users where id = auth.uid();
-    if meta->>'room_signup' = 'true' then perform room._join(meta->>'room_invite'); end if;
+    -- 가입 때 남긴 초대 코드가 지금은 틀리면(새 링크로 바뀜) 넣지 않는다 — 넣으면 초대받으려던 사람이
+    -- 수퍼어드민의 집회관리자 신청 목록에 엉뚱하게 오른다. 새 링크로 로그인하면 join_app 이 넣는다.
+    if meta->>'room_signup' = 'true'
+       and (coalesce(meta->>'room_invite', '') = ''
+            or exists (select 1 from room.gathering_invites where code = meta->>'room_invite')) then
+      perform room._join(meta->>'room_invite');
+    end if;
   end if;
   if room.can_manage() then return 'ok'; end if;
   -- 초대 링크로 들어와 그 집회의 집회관리자 승인을 기다리는 중
@@ -774,6 +791,12 @@ begin
   perform room._join(p_invite);
 end $$;
 
+-- 초대 코드가 지금 맞는가. 가입 창이 계정을 만들기 전에 본다(틀린 링크로 계정만 생기지 않게).
+create or replace function room.invite_ok(p_invite text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from room.gathering_invites where code = nullif(trim(p_invite), ''))
+$$;
+
 -- 이 집회의 초대 코드. 없으면 만든다. p_renew 면 새 코드로 바꿔 예전 링크를 막는다.
 create or replace function room.gathering_invite(p_gathering uuid, p_renew boolean)
 returns text
@@ -781,7 +804,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   c text;
 begin
-  if not room.configures(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  if not room.owns(p_gathering) then raise exception 'FORBIDDEN'; end if;
   insert into room.gathering_invites (gathering_id, code)
   values (p_gathering, encode(extensions.gen_random_bytes(12), 'hex'))
   on conflict (gathering_id) do update
@@ -841,6 +864,7 @@ revoke execute on function
   room._touch(),
   room._keep_owner(),
   room._join(text),
+  room._is_owner(),
   room.enter_app(),
   room.join_app(text),
   room.gathering_invite(uuid, boolean),
@@ -876,7 +900,8 @@ grant execute on function
   room.update_registration(uuid, text, text, jsonb, text, text, int),
   room.cancel_registration(uuid, text, text),
   room.lookup_duties(uuid, text, text),
-  room.save_duty_items(uuid, text, text, text, jsonb)
+  room.save_duty_items(uuid, text, text, text, jsonb),
+  room.invite_ok(text)
   to anon, authenticated;
 
 grant execute on function

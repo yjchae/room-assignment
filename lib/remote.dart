@@ -63,24 +63,39 @@ class Remote {
 
   /// 로그인한 계정을 이 앱에 들인다. 같은 Supabase 계정을 다른 앱도 쓰므로 이 앱 가입자인지
   /// 서버(enter_app)가 가린다. 가입 직후 첫 로그인이면 서버가 여기서 가입자 표에 넣는다.
-  /// 들어올 수 없으면 로그아웃하고 [RemoteError].
+  /// 들어올 수 없다고 서버가 답하면 로그아웃하고 [RemoteError]. 네트워크 오류는 로그아웃하지 않고
+  /// 그대로 던진다(잠깐 끊겼다고 로그인이 풀리면 안 된다). 한 사람에 한 번만 묻는다([_entered]).
   Future<void> enter({String? invite}) async {
-    try {
-      if (invite != null) await _db.rpc('join_app', params: {'p_invite': invite});
-      final s = await _db.rpc('enter_app');
-      if (s == 'ok') return;
-      throw RemoteError(switch (s) {
-        'pending' => '가입 신청을 확인하고 있습니다. 전체 운영자가 승인하면 로그인할 수 있습니다.',
-        'waiting' => '초대받은 집회의 집회관리자가 승인하면 로그인할 수 있습니다. 집회관리자에게 알리세요.',
-        'rejected' => '가입 신청이 승인되지 않았습니다. 집회 담당자에게 문의하세요.',
-        'helper' => '맡은 집회가 없습니다. 집회 담당자에게 초대 링크를 다시 받으세요.',
-        _ => '이 앱에 가입하지 않은 계정입니다. 아래 [운영자 가입 신청]으로 먼저 가입하세요.',
-      });
-    } catch (_) {
-      await _db.auth.signOut();
-      rethrow;
+    final me = _db.auth.currentUser?.id;
+    if (invite == null && me != null && me == _entered) return;
+    Object? badInvite;
+    if (invite != null) {
+      try {
+        await _db.rpc('join_app', params: {'p_invite': invite});
+      } on PostgrestException catch (e) {
+        if (!e.message.contains('BAD_INVITE')) rethrow;
+        // 옛 링크(코드가 바뀜). 이미 들어올 수 있는 사람이면 막지 않는다 — 북마크해 둔 링크로도 로그인되게.
+        badInvite = e;
+      }
     }
+    final s = await _db.rpc('enter_app');
+    if (s == 'ok') {
+      _entered = me;
+      return;
+    }
+    await signOut();
+    if (badInvite != null) throw badInvite;
+    throw RemoteError(switch (s) {
+      'pending' => '가입 신청을 확인하고 있습니다. 전체 운영자가 승인하면 로그인할 수 있습니다.',
+      'waiting' => '초대받은 집회의 집회관리자가 승인하면 로그인할 수 있습니다. 집회관리자에게 알리세요.',
+      'rejected' => '가입 신청이 승인되지 않았습니다. 집회 담당자에게 문의하세요.',
+      'helper' => '맡은 집회가 없습니다. 집회 담당자에게 초대 링크를 다시 받으세요.',
+      _ => '이 앱에 가입하지 않은 계정입니다. 아래 [운영자 가입 신청]으로 먼저 가입하세요.',
+    });
   }
+
+  /// [enter] 를 마친 계정 id. 같은 사람이면 목록을 새로 읽을 때마다 다시 묻지 않는다.
+  String? _entered;
 
   /// 로그인한 사람이 무엇을 할 수 있는지. [full] 이면 모든 집회, 아니면 [gatherings] 에 있는
   /// 집회만 관리한다. [canCreate] = 새 집회를 만들 수 있음(전체 운영자, 또는 승인된 가입자가 하나).
@@ -99,6 +114,7 @@ class Remote {
       _db.rpc('can_create'),
       _db.rpc('my_gatherings'),
       _owned(),
+      _db.rpc('my_configured'),
     ]);
     final full = r[0] == true;
     final gatherings = {for (final g in r[2] as List) '$g'};
@@ -107,7 +123,7 @@ class Remote {
       full: full,
       canCreate: r[1] == true,
       gatherings: gatherings,
-      configures: full ? gatherings : await _configured(gatherings),
+      configures: full ? gatherings : {for (final g in r[4] as List) '$g'},
       owned: r[3] as Set<String>,
     );
   }
@@ -118,19 +134,6 @@ class Remote {
     if (me == null) return {};
     final rows = await _db.from('gatherings').select('id').eq('created_by', me);
     return {for (final r in rows) '${r['id']}'};
-  }
-
-  /// ponytail: 역할(schema.sql 의 gathering_admins.role)을 넣기 전 DB 에는 my_configured 가 없다.
-  ///           그때는 모두가 설정까지 고쳤으니 맡은 집회 전부로 친다. 막는 건 어차피 서버 RLS 다.
-  ///           모든 운영 DB 에 schema.sql 을 다시 돌린 뒤에는 이 대비를 지워도 된다.
-  Future<Set<String>> _configured(Set<String> mine) async {
-    try {
-      final rows = await _db.rpc('my_configured') as List;
-      return {for (final g in rows) '$g'};
-    } on PostgrestException catch (e) {
-      if (e.code == 'PGRST202') return mine; // 함수 없음
-      rethrow;
-    }
   }
 
   /// 마지막 [scope] 결과의 [AdminScope.full]. 계정 메뉴의 [운영자 승인]을 가린다.
@@ -220,6 +223,11 @@ class Remote {
     String password, {
     String? invite,
   }) async {
+    // 옛 링크(코드가 바뀜)면 계정을 만들기 전에 막는다. 만든 뒤에 알면 초대도 안 되고 계정만 남는다.
+    if (invite != null &&
+        await _db.rpc('invite_ok', params: {'p_invite': invite}) != true) {
+      throw const RemoteError('BAD_INVITE');
+    }
     var signedIn = false;
     try {
       final res = await _db.auth.signUp(
@@ -280,6 +288,7 @@ class Remote {
 
   Future<void> signOut() {
     fullAdmin = false;
+    _entered = null;
     return _db.auth.signOut();
   }
 
@@ -335,10 +344,17 @@ class Remote {
   /// 집회 삭제. 신청도 같이 지워진다(DB cascade).
   /// 이미지를 먼저 지운다 — 저장소 정책(room.configures)이 집회관리자를 집회 행의 created_by 로
   /// 알아보므로, 행을 먼저 지우면 집회관리자는 이미지를 못 지워 공개 버킷에 남는다.
+  /// 집회 행을 먼저 지운다. 이미지를 먼저 지우면 행 삭제가 실패(권한·네트워크)했을 때 살아 있는
+  /// 집회의 포스터만 사라진다. RLS 에 막히면 에러 없이 0줄이라 지운 행으로 확인한다.
   Future<void> deleteGathering(Gathering g) async {
-    await deleteImage(g.posterUrl);
+    final gone = await _db
+        .from('gatherings')
+        .delete()
+        .eq('id', g.id)
+        .select('id');
+    if (gone.isEmpty) throw const RemoteError('FORBIDDEN');
+    await deleteImage(g.posterUrl); // 실패해도 삼킨다 — 집회는 이미 지워졌다
     await deleteImage(g.backgroundUrl);
-    await _db.from('gatherings').delete().eq('id', g.id);
   }
 
   /// 집회별 진행 중인 신청 수 (취소 제외). 운영자만.
