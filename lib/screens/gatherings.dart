@@ -13,6 +13,10 @@ final signInCount = ValueNotifier<int>(0);
 /// 있으면 집회 목록을 처음 읽을 때)에 그 집회의 운영자로 등록하고 비운다.
 String? pendingInvite = Uri.base.queryParameters['join'];
 
+/// 방금 로그인하면서 초대 링크를 썼다. 집회 목록이 한 번 안내한다 — 이미 다른 집회를 맡은 사람은
+/// 바로 들어오지만, 초대받은 집회는 집회관리자가 승인해야 목록에 나오기 때문이다.
+bool inviteJustUsed = false;
+
 /// 집회 목록이 계정을 들이지 못하고 로그아웃시켰을 때 그 이유. 로그인 화면이 한 번 보여주고 비운다.
 String? loginNotice;
 
@@ -95,6 +99,7 @@ class _LoginFormState extends State<LoginForm> {
 
   Future<void> _go() => _run(() async {
     await remote.signIn(email.text, pw.text, invite: pendingInvite);
+    inviteJustUsed = pendingInvite != null;
     pendingInvite = null;
     widget.onDone();
   });
@@ -634,6 +639,7 @@ Future<void> openGathering(
   await Navigator.of(context)
       .push(MaterialPageRoute(builder: (_) => const Shell()));
   current.value = null;
+  canConfigure.value = true;
 }
 
 /// 집회를 열면 신청을 한 번 읽어 방배정에 맞춘다 — 입금 전 신청자도 참석자(홈스테이는 가정)로
@@ -695,6 +701,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       // 메일 확인 링크로 바로 로그인돼 들어온 첫 방문도, 로그인한 채 초대 링크를 연 것도 여기서 들인다.
       try {
         await remote.enter(invite: pendingInvite);
+        inviteJustUsed = inviteJustUsed || pendingInvite != null;
         pendingInvite = null;
       } catch (e) {
         loginNotice = errorText(e); // enter 가 로그아웃했다 — 로그인 화면이 이유를 보여준다
@@ -722,7 +729,12 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       error = errorText(e);
       list = [];
     }
-    if (mounted) setState(() => loading = false);
+    if (!mounted) return;
+    setState(() => loading = false);
+    if (inviteJustUsed && error == null) {
+      inviteJustUsed = false;
+      _snack('초대 링크를 받았습니다. 초대받은 집회는 그 집회의 집회관리자가 승인하면 이 목록에 나옵니다.');
+    }
   }
 
   void _snack(String m) =>

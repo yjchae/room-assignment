@@ -32,6 +32,9 @@ final current = ValueNotifier<Gathering?>(null);
 /// 막는 건 서버(room.configures)가 하고, 이건 못 쓰는 화면을 열지 않게 하는 것뿐이다.
 final canConfigure = ValueNotifier<bool>(true);
 
+/// 이 탭을 열 수 있는가. 운영스탭은 [집회 설정]을 못 연다 — 메뉴·앱바·탭 전환이 모두 이것만 본다.
+bool canOpenTab(int i) => i != settingsTab || canConfigure.value;
+
 /// 탭 전환. 현황 화면에서 배정 화면으로 점프할 때도 이걸 쓴다.
 final tabIndex = ValueNotifier<int>(0);
 
@@ -138,13 +141,13 @@ class Shell extends StatelessWidget {
         final size = windowSizeOf(context);
         final compact = size.isCompact;
         // 운영스탭은 [집회 설정]을 못 연다. 다른 곳에서 넘어와도 신청 화면을 보여 준다.
-        final index = tabIndex.value == settingsTab && !canConfigure.value
-            ? registrationsTab
-            : tabIndex.value;
+        final index = canOpenTab(tabIndex.value)
+            ? tabIndex.value
+            : registrationsTab;
         final dates =
             '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}';
         // 날짜·이름은 집회 설정(서버)에서 바꾼다. 여기서 바꾸면 신청 웹과 어긋난다.
-        final openSettings = canConfigure.value
+        final openSettings = canOpenTab(settingsTab)
             ? () => tabIndex.value = settingsTab
             : null;
         return Scaffold(
@@ -357,7 +360,7 @@ class _SideNav extends StatelessWidget {
     final on = i == index;
     final (icon, label) = Shell.dest(i);
     // 운영스탭에게 [집회 설정]은 숨기지 않고 끈다 — 왜 못 여는지 툴팁으로 알린다.
-    final locked = i == settingsTab && !canConfigure.value;
+    final locked = !canOpenTab(i);
     final glyph = Icon(
       icon,
       size: _rail ? 20 : 18,

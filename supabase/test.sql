@@ -304,6 +304,9 @@ select t.err($q$select room.gathering_invite('00000000-0000-0000-0000-0000000000
 select set_config('t.code', room.gathering_invite('00000000-0000-0000-0000-0000000000b1', false), false);
 select t.ok(room.gathering_invite('00000000-0000-0000-0000-0000000000b1', false) = current_setting('t.code'),
   '다시 물어도 같은 코드');
+select room.join_app(current_setting('t.code'));
+select t.ok((select count(*) from room.gathering_admin_list('00000000-0000-0000-0000-0000000000b1')) = 0,
+  '주인이 자기 초대 링크를 열어도 승인 대기에 들어가지 않는다');
 reset role;
 insert into auth.users (id, email, raw_user_meta_data) values
   ('ffffffff-ffff-ffff-ffff-ffffffffffff', 'f@x',

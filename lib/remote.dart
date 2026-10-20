@@ -93,17 +93,22 @@ class Remote {
     if (!signedIn) {
       throw const RemoteError('로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인하세요.');
     }
-    final full = await _db.rpc('is_admin') == true;
-    final canCreate = await _db.rpc('can_create') == true;
-    final mine = await _db.rpc('my_gatherings') as List;
-    final gatherings = {for (final g in mine) '$g'};
+    // 서로 기다릴 필요가 없는 조회라 한꺼번에 보낸다. Future.wait 는 첫 에러를 그대로 던진다.
+    final r = await Future.wait<dynamic>([
+      _db.rpc('is_admin'),
+      _db.rpc('can_create'),
+      _db.rpc('my_gatherings'),
+      _owned(),
+    ]);
+    final full = r[0] == true;
+    final gatherings = {for (final g in r[2] as List) '$g'};
     fullAdmin = full;
     return (
       full: full,
-      canCreate: canCreate,
+      canCreate: r[1] == true,
       gatherings: gatherings,
       configures: full ? gatherings : await _configured(gatherings),
-      owned: await _owned(),
+      owned: r[3] as Set<String>,
     );
   }
 
@@ -328,10 +333,12 @@ class Remote {
   }
 
   /// 집회 삭제. 신청도 같이 지워진다(DB cascade).
+  /// 이미지를 먼저 지운다 — 저장소 정책(room.configures)이 집회관리자를 집회 행의 created_by 로
+  /// 알아보므로, 행을 먼저 지우면 집회관리자는 이미지를 못 지워 공개 버킷에 남는다.
   Future<void> deleteGathering(Gathering g) async {
-    await _db.from('gatherings').delete().eq('id', g.id);
     await deleteImage(g.posterUrl);
     await deleteImage(g.backgroundUrl);
+    await _db.from('gatherings').delete().eq('id', g.id);
   }
 
   /// 집회별 진행 중인 신청 수 (취소 제외). 운영자만.

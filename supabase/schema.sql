@@ -730,7 +730,8 @@ begin
     values (auth.uid(), case when g is null then 'pending' else 'helper' end)
     on conflict do nothing;
   end if;
-  if g is not null then
+  -- 주인(만든 집회관리자·수퍼어드민)이 자기 링크를 눌러 봐도 승인 대기에 끼지 않게 한다.
+  if g is not null and not room.owns(g) then
     insert into room.gathering_admins (gathering_id, user_id) values (g, auth.uid())
     on conflict do nothing;
   end if;

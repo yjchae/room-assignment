@@ -1483,6 +1483,16 @@ void main() {
       expect(find.byType(RoomsScreen), findsOneWidget);
     });
 
+    testWidgets('로그인한 채 초대 링크를 열면 승인 후 목록에 나온다고 알린다', (tester) async {
+      pendingInvite = 'code-b';
+      addTearDown(() => pendingInvite = null);
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      expect(fake.invites, ['code-b']);
+      expect(pendingInvite, isNull);
+      expect(find.textContaining('집회관리자가 승인하면 이 목록에 나옵니다'), findsOneWidget);
+    });
+
     testWidgets('보조운영자: 집회를 열면 [집회 설정]에서 시작한다', (tester) async {
       fake
         ..full = false

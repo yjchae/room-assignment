@@ -97,6 +97,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   /// 이 집회의 주인인가 = 전체 운영자이거나 이 집회를 만든 집회관리자.
   /// 집회 삭제와 운영자 승인·역할·해제·이메일 등록은 주인만 한다(보조운영자는 못 한다).
   bool owner = false;
+  Future<AdminScope>? _scope;
   ImageKind? uploading;
   String? imageInfo;
 
@@ -114,7 +115,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     final c = current.value;
     if (c == null || !remote.signedIn) return;
     try {
-      final scope = await remote.scope();
+      // 권한은 화면을 여는 동안 안 바뀐다 — 승인·역할·해제 뒤 목록만 다시 읽는다.
+      final scope = await (_scope ??= remote.scope());
       final list = await remote.gatheringAdmins(c.id);
       if (mounted) {
         setState(() {
@@ -124,6 +126,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         });
       }
     } catch (e) {
+      _scope = null; // 실패한 권한 조회를 붙잡아 두지 않는다
       // 조용히 넘기면 전체 운영자인데도 [집회 삭제]가 사라진 채 이유를 알 수 없다.
       if (mounted) setState(() => adminsError = errorText(e));
     }
