@@ -206,21 +206,21 @@ class Remote {
     );
   }
 
-  /// 운영자 가입. 계정만 만들고 바로 로그아웃한다. 초대 링크([invite])로 왔으면 첫 로그인에
-  /// 그 집회의 승인 대기 운영자가 되고(집회관리자가 승인), 아니면 전체 운영자가 승인해야
-  /// 집회관리자로 집회를 하나 만들 수 있다.
-  /// data 의 room_signup·room_invite 는 서버 enter_app 이 첫 로그인 때 읽는다.
-  /// 대시보드에서 메일 확인을 켜 두었으면 확인 메일의 링크도 눌러야 로그인된다.
+  /// 운영자 가입. 계정을 만들어 이 앱 가입자로 넣고 로그아웃한다. 초대 링크([invite])로 왔으면
+  /// 바로 그 집회의 승인 대기 운영자가 되고(집회 설정의 운영자 목록에 곧장 보이고 집회관리자가
+  /// 승인), 아니면 전체 운영자가 승인해야 집회관리자로 집회를 하나 만들 수 있다.
+  /// 메일 확인을 켜 둔 서버면 가입 순간엔 로그인이 안 되므로, data 의 room_signup·room_invite 를
+  /// 서버 enter_app 이 첫 로그인 때 읽어 같은 일을 한다.
   ///
   /// 같은 이메일로 다른 앱(같은 Supabase 프로젝트) 계정이 이미 있으면 새 계정이 안 생긴다.
-  /// 그때는 입력한 비밀번호로 그 계정에 로그인해 이 앱에 가입시킨다(join_app).
+  /// 그때는 입력한 비밀번호로 그 계정에 로그인해 이 앱에 가입시킨다.
   Future<void> signUp(
     String name,
     String email,
     String password, {
     String? invite,
   }) async {
-    var exists = false;
+    var signedIn = false;
     try {
       final res = await _db.auth.signUp(
         email: email.trim(),
@@ -228,13 +228,14 @@ class Remote {
         data: {'name': name.trim(), 'room_signup': 'true', 'room_invite': ?invite},
         emailRedirectTo: adminSiteUrl,
       );
+      signedIn = res.session != null;
       // 메일 확인을 켜 두면 이미 있는 주소도 에러 없이 identities 가 빈 가짜 계정을 돌려준다.
-      exists = res.user?.identities?.isEmpty ?? false;
-    } on AuthException catch (e) {
-      if (e.code != 'user_already_exists') rethrow;
-      exists = true;
-    }
-    if (exists) {
+      if (res.user?.identities?.isEmpty ?? false) throw const _AlreadyExists();
+    } on Object catch (e) {
+      if (e is! _AlreadyExists &&
+          !(e is AuthException && e.code == 'user_already_exists')) {
+        rethrow;
+      }
       try {
         await _db.auth.signInWithPassword(
           email: email.trim(),
@@ -245,14 +246,13 @@ class Remote {
           '이미 가입된 이메일입니다(같은 서버를 쓰는 다른 서비스 포함). 그 계정의 비밀번호를 입력하세요.',
         );
       }
-      try {
-        await _db.rpc('join_app', params: {'p_invite': invite});
-      } finally {
-        await _db.auth.signOut();
-      }
-      return;
+      signedIn = true;
     }
-    await _db.auth.signOut();
+    try {
+      if (signedIn) await _db.rpc('join_app', params: {'p_invite': invite});
+    } finally {
+      await _db.auth.signOut();
+    }
   }
 
   /// 승인을 기다리는 가입 신청. 운영자만.
@@ -602,6 +602,11 @@ class Remote {
   };
 
   Registration? _reg(Object? j) => j is Map ? Registration.fromRow(j) : null;
+}
+
+/// [Remote.signUp] 안에서만: 이미 있는 이메일.
+class _AlreadyExists {
+  const _AlreadyExists();
 }
 
 /// 스탭 페이지가 보는 내 담당구역 한 곳. [members] 는 같이 배정된 사람 이름.
