@@ -23,6 +23,9 @@ class FakeRemote extends Remote {
   bool full = true;
   final managed = <String>{};
 
+  /// [managed] 중 운영스탭으로만 맡은 집회 (집회 설정을 못 고친다).
+  final staffOf = <String>{};
+
   /// 승인된 가입자(owner)인가 — 전체 운영자가 아니어도 집회를 하나 만들 수 있다.
   bool owner = false;
 
@@ -108,7 +111,12 @@ class FakeRemote extends Remote {
   Future<AdminScope> scope() async {
     if (scopeError) throw const RemoteError('서버에 연결하지 못했습니다.');
     fullAdmin = full;
-    return (full: full, canCreate: full || owner, gatherings: {...managed});
+    return (
+      full: full,
+      canCreate: full || owner,
+      gatherings: {...managed},
+      configures: {...managed.difference(staffOf)},
+    );
   }
 
   @override
@@ -124,7 +132,19 @@ class FakeRemote extends Remote {
     gAdmins.putIfAbsent(gatheringId, () => []).add((
       userId: 'u-$email',
       email: email.trim(),
+      role: GatheringRole.staff, // 서버처럼 운영스탭으로 시작
     ));
+  }
+
+  @override
+  Future<void> setGatheringAdminRole(
+    String gatheringId,
+    String userId,
+    GatheringRole role,
+  ) async {
+    final list = gAdmins[gatheringId]!;
+    final i = list.indexWhere((a) => a.userId == userId);
+    list[i] = (userId: userId, email: list[i].email, role: role);
   }
 
   @override
@@ -424,6 +444,7 @@ void main() {
     remote = fake;
     current.value = null;
     passwordRecovery.value = false;
+    canConfigure.value = true;
     store.event = Event(
       name: 'x',
       startDate: DateTime(2026, 10, 9),
@@ -1401,6 +1422,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(fake.gAdmins['g1']!.single.email, 'helper@x');
       expect(find.text('helper@x'), findsOneWidget);
+      expect(fake.gAdmins['g1']!.single.role, GatheringRole.staff);
+
+      // 집회관리자로 올린다
+      await tester.tap(find.text('집회관리자'));
+      await tester.pumpAndSettle();
+      expect(fake.gAdmins['g1']!.single.role, GatheringRole.manager);
 
       // 해제
       await tester.tap(find.widgetWithText(TextButton, '해제'));
@@ -1408,6 +1435,46 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '해제'));
       await tester.pumpAndSettle();
       expect(fake.gAdmins['g1'], isEmpty);
+    });
+
+    testWidgets('운영스탭: [집회 설정]이 꺼져 있고 신청·입금에서 시작한다', (tester) async {
+      fake
+        ..full = false
+        ..managed.add('g1')
+        ..staffOf.add('g1');
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('신촌하나교회 가족수양회'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(tabIndex.value, registrationsTab);
+      expect(find.byType(GatheringSettingsScreen), findsNothing);
+      expect(find.byType(RegistrationsScreen), findsOneWidget);
+
+      // 메뉴를 눌러도, 다른 곳에서 탭을 넘겨도 설정 화면은 안 열린다
+      await tester.tap(find.text('집회 설정'));
+      await tester.pumpAndSettle();
+      expect(find.byType(GatheringSettingsScreen), findsNothing);
+      tabIndex.value = settingsTab;
+      await tester.pumpAndSettle();
+      expect(find.byType(GatheringSettingsScreen), findsNothing);
+
+      // 나머지 메뉴(방 관리 등)는 연다
+      await tester.tap(find.text('방 관리'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RoomsScreen), findsOneWidget);
+    });
+
+    testWidgets('집회관리자: 집회를 열면 [집회 설정]에서 시작한다', (tester) async {
+      fake
+        ..full = false
+        ..managed.add('g1');
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('신촌하나교회 가족수양회'));
+      await tester.pumpAndSettle();
+      expect(canConfigure.value, isTrue);
+      expect(find.byType(GatheringSettingsScreen), findsOneWidget);
     });
 
     testWidgets('집회 설정: 초대 링크를 복사한다', (tester) async {

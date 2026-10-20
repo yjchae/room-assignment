@@ -28,6 +28,10 @@ final store = Store();
 /// 지금 열어 둔 집회의 서버 설정. 집회를 열지 않았으면 null.
 final current = ValueNotifier<Gathering?>(null);
 
+/// 열어 둔 집회의 설정을 고칠 수 있는가. false = 운영스탭 — [집회 설정] 메뉴를 막는다.
+/// 막는 건 서버(room.configures)가 하고, 이건 못 쓰는 화면을 열지 않게 하는 것뿐이다.
+final canConfigure = ValueNotifier<bool>(true);
+
 /// 탭 전환. 현황 화면에서 배정 화면으로 점프할 때도 이걸 쓴다.
 final tabIndex = ValueNotifier<int>(0);
 
@@ -123,15 +127,26 @@ class Shell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([store, current, signInCount, tabIndex]),
+      animation: Listenable.merge([
+        store,
+        current,
+        signInCount,
+        tabIndex,
+        canConfigure,
+      ]),
       builder: (context, _) {
         final size = windowSizeOf(context);
         final compact = size.isCompact;
-        final index = tabIndex.value;
+        // 운영스탭은 [집회 설정]을 못 연다. 다른 곳에서 넘어와도 신청 화면을 보여 준다.
+        final index = tabIndex.value == settingsTab && !canConfigure.value
+            ? registrationsTab
+            : tabIndex.value;
         final dates =
             '${fmtDate(store.event.startDate)} ~ ${fmtDate(store.event.endDate)}';
         // 날짜·이름은 집회 설정(서버)에서 바꾼다. 여기서 바꾸면 신청 웹과 어긋난다.
-        void openSettings() => tabIndex.value = settingsTab;
+        final openSettings = canConfigure.value
+            ? () => tabIndex.value = settingsTab
+            : null;
         return Scaffold(
           // 휴대폰: 메뉴는 햄버거 뒤 Drawer. 탭이 9개라 하단 NavigationBar(5개 권장)는 안 쓴다.
           drawer: compact
@@ -341,10 +356,16 @@ class _SideNav extends StatelessWidget {
   Widget _item(int i) {
     final on = i == index;
     final (icon, label) = Shell.dest(i);
+    // 운영스탭에게 [집회 설정]은 숨기지 않고 끈다 — 왜 못 여는지 툴팁으로 알린다.
+    final locked = i == settingsTab && !canConfigure.value;
     final glyph = Icon(
       icon,
       size: _rail ? 20 : 18,
-      color: on ? AppColors.brand : AppColors.textMuted,
+      color: on
+          ? AppColors.brand
+          : locked
+          ? AppColors.textFaint
+          : AppColors.textMuted,
     );
     final item = Padding(
       padding: const EdgeInsets.only(bottom: 2),
@@ -358,10 +379,12 @@ class _SideNav extends StatelessWidget {
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(Radii.control),
-            onTap: () {
-              tabIndex.value = i;
-              onPicked?.call();
-            },
+            onTap: locked
+                ? null
+                : () {
+                    tabIndex.value = i;
+                    onPicked?.call();
+                  },
             child: _rail
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 12),
@@ -384,7 +407,11 @@ class _SideNav extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
-                              color: on ? AppColors.text : AppColors.textMuted,
+                              color: on
+                                  ? AppColors.text
+                                  : locked
+                                  ? AppColors.textFaint
+                                  : AppColors.textMuted,
                             ),
                           ),
                         ),
@@ -395,6 +422,13 @@ class _SideNav extends StatelessWidget {
         ),
       ),
     );
+    if (locked) {
+      return Tooltip(
+        message: '$label은 집회관리자만 열 수 있습니다',
+        preferBelow: false,
+        child: item,
+      );
+    }
     // 레일은 이름이 안 보이니 마우스를 올리거나 길게 누르면 알려준다.
     return _rail
         ? Tooltip(message: label, preferBelow: false, child: item)

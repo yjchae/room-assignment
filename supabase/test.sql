@@ -315,6 +315,9 @@ set request.jwt.claim.sub = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 select t.ok(room.enter_app() = 'ok', '초대 링크로 가입하면 첫 로그인에 바로 들어온다');
 select t.ok(room.manages('00000000-0000-0000-0000-0000000000b1'), '초대받은 집회를 관리한다');
 select t.ok(not room.can_create(), '초대받은 사람은 집회를 못 만든다');
+select t.ok(not room.configures('00000000-0000-0000-0000-0000000000b1'),
+  '초대 링크로 들어온 사람은 운영스탭으로 시작한다 (설정은 못 고친다)');
+select t.err($q$select room.gathering_invite('00000000-0000-0000-0000-0000000000b1', false)$q$, 'FORBIDDEN');
 -- 다른 앱 계정 x 가 초대 링크로 로그인하면 이 앱 가입 + 그 집회 운영자
 set request.jwt.claim.sub = '99999999-9999-9999-9999-999999999999';
 select t.err($q$select room.join_app('틀린코드')$q$, 'BAD_INVITE');
@@ -363,8 +366,32 @@ select t.ok(room.add_gathering_admin('00000000-0000-0000-0000-000000000002', 'd@
 select room.remove_gathering_admin('00000000-0000-0000-0000-000000000002',
   'dddddddd-dddd-dddd-dddd-dddddddddddd');
 select room.add_gathering_admin('00000000-0000-0000-0000-000000000001', 'd@x');  -- 두 번 넣어도 된다
-select t.ok((select count(*) from room.gathering_admin_list('00000000-0000-0000-0000-000000000001')) = 1,
-  '집회 운영자 목록이 보인다');
+select t.ok((select role from room.gathering_admin_list('00000000-0000-0000-0000-000000000001')) = 'staff',
+  '집회 운영자 목록이 보이고, 이메일로 등록한 사람은 운영스탭이다');
+
+-- 운영스탭 d: 신청·방배정은 다루지만 집회 설정·운영자·이미지는 못 고친다
+set request.jwt.claim.sub = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+select t.ok(room.manages('00000000-0000-0000-0000-000000000001'), '운영스탭도 맡은 집회를 다룬다');
+select t.ok(not room.configures('00000000-0000-0000-0000-000000000001'), '운영스탭은 설정을 못 고친다');
+select t.ok((select count(*) from room.my_configured()) = 0, '운영스탭에게 설정할 집회 목록은 비어 있다');
+do $$ begin
+  update room.gatherings set place = '스탭' where id = '00000000-0000-0000-0000-000000000001';
+  perform t.ok(not found, '운영스탭은 집회 설정을 못 고친다 (RLS)');
+end $$;
+select t.err($q$select room.gathering_invite('00000000-0000-0000-0000-000000000001', false)$q$, 'FORBIDDEN');
+select t.err($q$select room.add_gathering_admin('00000000-0000-0000-0000-000000000001', 'f@x')$q$, 'FORBIDDEN');
+select t.err($q$select room.set_gathering_admin_role('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'manager')$q$,
+             'FORBIDDEN');
+select t.err($q$insert into storage.objects (bucket_id, name) values ('gathering-images', '00000000-0000-0000-0000-000000000001/s.jpg')$q$,
+             'row-level security');
+
+-- 집회관리자로 올리면 설정까지 고친다
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select t.err($q$select room.set_gathering_admin_role('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'owner')$q$,
+             'INVALID_ROLE');
+select t.err($q$select room.set_gathering_admin_role('00000000-0000-0000-0000-000000000001', 'ffffffff-ffff-ffff-ffff-ffffffffffff', 'staff')$q$,
+             'NO_SUCH_ADMIN');
+select room.set_gathering_admin_role('00000000-0000-0000-0000-000000000001', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'manager');
 
 set request.jwt.claim.sub = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 select t.ok(not room.is_admin(), 'd 는 전체 운영자가 아니다');
@@ -372,6 +399,9 @@ select t.ok(room.can_manage(), 'd 는 관리자 앱에 들어올 수 있다');
 select t.ok((select array_agg(x) from room.my_gatherings() x)
               = array['00000000-0000-0000-0000-000000000001'::uuid],
   '내가 맡은 집회만 돌려준다');
+select t.ok((select array_agg(x) from room.my_configured() x)
+              = array['00000000-0000-0000-0000-000000000001'::uuid],
+  '집회관리자가 되면 설정할 집회 목록에 들어온다');
 
 -- 맡은 집회: 신청·방배정이 보이고 고칠 수 있다
 select t.ok((select count(*) from room.registrations

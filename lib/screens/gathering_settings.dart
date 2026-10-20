@@ -167,6 +167,20 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     }
   }
 
+  /// 집회관리자 ↔ 운영스탭. 운영스탭은 [집회 설정]을 못 열고 나머지 메뉴만 쓴다.
+  Future<void> _setRole(GatheringAdmin a, GatheringRole role) async {
+    final c = current.value;
+    if (c == null || a.role == role) return;
+    try {
+      await remote.setGatheringAdminRole(c.id, a.userId, role);
+      await _loadAdmins();
+      final to = role == GatheringRole.manager ? '집회관리자로' : '운영스탭으로';
+      _snack('${a.email} 님을 $to 바꿨습니다.');
+    } catch (e) {
+      _snack(errorText(e));
+    }
+  }
+
   Future<void> _removeAdmin(GatheringAdmin a) async {
     final c = current.value;
     if (c == null) return;
@@ -1068,9 +1082,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                 ]),
                 _card('이 집회의 운영자', [
                   const Text(
-                    '여기 등록한 사람은 이 집회의 설정·신청·방배정만 다룰 수 있습니다. '
-                    '새 집회를 만들거나 다른 집회를 열 수는 없습니다.\n'
-                    '초대 링크를 보내면 받은 사람이 가입하거나 로그인해서 바로 등록됩니다. '
+                    '여기 등록한 사람은 이 집회만 다룰 수 있고, 새 집회를 만들거나 다른 집회를 열 수는 없습니다.\n'
+                    '집회관리자: 집회 설정과 운영자 목록까지 전부 고칩니다.\n'
+                    '운영스탭: 신청·참석자·방·방배정·담당구역만 다루고 집회 설정은 열지 못합니다.\n'
+                    '초대 링크나 이메일로 새로 등록한 사람은 운영스탭으로 시작합니다. '
                     '이미 이 앱 계정이 있는 사람은 이메일로 등록해도 됩니다.',
                     style: TextStyle(
                       fontSize: 12,
@@ -1134,6 +1149,22 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                           color: AppColors.textMuted,
                         ),
                         title: Text(a.email),
+                        // 휴대폰에서도 이메일 옆이 좁아지지 않게 역할은 아랫줄에 둔다.
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: SegmentedButton<GatheringRole>(
+                              showSelectedIcon: false,
+                              segments: [
+                                for (final r in GatheringRole.values)
+                                  ButtonSegment(value: r, label: Text(r.label)),
+                              ],
+                              selected: {a.role},
+                              onSelectionChanged: (v) => _setRole(a, v.single),
+                            ),
+                          ),
+                        ),
                         trailing: TextButton(
                           style: TextButton.styleFrom(
                             foregroundColor: AppColors.danger,

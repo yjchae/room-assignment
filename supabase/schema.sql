@@ -14,8 +14,10 @@
 --                   운영자는 전부.
 --   room_plans      운영자만. 집회별 방배정(방·참석자·배정) 문서. 저장은 save_room_plan — 버전 검사.
 --   운영자 = auth.users 에 있고 room.admins 에도 있는 사람 (전체 운영자).
---   집회별 운영자 = room.gathering_admins 에 그 집회로 등록된 사람. 그 집회의 설정·신청·방배정만
---   건드릴 수 있고 새 집회를 만들거나 지우지 못한다. 판정은 room.manages(집회id) 하나로 한다.
+--   집회별 운영자 = room.gathering_admins 에 그 집회로 등록된 사람. 새 집회를 만들거나 지우지 못한다.
+--     역할(role) manager 집회관리자 — 그 집회의 설정·운영자까지 전부. 판정은 room.configures(집회id).
+--               staff   운영스탭 — 신청·참석자·방·방배정·담당구역만. 집회 설정과 운영자 목록은 못 고친다.
+--   그 집회를 다루는가(신청·방배정)는 room.manages(집회id), 설정을 고치는가는 room.configures(집회id).
 --   전체 운영자는 가입으로 될 수 없다 — SQL Editor 에서 room.admins 에 직접 넣는다.
 --   이 앱 가입자 = room.members. 운영자 웹에서 가입할 때 남긴 표시(room_signup)를 보고 첫 로그인에 넣는다.
 --     pending  직접 가입, 전체 운영자 승인 대기. 아무 데이터에도 못 닿는다.
@@ -29,6 +31,7 @@
 --   NO_ACCOUNT (집회 운영자로 등록하려는 이메일의 계정이 없음)  NO_SUCH_ADMIN (이미 해제된 운영자)
 --   INVALID_ITEMS (스탭이 보낸 담당구역 할 일 표가 너무 크거나 배열이 아님)
 --   BAD_INVITE (집회 초대 링크가 틀렸거나 새 링크로 바뀜)
+--   INVALID_ROLE (집회 운영자 역할이 manager / staff 가 아님)
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -94,6 +97,13 @@ create table if not exists room.gathering_admins (
   created_at timestamptz not null default now(),
   primary key (gathering_id, user_id)
 );
+-- 집회별 운영자의 역할. 이미 등록된 사람은 지금처럼 설정까지 고치도록 manager 로 채우고,
+-- 새로 들어오는 사람(초대 링크·이메일 등록)은 staff 로 시작한다 — 집회관리자가 올려 준다.
+alter table room.gathering_admins add column if not exists role text not null default 'manager';
+alter table room.gathering_admins alter column role set default 'staff';
+alter table room.gathering_admins drop constraint if exists gathering_admins_role_check;
+alter table room.gathering_admins add constraint gathering_admins_role_check
+  check (role in ('manager', 'staff'));
 
 -- 이 집회를 만든 사람 (승인된 가입자 owner 는 하나만 만들 수 있다). 고쳐도 바뀌지 않는다(_keep_owner).
 alter table room.gatherings add column if not exists created_by uuid
@@ -204,6 +214,17 @@ language sql stable security definer set search_path = '' as $$
                   where gathering_id = p_gathering and user_id = auth.uid())
 $$;
 
+-- 이 집회의 설정(이름·날짜·회비·신청서·이미지)과 운영자 목록을 고치는가 = 전체 운영자이거나,
+-- 이 집회를 만들었거나, 이 집회의 집회관리자(manager). 운영스탭(staff)은 manages 만 통과한다.
+create or replace function room.configures(p_gathering uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select room.is_admin()
+      or exists (select 1 from room.gatherings
+                  where id = p_gathering and created_by = auth.uid())
+      or exists (select 1 from room.gathering_admins
+                  where gathering_id = p_gathering and user_id = auth.uid() and role = 'manager')
+$$;
+
 -- 관리자 앱에 들어올 수 있는 사람인가 (전체 운영자, 승인된 가입자, 어느 집회든 운영자).
 create or replace function room.can_manage() returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -231,6 +252,14 @@ language sql stable security definer set search_path = '' as $$
   select id from room.gatherings where created_by = auth.uid()
 $$;
 
+-- 내가 설정까지 고칠 수 있는 집회들. 앱이 운영스탭에게 [집회 설정] 메뉴를 막는 데 쓴다.
+create or replace function room.my_configured() returns setof uuid
+language sql stable security definer set search_path = '' as $$
+  select gathering_id from room.gathering_admins where user_id = auth.uid() and role = 'manager'
+  union
+  select id from room.gatherings where created_by = auth.uid()
+$$;
+
 alter table room.admins enable row level security;           -- 정책 없음 = API 로는 아무도 못 봄
 alter table room.gathering_admins enable row level security; -- 정책 없음 — 아래 함수로만 드나든다
 alter table room.members enable row level security;          -- 정책 없음
@@ -245,7 +274,7 @@ create policy "누구나 읽기" on room.gatherings
   for select using (true);
 
 -- 새 집회는 전체 운영자, 또는 승인된 가입자가 하나만. 지우는 건 전체 운영자만.
--- 집회별 운영자는 자기 집회를 고칠 수만 있다.
+-- 집회별 운영자 중 집회관리자만 자기 집회를 고칠 수 있다(운영스탭은 못 고친다).
 drop policy if exists "운영자 쓰기" on room.gatherings;
 drop policy if exists "전체 운영자만 만들기" on room.gatherings;
 drop policy if exists "만들 수 있는 사람만" on room.gatherings;
@@ -255,7 +284,7 @@ create policy "만들 수 있는 사람만" on room.gatherings
 
 drop policy if exists "맡은 집회 고치기" on room.gatherings;
 create policy "맡은 집회 고치기" on room.gatherings
-  for update to authenticated using (room.manages(id)) with check (room.manages(id));
+  for update to authenticated using (room.configures(id)) with check (room.configures(id));
 
 drop policy if exists "전체 운영자만 삭제" on room.gatherings;
 create policy "전체 운영자만 삭제" on room.gatherings
@@ -596,10 +625,12 @@ begin
 end $$;
 
 -- 이 집회의 운영자 목록. 그 집회를 관리하는 사람만 볼 수 있다.
+-- 돌려주는 칸(role)이 늘어 create or replace 로는 못 바꾼다 — 지우고 다시 만든다(권한은 아래에서 다시 준다).
+drop function if exists room.gathering_admin_list(uuid);
 create or replace function room.gathering_admin_list(p_gathering uuid)
-returns table (user_id uuid, email text, created_at timestamptz)
+returns table (user_id uuid, email text, created_at timestamptz, role text)
 language sql stable security definer set search_path = '' as $$
-  select a.user_id, u.email::text, a.created_at
+  select a.user_id, u.email::text, a.created_at, a.role
     from room.gathering_admins a
     join auth.users u on u.id = a.user_id
    where a.gathering_id = p_gathering and room.manages(p_gathering)
@@ -614,7 +645,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   uid uuid;
 begin
-  if not room.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  if not room.configures(p_gathering) then raise exception 'FORBIDDEN'; end if;
   -- 같은 주소로 계정이 여럿일 수 있다(확인 안 된 가입 등). 확인된 계정을 먼저, 그다음 먼저 만든 것.
   -- order 가 없으면 매번 다른 계정이 뽑혀 엉뚱한 사람에게 권한이 간다.
   select u.id into uid from auth.users u
@@ -634,10 +665,23 @@ create or replace function room.remove_gathering_admin(p_gathering uuid, p_user 
 returns void
 language plpgsql security definer set search_path = '' as $$
 begin
-  if not room.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  if not room.configures(p_gathering) then raise exception 'FORBIDDEN'; end if;
   delete from room.gathering_admins
    where gathering_id = p_gathering and user_id = p_user;
   -- NOT_FOUND 는 신청 조회에서 쓰는 코드라 안내 문구가 엉뚱해진다.
+  if not found then raise exception 'NO_SUCH_ADMIN'; end if;
+end $$;
+
+-- 집회별 운영자의 역할을 바꾼다: manager(집회관리자) / staff(운영스탭).
+-- 설정을 고칠 수 있는 사람만. 자기 자신을 staff 로 내리면 그 뒤로는 설정을 못 고친다.
+create or replace function room.set_gathering_admin_role(p_gathering uuid, p_user uuid, p_role text)
+returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not room.configures(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  if p_role is null or p_role not in ('manager', 'staff') then raise exception 'INVALID_ROLE'; end if;
+  update room.gathering_admins set role = p_role
+   where gathering_id = p_gathering and user_id = p_user;
   if not found then raise exception 'NO_SUCH_ADMIN'; end if;
 end $$;
 
@@ -704,7 +748,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   c text;
 begin
-  if not room.manages(p_gathering) then raise exception 'FORBIDDEN'; end if;
+  if not room.configures(p_gathering) then raise exception 'FORBIDDEN'; end if;
   insert into room.gathering_invites (gathering_id, code)
   values (p_gathering, encode(extensions.gen_random_bytes(12), 'hex'))
   on conflict (gathering_id) do update
@@ -771,8 +815,10 @@ revoke execute on function
   room.can_manage(),
   room.add_gathering_admin(uuid, text),
   room.remove_gathering_admin(uuid, uuid),
+  room.set_gathering_admin_role(uuid, uuid, text),
   room.gathering_admin_list(uuid),
   room.my_gatherings(),
+  room.my_configured(),
   room._assert_open(uuid),
   room._check_input(jsonb, text, text, int),
   room._verify(uuid, text, text),
@@ -789,6 +835,7 @@ revoke execute on function
 grant execute on function
   room.is_admin(),  -- RLS 정책 안에서 불리므로 모두에게 필요
   room.manages(uuid),
+  room.configures(uuid),
   room.submit_registration(uuid, text, text, jsonb, text, text, int),
   room.lookup_registration(uuid, text, text),
   room.update_registration(uuid, text, text, jsonb, text, text, int),
@@ -806,8 +853,10 @@ grant execute on function
   room.reject_admin(uuid),
   room.add_gathering_admin(uuid, text),
   room.remove_gathering_admin(uuid, uuid),
+  room.set_gathering_admin_role(uuid, uuid, text),
   room.gathering_admin_list(uuid),
   room.my_gatherings(),
+  room.my_configured(),
   room.can_manage(),
   room.can_create(),  -- 집회 만들기 정책 안에서도 불린다
   room.enter_app(),
@@ -827,20 +876,20 @@ on conflict (id) do update
       file_size_limit = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;
 
--- 파일 경로가 '<집회id>/...' 라 첫 칸으로 그 집회를 맡았는지 본다.
+-- 파일 경로가 '<집회id>/...' 라 첫 칸으로 그 집회의 설정을 고칠 수 있는지 본다(포스터·배경은 집회 설정).
 -- 집회 id 모양이 아니면 null 이 되고, 그때는 전체 운영자만 통과한다.
 drop policy if exists "집회 이미지: 운영자 관리" on storage.objects;
 create policy "집회 이미지: 운영자 관리" on storage.objects
   for all to authenticated
   using (
     bucket_id = 'gathering-images'
-    and room.manages(
+    and room.configures(
       case when split_part(name, '/', 1) ~ '^[0-9a-fA-F-]{36}$'
            then split_part(name, '/', 1)::uuid end)
   )
   with check (
     bucket_id = 'gathering-images'
-    and room.manages(
+    and room.configures(
       case when split_part(name, '/', 1) ~ '^[0-9a-fA-F-]{36}$'
            then split_part(name, '/', 1)::uuid end)
   );

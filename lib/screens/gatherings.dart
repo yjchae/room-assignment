@@ -608,7 +608,12 @@ class AdminButton extends StatelessWidget {
 }
 
 /// 집회 하나를 열어 탭 화면(Shell)으로 들어간다. 방배정은 서버에서 읽고, 없으면 빈 채로 시작한다.
-Future<void> openGathering(BuildContext context, Gathering g) async {
+/// [configure] 가 false(운영스탭)면 [집회 설정]을 막고 [신청·입금]에서 시작한다.
+Future<void> openGathering(
+  BuildContext context,
+  Gathering g, {
+  bool configure = true,
+}) async {
   await store.open(
     g.id,
     Event(
@@ -619,9 +624,10 @@ Future<void> openGathering(BuildContext context, Gathering g) async {
     )..fieldSpecs = {...g.fieldSpecs},
   );
   current.value = g;
+  canConfigure.value = configure;
   store.applyGathering(g);
   _syncRegistrations(g);
-  tabIndex.value = settingsTab;
+  tabIndex.value = configure ? settingsTab : registrationsTab;
   if (!context.mounted) return;
   await Navigator.of(context)
       .push(MaterialPageRoute(builder: (_) => const Shell()));
@@ -655,7 +661,14 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
   Map<String, ({int total, int confirmed})> counts = {};
 
   /// 로그인한 사람의 권한. 집회별 운영자는 맡은 집회만 보고, 새 집회는 [canCreate] 일 때만.
-  AdminScope scope = (full: false, canCreate: false, gatherings: <String>{});
+  AdminScope scope = _noScope;
+
+  static const AdminScope _noScope = (
+    full: false,
+    canCreate: false,
+    gatherings: <String>{},
+    configures: <String>{},
+  );
 
   @override
   void initState() {
@@ -690,7 +703,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       final signed = remote.signedIn;
       scope = signed
           ? await remote.scope()
-          : (full: false, canCreate: false, gatherings: <String>{});
+          : _noScope;
       list = await remote.gatherings();
       // 집회별 운영자에게는 맡은 집회만 보여준다 (집회 설정 자체는 누구나 읽을 수 있지만,
       // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).
@@ -713,7 +726,10 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> _open(Gathering g) async {
-    await openGathering(context, g);
+    // 로그인 전이면 권한을 모른다 — 막지 않는다(저장할 때 서버가 막는다).
+    final configure =
+        !remote.signedIn || scope.full || scope.configures.contains(g.id);
+    await openGathering(context, g, configure: configure);
     if (mounted) _load();
   }
 
