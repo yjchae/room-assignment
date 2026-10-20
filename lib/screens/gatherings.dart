@@ -13,6 +13,10 @@ final signInCount = ValueNotifier<int>(0);
 /// 있으면 집회 목록을 처음 읽을 때)에 그 집회의 운영자로 등록하고 비운다.
 String? pendingInvite = Uri.base.queryParameters['join'];
 
+/// 방금 로그인하면서 초대 링크를 썼다. 집회 목록이 한 번 안내한다 — 이미 다른 집회를 맡은 사람은
+/// 바로 들어오지만, 초대받은 집회는 집회관리자가 승인해야 목록에 나오기 때문이다.
+bool inviteJustUsed = false;
+
 /// 집회 목록이 계정을 들이지 못하고 로그아웃시켰을 때 그 이유. 로그인 화면이 한 번 보여주고 비운다.
 String? loginNotice;
 
@@ -95,6 +99,7 @@ class _LoginFormState extends State<LoginForm> {
 
   Future<void> _go() => _run(() async {
     await remote.signIn(email.text, pw.text, invite: pendingInvite);
+    inviteJustUsed = pendingInvite != null;
     pendingInvite = null;
     widget.onDone();
   });
@@ -115,7 +120,8 @@ class _LoginFormState extends State<LoginForm> {
       children: [
         if (pendingInvite != null) ...[
           const Text(
-            '집회 운영자 초대 링크로 들어왔습니다. 로그인하거나 아래에서 가입하면 그 집회를 관리할 수 있습니다.',
+            '집회 운영자 초대 링크로 들어왔습니다. 로그인하거나 아래에서 가입한 뒤, '
+            '그 집회의 집회관리자가 승인하면 관리할 수 있습니다.',
             style: TextStyle(fontSize: 12, height: 1.5, color: AppColors.brand),
           ),
           const SizedBox(height: 12),
@@ -304,8 +310,8 @@ Future<void> _changePasswordDialog(BuildContext context) {
   );
 }
 
-/// 운영자 가입. 초대 링크로 왔으면 그 집회 운영자로, 아니면 전체 운영자가 [운영자 승인]에서
-/// 승인해야 로그인해서 집회를 하나 만들 수 있다.
+/// 운영자 가입. 초대 링크로 왔으면 그 집회의 집회관리자가, 아니면 전체 운영자가 [운영자 승인]에서
+/// 승인해야 로그인할 수 있다(앞은 운영스탭, 뒤는 집회를 하나 만드는 집회관리자).
 class _SignUpDialog extends StatefulWidget {
   const _SignUpDialog();
 
@@ -361,7 +367,8 @@ class _SignUpDialogState extends State<_SignUpDialog> {
       child: done
           ? Text(
               pendingInvite != null
-                  ? '가입했습니다.\n이제 로그인하면 초대받은 집회가 바로 보입니다.'
+                  ? '가입했습니다.\n'
+                        '초대한 집회의 집회관리자가 승인하면 로그인해서 그 집회를 관리할 수 있습니다.'
                   : '가입 신청을 보냈습니다.\n'
                         '전체 운영자가 승인하면 로그인해서 집회를 하나 만들 수 있습니다.',
             )
@@ -608,7 +615,12 @@ class AdminButton extends StatelessWidget {
 }
 
 /// 집회 하나를 열어 탭 화면(Shell)으로 들어간다. 방배정은 서버에서 읽고, 없으면 빈 채로 시작한다.
-Future<void> openGathering(BuildContext context, Gathering g) async {
+/// [configure] 가 false(운영스탭)면 [집회 설정]을 막고 [신청·입금]에서 시작한다.
+Future<void> openGathering(
+  BuildContext context,
+  Gathering g, {
+  bool configure = true,
+}) async {
   await store.open(
     g.id,
     Event(
@@ -619,13 +631,15 @@ Future<void> openGathering(BuildContext context, Gathering g) async {
     )..fieldSpecs = {...g.fieldSpecs},
   );
   current.value = g;
+  canConfigure.value = configure;
   store.applyGathering(g);
   _syncRegistrations(g);
-  tabIndex.value = settingsTab;
+  tabIndex.value = configure ? settingsTab : registrationsTab;
   if (!context.mounted) return;
   await Navigator.of(context)
       .push(MaterialPageRoute(builder: (_) => const Shell()));
   current.value = null;
+  canConfigure.value = true;
 }
 
 /// 집회를 열면 신청을 한 번 읽어 방배정에 맞춘다 — 입금 전 신청자도 참석자(홈스테이는 가정)로
@@ -655,7 +669,15 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
   Map<String, ({int total, int confirmed})> counts = {};
 
   /// 로그인한 사람의 권한. 집회별 운영자는 맡은 집회만 보고, 새 집회는 [canCreate] 일 때만.
-  AdminScope scope = (full: false, canCreate: false, gatherings: <String>{});
+  AdminScope scope = _noScope;
+
+  static const AdminScope _noScope = (
+    full: false,
+    canCreate: false,
+    gatherings: <String>{},
+    configures: <String>{},
+    owned: <String>{},
+  );
 
   @override
   void initState() {
@@ -679,6 +701,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       // 메일 확인 링크로 바로 로그인돼 들어온 첫 방문도, 로그인한 채 초대 링크를 연 것도 여기서 들인다.
       try {
         await remote.enter(invite: pendingInvite);
+        inviteJustUsed = inviteJustUsed || pendingInvite != null;
         pendingInvite = null;
       } catch (e) {
         loginNotice = errorText(e); // enter 가 로그아웃했다 — 로그인 화면이 이유를 보여준다
@@ -690,7 +713,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       final signed = remote.signedIn;
       scope = signed
           ? await remote.scope()
-          : (full: false, canCreate: false, gatherings: <String>{});
+          : _noScope;
       list = await remote.gatherings();
       // 집회별 운영자에게는 맡은 집회만 보여준다 (집회 설정 자체는 누구나 읽을 수 있지만,
       // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).
@@ -706,14 +729,22 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       error = errorText(e);
       list = [];
     }
-    if (mounted) setState(() => loading = false);
+    if (!mounted) return;
+    setState(() => loading = false);
+    if (inviteJustUsed && error == null) {
+      inviteJustUsed = false;
+      _snack('초대 링크를 받았습니다. 초대받은 집회는 그 집회의 집회관리자가 승인하면 이 목록에 나옵니다.');
+    }
   }
 
   void _snack(String m) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> _open(Gathering g) async {
-    await openGathering(context, g);
+    // 로그인 전이면 권한을 모른다 — 막지 않는다(저장할 때 서버가 막는다).
+    final configure =
+        !remote.signedIn || scope.full || scope.configures.contains(g.id);
+    await openGathering(context, g, configure: configure);
     if (mounted) _load();
   }
 

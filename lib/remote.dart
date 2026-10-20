@@ -71,6 +71,7 @@ class Remote {
       if (s == 'ok') return;
       throw RemoteError(switch (s) {
         'pending' => '가입 신청을 확인하고 있습니다. 전체 운영자가 승인하면 로그인할 수 있습니다.',
+        'waiting' => '초대받은 집회의 집회관리자가 승인하면 로그인할 수 있습니다. 집회관리자에게 알리세요.',
         'rejected' => '가입 신청이 승인되지 않았습니다. 집회 담당자에게 문의하세요.',
         'helper' => '맡은 집회가 없습니다. 집회 담당자에게 초대 링크를 다시 받으세요.',
         _ => '이 앱에 가입하지 않은 계정입니다. 아래 [운영자 가입 신청]으로 먼저 가입하세요.',
@@ -83,6 +84,8 @@ class Remote {
 
   /// 로그인한 사람이 무엇을 할 수 있는지. [full] 이면 모든 집회, 아니면 [gatherings] 에 있는
   /// 집회만 관리한다. [canCreate] = 새 집회를 만들 수 있음(전체 운영자, 또는 승인된 가입자가 하나).
+  /// [configures] = 그중 집회 설정까지 고치는 집회(만든 집회 + 보조운영자). 나머지는 운영스탭이다.
+  /// [owned] = 내가 만든 집회(집회관리자). 집회 삭제와 운영자 승인·역할·해제는 여기와 [full] 만.
   ///
   /// 로그인 전이면 [RemoteError] — "맡은 집회가 하나도 없다"와 구별해야 한다.
   /// 둘을 같은 값으로 돌려주면 세션이 풀렸을 때 집회 목록이 빈 채로 "운영자 등록을 요청하세요"가 뜬다.
@@ -90,15 +93,44 @@ class Remote {
     if (!signedIn) {
       throw const RemoteError('로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인하세요.');
     }
-    final full = await _db.rpc('is_admin') == true;
-    final canCreate = await _db.rpc('can_create') == true;
-    final mine = await _db.rpc('my_gatherings') as List;
+    // 서로 기다릴 필요가 없는 조회라 한꺼번에 보낸다. Future.wait 는 첫 에러를 그대로 던진다.
+    final r = await Future.wait<dynamic>([
+      _db.rpc('is_admin'),
+      _db.rpc('can_create'),
+      _db.rpc('my_gatherings'),
+      _owned(),
+    ]);
+    final full = r[0] == true;
+    final gatherings = {for (final g in r[2] as List) '$g'};
     fullAdmin = full;
     return (
       full: full,
-      canCreate: canCreate,
-      gatherings: {for (final g in mine) '$g'},
+      canCreate: r[1] == true,
+      gatherings: gatherings,
+      configures: full ? gatherings : await _configured(gatherings),
+      owned: r[3] as Set<String>,
     );
+  }
+
+  /// 내가 만든 집회. gatherings 는 누구나 읽으므로 따로 서버 함수가 필요 없다.
+  Future<Set<String>> _owned() async {
+    final me = _db.auth.currentUser?.id;
+    if (me == null) return {};
+    final rows = await _db.from('gatherings').select('id').eq('created_by', me);
+    return {for (final r in rows) '${r['id']}'};
+  }
+
+  /// ponytail: 역할(schema.sql 의 gathering_admins.role)을 넣기 전 DB 에는 my_configured 가 없다.
+  ///           그때는 모두가 설정까지 고쳤으니 맡은 집회 전부로 친다. 막는 건 어차피 서버 RLS 다.
+  ///           모든 운영 DB 에 schema.sql 을 다시 돌린 뒤에는 이 대비를 지워도 된다.
+  Future<Set<String>> _configured(Set<String> mine) async {
+    try {
+      final rows = await _db.rpc('my_configured') as List;
+      return {for (final g in rows) '$g'};
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST202') return mine; // 함수 없음
+      rethrow;
+    }
   }
 
   /// 마지막 [scope] 결과의 [AdminScope.full]. 계정 메뉴의 [운영자 승인]을 가린다.
@@ -116,7 +148,13 @@ class Remote {
             as List;
     return [
       for (final r in rows)
-        (userId: '${r['user_id']}', email: '${r['email'] ?? ''}'),
+        (
+          userId: '${r['user_id']}',
+          email: '${r['email'] ?? ''}',
+          role: GatheringRole.of(r['role']),
+          // 승인 칸이 없던 DB 는 모두 승인된 운영자였다.
+          approved: r['approved'] != false,
+        ),
     ];
   }
 
@@ -137,6 +175,30 @@ class Remote {
     return inviteLink('$code');
   }
 
+  /// 초대 링크로 들어온 사람을 승인한다(운영스탭으로 시작). 집회관리자만(FORBIDDEN).
+  Future<void> approveGatheringAdmin(String gatheringId, String userId) async {
+    await _db.rpc(
+      'approve_gathering_admin',
+      params: {'p_gathering': gatheringId, 'p_user': userId},
+    );
+  }
+
+  /// 집회별 운영자의 역할을 바꾼다. 집회관리자만 부를 수 있다(FORBIDDEN).
+  Future<void> setGatheringAdminRole(
+    String gatheringId,
+    String userId,
+    GatheringRole role,
+  ) async {
+    await _db.rpc(
+      'set_gathering_admin_role',
+      params: {
+        'p_gathering': gatheringId,
+        'p_user': userId,
+        'p_role': role.name,
+      },
+    );
+  }
+
   Future<void> removeGatheringAdmin(String gatheringId, String userId) async {
     await _db.rpc(
       'remove_gathering_admin',
@@ -145,7 +207,8 @@ class Remote {
   }
 
   /// 운영자 가입. 계정만 만들고 바로 로그아웃한다. 초대 링크([invite])로 왔으면 첫 로그인에
-  /// 그 집회 운영자가 되고, 아니면 전체 운영자가 승인해야 집회를 하나 만들 수 있다.
+  /// 그 집회의 승인 대기 운영자가 되고(집회관리자가 승인), 아니면 전체 운영자가 승인해야
+  /// 집회관리자로 집회를 하나 만들 수 있다.
   /// data 의 room_signup·room_invite 는 서버 enter_app 이 첫 로그인 때 읽는다.
   /// 대시보드에서 메일 확인을 켜 두었으면 확인 메일의 링크도 눌러야 로그인된다.
   ///
@@ -270,10 +333,12 @@ class Remote {
   }
 
   /// 집회 삭제. 신청도 같이 지워진다(DB cascade).
+  /// 이미지를 먼저 지운다 — 저장소 정책(room.configures)이 집회관리자를 집회 행의 created_by 로
+  /// 알아보므로, 행을 먼저 지우면 집회관리자는 이미지를 못 지워 공개 버킷에 남는다.
   Future<void> deleteGathering(Gathering g) async {
-    await _db.from('gatherings').delete().eq('id', g.id);
     await deleteImage(g.posterUrl);
     await deleteImage(g.backgroundUrl);
+    await _db.from('gatherings').delete().eq('id', g.id);
   }
 
   /// 집회별 진행 중인 신청 수 (취소 제외). 운영자만.
@@ -546,10 +611,37 @@ typedef StaffDuty = ({Duty duty, List<String> members});
 typedef AdminRequest = ({String id, String email, String name, DateTime at});
 
 /// 로그인한 사람의 권한 범위 ([Remote.scope]).
-typedef AdminScope = ({bool full, bool canCreate, Set<String> gatherings});
+typedef AdminScope = ({
+  bool full,
+  bool canCreate,
+  Set<String> gatherings,
+  Set<String> configures,
+  Set<String> owned,
+});
 
-/// 집회 하나에 등록된 운영자 ([Remote.gatheringAdmins]).
-typedef GatheringAdmin = ({String userId, String email});
+/// 초대 링크로 들어온 집회별 운영자의 역할. 이름이 곧 서버 값(gathering_admins.role)이다.
+/// 그 위의 집회관리자(집회를 만든 사람)와 수퍼어드민은 역할이 아니라 [AdminScope] 로 가린다.
+enum GatheringRole {
+  /// 보조운영자 — 집회 설정까지 고친다. 집회 삭제·운영자 관리는 못 한다.
+  assistant('보조운영자'),
+
+  /// 운영스탭 — 신청·참석자·방·방배정·담당구역만. 집회 설정은 못 연다.
+  staff('운영스탭');
+
+  const GatheringRole(this.label);
+  final String label;
+
+  /// 서버 값을 읽는다. 역할 칸이 없던 DB 는 모두 설정까지 고쳤다(첫 판 이름 manager 도 같다).
+  static GatheringRole of(Object? v) => v == 'staff' ? staff : assistant;
+}
+
+/// 집회 하나에 등록된 운영자 ([Remote.gatheringAdmins]). [approved] 가 false 면 승인 대기.
+typedef GatheringAdmin = ({
+  String userId,
+  String email,
+  GatheringRole role,
+  bool approved,
+});
 
 class RemoteError implements Exception {
   const RemoteError(this.message);
@@ -590,6 +682,7 @@ String errorText(Object e) {
     'NO_ACCOUNT':
         '그 이메일로 가입한 계정이 없습니다. 위 [초대 링크 복사]로 링크를 보내 가입하게 하세요.',
     'BAD_INVITE': '초대 링크가 틀렸거나 새 링크로 바뀌었습니다. 집회 담당자에게 새 링크를 받으세요.',
+    'INVALID_ROLE': '운영자 역할은 보조운영자나 운영스탭 중 하나만 고를 수 있습니다.',
     // 로그인 없이(anon) 운영자 전용 테이블을 건드렸다 — 세션이 끊겼거나 로그인 전이다.
     'permission denied for table': '로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인한 뒤 집회를 다시 여세요.',
     'NOT_FOUND': '신청을 찾지 못했습니다.',

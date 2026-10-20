@@ -271,7 +271,14 @@ void main() {
       }
     }
     fake.accounts.add('helper@example.com');
-    fake.gAdmins['g1'] = [(userId: 'u1', email: 'helper@example.com')];
+    fake.gAdmins['g1'] = [
+      (
+        userId: 'u1',
+        email: 'helper@example.com',
+        role: GatheringRole.staff,
+        approved: true,
+      ),
+    ];
     remote = fake;
     current.value = null;
     store.event = Event(name: 'x', startDate: d9, endDate: d11);
