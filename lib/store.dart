@@ -234,11 +234,13 @@ class Store extends ChangeNotifier {
     return out;
   }
 
-  /// 당일 참석자에 운영자가 고친 내용([Event.visitors])을 덮는다. 날짜·입금 상태는 신청 그대로 둔다.
+  /// 당일 참석자에 운영자가 고친 내용([Event.visitors])을 덮는다. 입금 상태는 신청 그대로 둔다.
   Attendee _withVisitorEdits(Attendee a) {
     final v = event.visitors[a.id];
     if (v == null) return a;
     return a
+      ..checkIn = v.checkIn
+      ..checkOut = v.checkOut
       ..name = v.name
       ..gender = v.gender
       ..age = v.age
@@ -255,6 +257,14 @@ class Store extends ChangeNotifier {
     commit();
   }
 
+  /// 운영자가 1박 이상으로 고친 당일 참석자를 방배정 참석자로 옮긴다.
+  /// [Attendee.editedByAdmin] 을 붙여 자동 가져오기가 신청 내용(당일)으로 되돌리거나 빼지 않게 한다.
+  void promoteVisitor(Attendee a) {
+    event.visitors.remove(a.id);
+    event.attendees.add(a..editedByAdmin = true);
+    commit();
+  }
+
   /// 그 사람이 그날 오는가 — 참석자 화면의 날짜별 인원과 엑셀 내려받기가 같이 쓴다.
   /// 신청에서 온 사람(입금대기 포함)은 신청서의 참석일로 본다 — 1·2·4일처럼 떨어진 날도 맞다.
   /// 신청에 없는 사람(붙여넣기·직접 추가)은 일정의 묵는 밤으로 본다([Attendee.attendsOn]).
@@ -264,12 +274,23 @@ class Store extends ChangeNotifier {
     Iterable<Registration>? regs,
   ) {
     final regDays = <String, List<DateTime>>{};
+    final edited = {
+      for (final a in event.attendees)
+        if (a.editedByAdmin) a.id,
+    };
     if (g != null && !g.isHomestay) {
       for (final r in regs ?? const <Registration>[]) {
         if (r.status == RegStatus.cancelled) continue;
         for (final p in r.people) {
           final ds = p.daysIn(g.start, g.end);
-          if (ds.isNotEmpty) regDays[p.id] = ds;
+          if (ds.isEmpty) continue;
+          final dayOnly = p
+              .nightsIn(g.start, g.end, separate: g.fee.lodgingSeparate)
+              .isEmpty;
+          // 운영자가 고친 당일 신청자: 묵게 고쳤으면 참석자 일정으로, 당일 그대로면 고친 날로 본다.
+          if (dayOnly && edited.contains(p.id)) continue;
+          final v = dayOnly ? event.visitors[p.id] : null;
+          regDays[p.id] = v == null ? ds : [dateOnly(v.checkIn)];
         }
       }
     }
@@ -376,11 +397,20 @@ class Store extends ChangeNotifier {
       for (final a in event.attendees)
         if (a.roomId != null) a.personId,
     };
+    // 운영자가 고친 사람은 신청에 남아 있는 한 빼지 않는다 — 당일 신청자를 묵게 고친 경우
+    // ([promoteVisitor])처럼 신청 내용으로는 참석자가 아니어도 운영자가 정한 일정이 이긴다.
+    final kept = {
+      if (keepAdminEdits)
+        for (final r in regs)
+          if (r.status != RegStatus.cancelled)
+            for (final p in r.people) p.id,
+    };
     final gone = [
       for (final a in event.attendees)
         if (cancelled.contains(a.personId) ||
             (a.registrationId != null &&
                 !want.containsKey(a.id) &&
+                !(a.editedByAdmin && kept.contains(a.id)) &&
                 (remove || !housed.contains(a.personId))))
           a,
     ];

@@ -736,13 +736,66 @@ void main() {
       expect(again.name, '당일고침');
       expect(again.cell, '3셀');
       expect(again.note, '점심만');
-      expect(again.checkIn, day, reason: '참석일은 신청에서 온다');
+      expect(again.checkIn, day);
       expect(again.pay, payPending, reason: '입금 상태도 신청에서 온다');
 
       s.syncRegistrations(g, regs);
       expect(s.everyone(g, regs).last.name, '당일고침', reason: '가져오기가 되돌리지 않는다');
       final back = Event.fromJson(s.event.toJson());
       expect(back.visitors[visitor.id]?.name, '당일고침', reason: '문서에 저장된다');
+    });
+
+    test('당일 참석자의 참석일을 고치면 고친 날에 온다', () {
+      final s = tmpStore();
+      final day = DateTime(2026, 10, 10), next = DateTime(2026, 10, 11);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [
+          person('당일', 1990, checkIn: day, checkOut: day),
+        ]),
+      ];
+      final visitor = s.everyone(g, regs).single;
+      s.saveVisitor(visitor
+        ..checkIn = next
+        ..checkOut = next);
+
+      final a = s.everyone(g, regs).single;
+      expect(a.checkIn, next);
+      final comes = s.comesOn(g, regs);
+      expect(comes(a, next), isTrue);
+      expect(comes(a, day), isFalse, reason: '신청의 날이 아니라 고친 날로 센다');
+      expect(s.event.attendees, isEmpty, reason: '여전히 방이 필요 없다');
+    });
+
+    test('당일 참석자를 1박 이상으로 고치면 방배정 참석자가 되고, 가져오기가 빼지 않는다', () {
+      final s = tmpStore();
+      final day = DateTime(2026, 10, 10), next = DateTime(2026, 10, 11);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [
+          person('당일', 1990, checkIn: day, checkOut: day),
+        ]),
+      ];
+      s.saveVisitor(s.everyone(g, regs).single..note = '메모');
+      s.promoteVisitor(s.everyone(g, regs).single..checkOut = next);
+
+      expect(s.event.visitors, isEmpty);
+      expect(s.unassigned.map((a) => a.name), ['당일'], reason: '방을 배정할 수 있다');
+      expect(s.everyone(g, regs).length, 1, reason: '당일 참석자로 또 나오지 않는다');
+
+      s.syncFromRegistrations(g, regs);
+      s.syncRegistrations(g, regs);
+      expect(s.event.attendees.single.checkOut, next, reason: '운영자가 정한 일정이 이긴다');
+      expect(s.comesOn(g, regs)(s.event.attendees.single, next), isTrue);
+
+      s.syncRegistrations(g, regs, keepAdminEdits: false);
+      expect(s.event.attendees, isEmpty, reason: '신청 내용으로 덮으면 다시 당일');
+
+      s.promoteVisitor(s.everyone(g, regs).single..checkOut = next);
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.cancelled, [
+          person('당일', 1990, checkIn: day, checkOut: day),
+        ]),
+      ]);
+      expect(s.event.attendees, isEmpty, reason: '취소하면 뺀다');
     });
 
     test('신청서의 추가 항목이 참석자 항목으로 생긴다', () {
