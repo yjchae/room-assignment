@@ -1536,7 +1536,7 @@ class DonePage extends StatelessWidget {
               FilledButton(
                 onPressed: () =>
                     Navigator.of(context).popUntil((r) => r.isFirst),
-                child: const Text('집회 페이지로'),
+                child: const Text('홈으로 이동'),
               ),
             ],
           ),
