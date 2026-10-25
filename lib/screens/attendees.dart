@@ -440,7 +440,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                     itemBuilder: (context, i) {
                       final a = list[i];
                       final room = store.roomById(a.roomId);
-                      // 당일 참석자는 신청에만 있다 — 고치려면 [신청·입금]에서.
+                      // 당일 참석자는 신청에만 있다 — 고친 내용은 방배정 참석자와 따로 둔다.
                       final visitor = visitors.contains(a.id);
                       return ListTile(
                         dense: true,
@@ -479,9 +479,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        onTap: visitor
-                            ? null
-                            : () => attendeeDialog(context, a),
+                        onTap: () => attendeeDialog(context, a, visitor),
                       );
                     },
                   ),
@@ -1230,7 +1228,13 @@ Future<bool?> _askKeepAdminEdits(
 
 /// 참석자 추가/수정/삭제. [a] 가 없으면 새로 추가한다 — 홈스테이만 쓴다(아이들은 신청이 아니라
 /// 운영자가 직접 넣는다). 보통 집회의 새 사람은 [신청·입금]의 [신청 추가]로 넣는다.
-Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
+/// [visitor] = 당일(0박)만 오는 신청자. 방이 필요 없어 참석자에 없으므로 고친 내용을
+/// [Event.visitors] 에 따로 둔다 — 참석일은 신청에서 오고, 삭제·기간 나누기는 없다.
+Future<void> attendeeDialog(
+  BuildContext context, [
+  Attendee? draft,
+  bool visitor = false,
+]) async {
   final isNew = draft == null;
   final a =
       draft ??
@@ -1312,7 +1316,18 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
                   controller: note,
                   decoration: const InputDecoration(labelText: '기타'),
                 ),
-                if (!dateless) ...[
+                if (visitor)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 16),
+                    child: Text(
+                      '당일 참석자입니다. 참석일은 [신청·입금]에서 고칩니다.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                if (!dateless && !visitor) ...[
                   const Divider(height: 24),
                   Align(
                     alignment: Alignment.centerLeft,
@@ -1418,7 +1433,7 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
           ),
         ),
         actions: [
-          if (!isNew)
+          if (!isNew && !visitor)
             TextButton(
               onPressed: () => Navigator.pop(context, 'delete'),
               child: const Text('삭제', style: TextStyle(color: Colors.red)),
@@ -1491,6 +1506,20 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
       a.checkIn != checkIn ||
       a.checkOut != checkOut ||
       !mapEquals(a.extra, extraValues);
+  if (visitor) {
+    if (!changed && a.note == opt(note)) return;
+    a
+      ..name = n
+      ..gender = gender
+      ..age = ageN
+      ..phone = opt(phone)
+      ..cell = opt(cell)
+      ..zone = opt(zone)
+      ..note = opt(note)
+      ..extra = extraValues;
+    store.saveVisitor(a);
+    return;
+  }
   // 일정을 고치면 띄엄띄엄 묵던 밤 목록은 버린다 (운영자가 정한 기간이 이긴다).
   if (a.checkIn != checkIn || a.checkOut != checkOut) a.stayNights = null;
   a

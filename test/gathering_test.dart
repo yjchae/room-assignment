@@ -712,6 +712,39 @@ void main() {
       expect(attendeesCsv(s.event, people).split('\r\n').length, 3);
     });
 
+    test('당일 참석자를 고치면 참석자에 넣지 않고 따로 둔다', () {
+      final s = tmpStore();
+      final day = DateTime(2026, 10, 10);
+      final regs = [
+        reg('r1', RegStatus.pending, [
+          person('자는사람', 1985),
+          person('당일', 1990, checkIn: day, checkOut: day),
+        ]),
+      ];
+      s.syncRegistrations(g, regs);
+      final visitor = s.everyone(g, regs).last;
+      s.saveVisitor(
+        visitor
+          ..name = '당일고침'
+          ..cell = '3셀'
+          ..note = '점심만',
+      );
+
+      expect(s.event.attendees.map((a) => a.name), ['자는사람'],
+          reason: '방배정·미배정에 섞이지 않는다');
+      final again = s.everyone(g, regs).last;
+      expect(again.name, '당일고침');
+      expect(again.cell, '3셀');
+      expect(again.note, '점심만');
+      expect(again.checkIn, day, reason: '참석일은 신청에서 온다');
+      expect(again.pay, payPending, reason: '입금 상태도 신청에서 온다');
+
+      s.syncRegistrations(g, regs);
+      expect(s.everyone(g, regs).last.name, '당일고침', reason: '가져오기가 되돌리지 않는다');
+      final back = Event.fromJson(s.event.toJson());
+      expect(back.visitors[visitor.id]?.name, '당일고침', reason: '문서에 저장된다');
+    });
+
     test('신청서의 추가 항목이 참석자 항목으로 생긴다', () {
       final s = tmpStore();
       s.syncRegistrations(g, [
