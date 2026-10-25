@@ -24,6 +24,13 @@ class Event {
   /// 운영자가 지운, 신청에서 온 참석자 id. 다시 가져올 때 되살릴지 묻는 데 쓴다.
   Set<String> deletedIds = {};
 
+  /// 당일(0박)만 오는 신청자를 운영자가 고친 내용 (사람 id → 참석자). 참석자 화면에서 고친다.
+  /// [attendees] 에 넣지 않는다 — 0박 참석자가 거기 있으면 미배정·자동배정·정원([stayMask])에 섞인다.
+  /// 이름·성별·나이·연락처·셀·존·기타·사용자 항목만 쓰고, 날짜·입금 상태는 늘 신청에서 읽는다(`Store.everyone`).
+  /// ponytail: 나중에 1박 이상으로 바뀌거나 취소된 사람의 값도 남는다(화면에는 안 쓰인다).
+  /// 쌓이는 게 문제가 되면 [신청에서 가져오기] 때 당일 신청자에 없는 id 를 지운다.
+  Map<String, Attendee> visitors = {};
+
   Event({
     required this.name,
     required this.startDate,
@@ -63,6 +70,9 @@ class Event {
     // 형식을 정한 항목이 있을 때만 쓴다 — 기존 문서가 한 글자도 바뀌지 않게 (PLAN_GATHERING §22).
     if (fieldSpecs.isNotEmpty) 'fieldSpecs': fieldSpecsToJson(fieldSpecs),
     'deletedIds': deletedIds.toList(),
+    // 고친 당일 참석자가 있을 때만 쓴다 — 기존 문서가 한 글자도 바뀌지 않게.
+    if (visitors.isNotEmpty)
+      'visitors': {for (final e in visitors.entries) e.key: e.value.toJson()},
   };
 
   factory Event.fromJson(Map<String, dynamic> j) => Event(
@@ -81,7 +91,11 @@ class Event {
     customFields: (j['customFields'] as List? ?? []).map((e) => '$e').toList(),
   )
     ..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'}
-    ..fieldSpecs = fieldSpecsFromJson(j['fieldSpecs']);
+    ..fieldSpecs = fieldSpecsFromJson(j['fieldSpecs'])
+    ..visitors = {
+      for (final e in (j['visitors'] as Map? ?? {}).entries)
+        '${e.key}': Attendee.fromJson(e.value as Map<String, dynamic>),
+    };
 }
 
 /// 사용자 정의 항목의 형식. 값은 형식과 상관없이 늘 문자열 하나로 저장한다([Attendee.extra]).

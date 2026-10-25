@@ -228,10 +228,31 @@ class Store extends ChangeNotifier {
           g.end,
           separate: g.fee.lodgingSeparate,
         );
-        if (nights.isEmpty) out.add(attendeeOf(g, r, p));
+        if (nights.isEmpty) out.add(_withVisitorEdits(attendeeOf(g, r, p)));
       }
     }
     return out;
+  }
+
+  /// 당일 참석자에 운영자가 고친 내용([Event.visitors])을 덮는다. 날짜·입금 상태는 신청 그대로 둔다.
+  Attendee _withVisitorEdits(Attendee a) {
+    final v = event.visitors[a.id];
+    if (v == null) return a;
+    return a
+      ..name = v.name
+      ..gender = v.gender
+      ..age = v.age
+      ..phone = v.phone
+      ..cell = v.cell
+      ..zone = v.zone
+      ..note = v.note
+      ..extra = {...v.extra};
+  }
+
+  /// 참석자 화면에서 고친 당일 참석자를 저장한다 ([Event.visitors]).
+  void saveVisitor(Attendee a) {
+    event.visitors[a.id] = a;
+    commit();
   }
 
   /// 그 사람이 그날 오는가 — 참석자 화면의 날짜별 인원과 엑셀 내려받기가 같이 쓴다.
