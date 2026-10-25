@@ -121,6 +121,28 @@ void main() {
     expect(find.textContaining('다민수'), findsNothing);
   });
 
+  test('나이 통계는 10세 미만을 0~2·3~5·6~9세로 나눈다', () {
+    final xs = [
+      for (final age in [12, 9, 6, 5, 3, 2, 1, 0])
+        Attendee(
+          id: '$age',
+          name: '$age',
+          gender: 'M',
+          age: age,
+          checkIn: DateTime(2026, 1, 1),
+          checkOut: DateTime(2026, 1, 2),
+        ),
+    ];
+    expect(countBy(xs, attendeeStats['나이']!), [
+      ('0~2세', 2),
+      ('3~5세', 2),
+      ('6~9세', 2),
+      ('10대', 1),
+      ('나이 모름', 1),
+    ]);
+    expect(attendeeStats['나이·성별']!(xs[3]), '3~5세 남');
+  });
+
   testWidgets('방배정 화면이 뜬다', (tester) async {
     // AssignScreen 은 자체 Scaffold 가 없다 (실제로는 Shell 의 Scaffold 안에 들어간다).
     await pump(tester, const AssignScreen());

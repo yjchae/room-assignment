@@ -434,11 +434,14 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   };
 }
 
-String _decade(Attendee a) => a.age <= 0
-    ? '나이 모름' // 0 = 모름 (출생연도 없이 들어온 사람)
-    : a.age < 10
-    ? '0~9세'
-    : '${a.age ~/ 10 * 10}대';
+/// 나이 묶음. 10세 미만은 아이 돌봄이 달라서 0~2·3~5·6~9세로 더 잘게 나눈다.
+String _ageBand(Attendee a) => switch (a.age) {
+  <= 0 => '나이 모름', // 0 = 모름 (출생연도 없이 들어온 사람)
+  < 3 => '0~2세',
+  < 6 => '3~5세',
+  < 10 => '6~9세',
+  final n => '${n ~/ 10 * 10}대',
+};
 
 /// 참석자 화면 위쪽 통계: 제목 → (사람 → 값). 같은 값끼리 묶어 센다.
 /// 빈 존·셀은 '없음' 칸으로 모아서 빠진 사람을 바로 찾게 한다.
@@ -446,11 +449,11 @@ final Map<String, String Function(Attendee)> attendeeStats = {
   '존': (a) => (a.zone ?? '').trim().isEmpty ? '존 없음' : a.zone!.trim(),
   '셀': (a) => (a.cell ?? '').trim().isEmpty ? '셀 없음' : a.cell!.trim(),
   '성별': (a) => genderLabel(a.gender),
-  '나이': _decade,
-  '나이·성별': (a) => '${_decade(a)} ${genderLabel(a.gender)}',
+  '나이': _ageBand,
+  '나이·성별': (a) => '${_ageBand(a)} ${genderLabel(a.gender)}',
 };
 
-/// 값별 인원. 숫자는 크기 순으로 비교해서 '2셀'이 '10셀'보다, '0~9세'가 '10대'보다 앞선다.
+/// 값별 인원. 숫자는 크기 순으로 비교해서 '2셀'이 '10셀'보다, '6~9세'가 '10대'보다 앞선다.
 List<(String, int)> countBy(
   Iterable<Attendee> xs,
   String Function(Attendee) key,
