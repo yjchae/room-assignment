@@ -1,7 +1,8 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../gathering.dart' show mdw, ymd, Registration, RegStatus;
+import '../gathering.dart' show mdw, ymd, Registration;
 import '../main.dart';
 import '../remote.dart';
 import '../responsive.dart';
@@ -9,6 +10,7 @@ import '../theme.dart';
 import '../models.dart';
 import '../store.dart';
 import '../widgets/custom_field_input.dart';
+import '../xlsx_export.dart';
 import '../widgets/room_board.dart' show PayBadge;
 import 'gatherings.dart';
 
@@ -37,12 +39,57 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   List<Registration>? regs;
   String? regsError;
 
+  /// 엑셀 파일을 저장하는 중. 그동안 버튼을 막는다.
+  bool saving = false;
+
   @override
   void initState() {
     super.initState();
     // 홈스테이는 "누가 어느 집에" 가 먼저다.
     if (current.value?.isHomestay == true) sortKey = 'room';
     _loadRegs();
+  }
+
+  /// 지금 화면에 보이는 사람을 엑셀로 내려받는다. [scope] 는 파일 이름에 붙는 범위,
+  /// [sheets] 는 시트마다 (이름, 사람들). 칸은 [백업] CSV 와 같다([attendeeRows]).
+  Future<void> _downloadXlsx(
+    (String scope, List<(String, List<Attendee>)> sheets) what,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final name = store.event.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final missed = regsError != null;
+    setState(() => saving = true);
+    try {
+      final saved = await FilePicker.saveFile(
+        fileName: '${name}_참석자_${what.$1}_${ymd(DateTime.now())}.xlsx',
+        bytes: xlsxBytes([
+          for (final (sheet, people) in what.$2)
+            (sheet, attendeeRows(store.event, people)),
+        ]),
+        mimeType:
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        type: FileType.custom,
+        allowedExtensions: ['xlsx'],
+      );
+      // 웹은 바로 내려받고 저장 위치를 돌려주지 않는다(항상 null) — 그때도 안내한다.
+      if (saved != null || kIsWeb) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              missed
+                  ? '엑셀 파일을 저장했습니다. 신청을 불러오지 못해 당일 참석자가 빠졌을 수 있습니다.'
+                  : '엑셀 파일을 저장했습니다.',
+            ),
+          ),
+        );
+      }
+    } catch (err) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('엑셀 파일을 저장하지 못했습니다. $err')),
+      );
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
   }
 
   Future<void> _loadRegs() async {
@@ -82,26 +129,14 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     final sel = view == 'full' || on != null ? view : 'total';
     final nights = e.nights;
 
-    // 신청에서 온 사람(입금대기 포함)은 신청서의 참석일로 센다.
-    // 홈스테이의 신청자는 아이가 아니라 재워 줄 가정이다 — 참석자 명단에 끼면 안 된다.
-    final regDays = <String, List<DateTime>>{};
-    if (g != null && !homestay) {
-      for (final r in regs ?? const <Registration>[]) {
-        if (r.status == RegStatus.cancelled) continue;
-        for (final p in r.people) {
-          final ds = p.daysIn(g.start, g.end);
-          if (ds.isNotEmpty) regDays[p.id] = ds;
-        }
-      }
-    }
+    // 신청에서 온 사람(입금대기 포함)은 신청서의 참석일로 센다 — 엑셀 내려받기와 같은 판정.
+    final comes = store.comesOn(g, regs);
     // 당일(0박)만 오는 사람은 방이 필요 없어 참석자에 없다 — CSV 내려받기와 같은 목록을 쓴다.
     final everyone = store.everyone(g, regs);
     final visitors = {
       for (final a in everyone)
         if (!e.attendees.any((x) => x.id == a.id)) a.id,
     };
-    bool comes(Attendee a, DateTime d) =>
-        regDays[a.id]?.contains(d) ?? a.attendsOn(d, nights);
     bool full(Attendee a) => days.every((d) => comes(a, d));
     final people = [
       for (final a in everyone)
@@ -136,7 +171,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
         },
       )
       ..sort(_cmp);
-    final compact = windowSizeOf(context).isCompact;
+    // 버튼이 많아 태블릿 폭에서도 한 줄에 다 안 들어간다 — 넓은 화면만 한 줄로 늘어놓는다.
+    final narrow = !windowSizeOf(context).isExpanded;
     final search = TextField(
       decoration: const InputDecoration(
         prefixIcon: Icon(Icons.search),
@@ -177,6 +213,33 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           ),
         ),
       ],
+      Tooltip(
+        message: list.isEmpty
+            ? '내려받을 사람이 없습니다'
+            : switch (sel) {
+                'total' => '지금 보이는 ${list.length}명을 [전체] 시트와 날짜별 시트로 나눠 받습니다',
+                'full' => '모든 날 오는 사람 중 지금 보이는 ${list.length}명을 엑셀로 받습니다',
+                _ => '${mdw(on!)}에 오는 사람 중 지금 보이는 ${list.length}명을 엑셀로 받습니다',
+              },
+        child: OutlinedButton.icon(
+          icon: const Icon(Icons.table_view_outlined, size: 18),
+          label: Text(saving ? '저장 중…' : '엑셀 내려받기'),
+          onPressed: list.isEmpty || saving
+              ? null
+              : () => _downloadXlsx(switch (sel) {
+                  'total' => (
+                    '전체',
+                    [
+                      ('전체', list),
+                      for (final d in days)
+                        (mdw(d), list.where((a) => comes(a, d)).toList()),
+                    ],
+                  ),
+                  'full' => ('전참', [('전참', list)]),
+                  _ => (ymd(on!), [(mdw(on), list)]),
+                }),
+        ),
+      ),
       if (showPay)
         SegmentedButton<String>(
           showSelectedIcon: false,
@@ -246,8 +309,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            // 휴대폰은 검색창이 한 줄을 다 쓰고, 나머지는 아래 줄에서 넘치면 다음 줄로.
-            child: compact
+            // 휴대폰·태블릿은 검색창이 한 줄을 다 쓰고, 나머지는 아래 줄에서 넘치면 다음 줄로.
+            child: narrow
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

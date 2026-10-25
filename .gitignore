@@ -75,3 +75,6 @@ desktop.ini
 
 # pubspec.lock 은 앱이므로 커밋한다 (재현 가능한 빌드).
 # 라이브러리 패키지로 바뀌면 여기에 pubspec.lock 을 추가할 것.
+
+# 사무실 팀 모드 작업 산출물
+.claude-office/work/

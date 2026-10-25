@@ -232,6 +232,28 @@ class Store extends ChangeNotifier {
     return out;
   }
 
+  /// 그 사람이 그날 오는가 — 참석자 화면의 날짜별 인원과 엑셀 내려받기가 같이 쓴다.
+  /// 신청에서 온 사람(입금대기 포함)은 신청서의 참석일로 본다 — 1·2·4일처럼 떨어진 날도 맞다.
+  /// 신청에 없는 사람(붙여넣기·직접 추가)은 일정의 묵는 밤으로 본다([Attendee.attendsOn]).
+  /// 홈스테이의 신청자는 아이가 아니라 재워 줄 가정이라 참석일로 쓰지 않는다.
+  bool Function(Attendee, DateTime) comesOn(
+    Gathering? g,
+    Iterable<Registration>? regs,
+  ) {
+    final regDays = <String, List<DateTime>>{};
+    if (g != null && !g.isHomestay) {
+      for (final r in regs ?? const <Registration>[]) {
+        if (r.status == RegStatus.cancelled) continue;
+        for (final p in r.people) {
+          final ds = p.daysIn(g.start, g.end);
+          if (ds.isNotEmpty) regDays[p.id] = ds;
+        }
+      }
+    }
+    final nights = event.nights;
+    return (a, d) => regDays[a.id]?.contains(d) ?? a.attendsOn(d, nights);
+  }
+
   /// [syncRegistrations] 를 하면 지워질 사람 중 방이 배정된 사람. 지우기 전에 운영자에게 보여준다.
   List<Attendee> syncWouldRemove(Gathering g, List<Registration> regs) {
     final want = _wanted(g, regs);
@@ -944,7 +966,6 @@ List<String> parseRoomRange(String input) {
 /// [people] 을 주면 그 사람들을 적는다 — 화면과 같은 목록([Store.everyone])을 넘겨
 /// 당일(0박) 참석자가 빠지지 않게 한다.
 String attendeesCsv(Event e, [List<Attendee>? people]) {
-  final rooms = {for (final r in e.rooms) r.id: r.label};
   String cell(Object? v) {
     var s = '${v ?? ''}';
     // 신청 웹에서 들어온 값이 엑셀에서 수식으로 실행되지 않게 (CSV injection).
@@ -952,6 +973,15 @@ String attendeesCsv(Event e, [List<Attendee>? people]) {
     return RegExp(r'[",\r\n]').hasMatch(s) ? '"${s.replaceAll('"', '""')}"' : s;
   }
 
+  return attendeeRows(
+    e,
+    people ?? e.attendees,
+  ).map((row) => row.map(cell).join(',')).join('\r\n');
+}
+
+/// 참석자 표의 행들 (첫 줄은 머리글). CSV 와 엑셀 내려받기가 같은 칸·순서를 쓰도록 여기 한 곳에서 만든다.
+List<List<Object?>> attendeeRows(Event e, List<Attendee> people) {
+  final rooms = {for (final r in e.rooms) r.id: r.label};
   return [
     [
       for (final k in defaultColumns) builtinFieldLabels[k]!,
@@ -961,7 +991,7 @@ String attendeesCsv(Event e, [List<Attendee>? people]) {
       '체크아웃',
       '입금',
     ],
-    for (final a in people ?? e.attendees)
+    for (final a in people)
       [
         a.name,
         switch (a.gender) {
@@ -983,7 +1013,7 @@ String attendeesCsv(Event e, [List<Attendee>? people]) {
           _ => a.registrationId == null ? '' : '입금확인', // 빈칸 = 붙여넣기·직접 추가
         },
       ],
-  ].map((row) => row.map(cell).join(',')).join('\r\n');
+  ];
 }
 
 // --- 붙여넣기 파싱 ---------------------------------------------------------
