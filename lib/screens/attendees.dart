@@ -1229,7 +1229,8 @@ Future<bool?> _askKeepAdminEdits(
 /// 참석자 추가/수정/삭제. [a] 가 없으면 새로 추가한다 — 홈스테이만 쓴다(아이들은 신청이 아니라
 /// 운영자가 직접 넣는다). 보통 집회의 새 사람은 [신청·입금]의 [신청 추가]로 넣는다.
 /// [visitor] = 당일(0박)만 오는 신청자. 방이 필요 없어 참석자에 없으므로 고친 내용을
-/// [Event.visitors] 에 따로 둔다 — 참석일은 신청에서 오고, 삭제·기간 나누기는 없다.
+/// [Event.visitors] 에 따로 둔다. 1박 이상으로 고치면 방배정 참석자로 옮긴다.
+/// 신청에서 오는 사람이라 삭제·기간 나누기는 없다.
 Future<void> attendeeDialog(
   BuildContext context, [
   Attendee? draft,
@@ -1316,23 +1317,16 @@ Future<void> attendeeDialog(
                   controller: note,
                   decoration: const InputDecoration(labelText: '기타'),
                 ),
-                if (visitor)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 16),
-                    child: Text(
-                      '당일 참석자입니다. 참석일은 [신청·입금]에서 고칩니다.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-                if (!dateless && !visitor) ...[
+                if (!dateless) ...[
                   const Divider(height: 24),
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      homestay ? '묵는 기간 (이 집에 있는 동안)' : '묵는 기간',
+                      homestay
+                          ? '묵는 기간 (이 집에 있는 동안)'
+                          : visitor
+                          ? '참석일 (체크아웃을 뒤로 미루면 묵는 참석자가 됩니다)'
+                          : '묵는 기간',
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -1350,7 +1344,10 @@ Future<void> attendeeDialog(
                       if (d == null) return;
                       setLocal(() {
                         checkIn = d;
-                        if (!checkOut.isAfter(d)) {
+                        // 당일 참석자는 날만 옮긴다 (체크아웃 = 체크인).
+                        if (visitor && !checkOut.isAfter(checkIn)) {
+                          checkOut = d;
+                        } else if (!checkOut.isAfter(d)) {
                           checkOut = d.add(const Duration(days: 1));
                         }
                       });
@@ -1361,18 +1358,24 @@ Future<void> attendeeDialog(
                     dense: true,
                     title: const Text('체크아웃'),
                     subtitle: Text(
-                      '${checkOut.difference(checkIn).inDays}박',
+                      checkOut == checkIn
+                          ? '당일'
+                          : '${checkOut.difference(checkIn).inDays}박',
                       style: const TextStyle(fontSize: 12),
                     ),
                     trailing: Text(fmtDate(checkOut)),
                     onTap: () async {
                       final d = await pickDate(context, checkOut);
-                      if (d != null && d.isAfter(checkIn)) {
+                      // 당일 참석자는 체크인 날도 고를 수 있다 (= 당일).
+                      if (d != null &&
+                          (d.isAfter(checkIn) || visitor && d == checkIn)) {
                         setLocal(() => checkOut = d);
                       }
                     },
                   ),
-                  if (!isNew && checkOut.difference(checkIn).inDays > 1)
+                  if (!isNew &&
+                      !visitor &&
+                      checkOut.difference(checkIn).inDays > 1)
                     Align(
                       alignment: Alignment.centerLeft,
                       child: TextButton.icon(
@@ -1509,6 +1512,8 @@ Future<void> attendeeDialog(
   if (visitor) {
     if (!changed && a.note == opt(note)) return;
     a
+      ..checkIn = checkIn
+      ..checkOut = checkOut
       ..name = n
       ..gender = gender
       ..age = ageN
@@ -1517,7 +1522,11 @@ Future<void> attendeeDialog(
       ..zone = opt(zone)
       ..note = opt(note)
       ..extra = extraValues;
-    store.saveVisitor(a);
+    if (checkOut.isAfter(checkIn)) {
+      store.promoteVisitor(a);
+    } else {
+      store.saveVisitor(a);
+    }
     return;
   }
   // 일정을 고치면 띄엄띄엄 묵던 밤 목록은 버린다 (운영자가 정한 기간이 이긴다).
