@@ -168,10 +168,12 @@ class _GatheringView extends StatelessWidget {
                         ),
                       ),
                     const SizedBox(height: 14),
-                    _Info(
-                      Icons.event_outlined,
-                      '${g.start.year}-${mdw(g.start)} ~ ${mdw(g.end)} · ${stayLabel(g.nights)}',
-                    ),
+                    // 날짜 없는 집회는 기준일을 보이지 않는다 (나이 계산·사전등록 할인 기준일 뿐).
+                    if (!g.dateless)
+                      _Info(
+                        Icons.event_outlined,
+                        '${g.start.year}-${mdw(g.start)} ~ ${mdw(g.end)} · ${stayLabel(g.nights)}',
+                      ),
                     if ((g.place ?? '').isNotEmpty ||
                         (address ?? '').isNotEmpty)
                       _Info(
@@ -199,7 +201,7 @@ class _GatheringView extends StatelessWidget {
                       ),
                   ],
                 ),
-                if (g.hasSchedule)
+                if (g.hasSchedule && !g.dateless)
                   _Section(title: '일정', children: [_Schedule(g)]),
                 if (!g.fee.isFree)
                   _Section(title: '회비', children: [_FeeTable(g)]),
@@ -330,6 +332,8 @@ class _FeeTable extends StatelessWidget {
     }
 
     final separate = f.lodgingSeparate;
+    // 날짜 없는 집회는 `참가비` 한 열이다 (참가 = 하루짜리 전체 참석 금액).
+    final dateless = g.dateless;
     // 전체 참석자가 실제로 내는 금액 (정액 또는 1박×박수, 전체참석 할인 반영).
     // 숙박비 별도면 참가비만 — 정액 또는 하루 참가 × 일수.
     int fullOf(AgeGroup ag) => f.fullPrice(ag, n);
@@ -361,8 +365,10 @@ class _FeeTable extends StatelessWidget {
                   '구분',
                   style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                 ),
-                cell('전체 참석', head: true),
-                if (separate) ...[
+                cell(dateless ? '참가비' : '전체 참석', head: true),
+                if (dateless)
+                  ...[]
+                else if (separate) ...[
                   cell('하루 참가', head: true),
                   cell('숙박 1박', head: true),
                 ] else ...[
@@ -399,7 +405,9 @@ class _FeeTable extends StatelessWidget {
                     ),
                   ),
                   cell(money(fullOf(ag))),
-                  if (separate) ...[
+                  if (dateless)
+                    ...[]
+                  else if (separate) ...[
                     cell(money(f.dayOnly[ag] ?? 0)),
                     cell(money(f.lodging[ag] ?? 0)),
                   ] else ...[
@@ -414,9 +422,11 @@ class _FeeTable extends StatelessWidget {
         for (final line in [
           if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
           if (byAge && !g.requires('birthYear')) '출생연도를 비워 두면 성인 금액으로 계산합니다.',
-          if (f.fullDiscountPct > 0)
+          if (f.fullDiscountPct > 0 && !dateless)
             '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
-          if (separate) ...[
+          if (dateless)
+            ...[]
+          else if (separate) ...[
             '참가비와 숙박비를 따로 받습니다. 숙박비는 묵는 밤마다 받습니다.',
             '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다.',
           ] else
@@ -425,8 +435,10 @@ class _FeeTable extends StatelessWidget {
             '사전등록 할인: ${mdw(daysBefore(g.start, e.fromDays))} ~ '
                 '${mdw(daysBefore(g.start, e.toDays))} 신청 시 ${e.pct}%',
           if (f.perRegistration > 0)
-            '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
-          if (n > 0)
+            dateless
+                ? '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다. 모두 미참가면 받지 않습니다.'
+                : '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
+          if (n > 0 && !dateless)
             for (final d in g.days)
               if (f.isFreeDay(d) && !g.isOff(d))
                 separate
@@ -647,25 +659,31 @@ class _ApplyPageState extends State<ApplyPage> {
   /// 운영자 접수는 빨리 넣도록 전체 참석으로 시작한다.
   Set<DateTime>? get _newDays => widget.admin || g.nights == 0 ? null : {};
 
+  /// 참석일을 정했다. 날짜 없는 집회는 [참가]/[미참가] 중 하나가 늘 골라져 있다
+  /// (미참가 = 고른 날 없음 `{}` 이지만 제출할 수 있다).
+  bool _picked(_PersonForm f) => g.dateless || f.picked;
+
   /// 금액 미리보기용. 아직 참석일을 하나도 안 고른 사람은 빼서 가족당 금액만 뜨지 않게 한다.
+  /// 날짜 없는 집회의 미참가자는 넣는다 — 0원 줄로 보이고 전원 미참가면 그룹당 금액도 빠진다.
   List<Person> get _people => [
     for (final f in forms)
-      if (f.picked) ?f.toPerson(g),
+      if (_picked(f)) ?f.toPerson(g),
   ];
 
   /// 합계 대신 보일 안내. 날짜를 안 고른 사람이 있으면 다른 사람 금액이 떠도 알린다
   /// (그 사람이 빠진 합계라서). null = 인원 요약을 보인다.
-  String? _quoteHint(Quote q) => !forms.every((f) => f.picked)
+  String? _quoteHint(Quote q) => !forms.every(_picked)
       ? (free ? '참석하는 날을 고르세요' : '참석하는 날을 고르면 금액이 계산됩니다')
       : q.lines.isEmpty && !free
       ? '출생연도를 넣으면 금액이 계산됩니다'
       : null;
 
-  void _addCompanion() => setState(
-    () => forms.add(
-      _PersonForm(copyFrom: forms.first)..birth.addListener(_changed),
-    ),
-  );
+  void _addCompanion() => setState(() {
+    final f = _PersonForm(copyFrom: forms.first)..birth.addListener(_changed);
+    // 날짜 없는 집회의 새 사람은 [참가]로 시작한다 (신청자가 미참가여도).
+    if (g.dateless) f.days = null;
+    forms.add(f);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -930,7 +948,9 @@ class _ApplyPageState extends State<ApplyPage> {
           Align(
             alignment: Alignment.centerRight,
             child: Text(
-              line.separate
+              g.dateless && line.days.isEmpty
+                  ? '${line.stay} · ${won(line.amount)}'
+                  : line.separate
                   ? '${line.group.label} · ${line.stay} · '
                         '참가 ${won(line.participation)} + 숙박 ${won(line.lodging)}'
                   : '${line.group.label} · ${line.stay} · ${won(line.amount)}',
@@ -958,6 +978,7 @@ class _ApplyPageState extends State<ApplyPage> {
   );
 
   Widget _schedule(_PersonForm f) {
+    if (g.dateless) return _attendChoice(f);
     if (g.fee.lodgingSeparate) return _stayTable(f);
     final days = g.days;
     return Column(
@@ -1017,6 +1038,42 @@ class _ApplyPageState extends State<ApplyPage> {
               style: TextStyle(fontSize: 12, color: AppColors.danger),
             ),
         ],
+      ],
+    );
+  }
+
+  /// 날짜 없는 집회의 참가 여부 — [참가] = 전체 참석(`days` null), [미참가] = 고른 날 없음(`{}`).
+  Widget _attendChoice(_PersonForm f) {
+    final who = f.name.text.trim().isEmpty
+        ? (f.applicant ? '신청자' : '동반 참석자')
+        : f.name.text.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        const Text(
+          '참가 여부',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textMuted,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Semantics(
+          label: '$who 참가 여부',
+          child: SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: true, label: Text('참가')),
+              ButtonSegment(value: false, label: Text('미참가')),
+            ],
+            selected: {f.full},
+            onSelectionChanged: (v) =>
+                setState(() => f.days = v.first ? null : {}),
+          ),
+        ),
+        const SizedBox(height: 8),
       ],
     );
   }
@@ -1195,7 +1252,7 @@ class _ApplyPageState extends State<ApplyPage> {
     final formOk = formKey.currentState!.validate();
     final genderOk =
         !g.requires('gender') || forms.every((f) => f.gender != null);
-    final daysOk = forms.every((f) => f.picked);
+    final daysOk = forms.every(_picked);
     // 체크 칸이 필수면 체크해야 신청된다 (스탭만 받는 집회).
     final staffOk = !g.requires('staff') || forms.every((f) => f.staff);
     if (!formOk ||
@@ -1658,7 +1715,7 @@ class _LookupPageState extends State<LookupPage> {
       ),
       if (r.status != RegStatus.cancelled)
         _Section(
-          title: '참석 일정',
+          title: g.dateless ? '참가 여부' : '참석 일정',
           children: [for (final l in q.lines) _StayRow(l)],
         ),
       if (g.isHomestay && r.status == RegStatus.confirmed)
@@ -1788,17 +1845,28 @@ class _StayRow extends StatelessWidget {
               ),
             ),
             Text(
-              line.full && !line.separate ? '전체 참석' : line.stay,
+              // 날짜 없는 집회는 '참가'(초록) / '미참가'(회색). 날짜 줄도 없다.
+              line.dateless
+                  ? line.stay
+                  : line.full && !line.separate
+                  ? '전체 참석'
+                  : line.stay,
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
-                color: line.full ? AppColors.ok : AppColors.brand,
+                color: line.dateless && line.days.isEmpty
+                    ? AppColors.textMuted
+                    : line.full
+                    ? AppColors.ok
+                    : AppColors.brand,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        if (line.days.isEmpty)
+        if (!line.dateless) const SizedBox(height: 4),
+        if (line.dateless)
+          ...[]
+        else if (line.days.isEmpty)
           const Text(
             '참석하는 날이 없습니다.',
             style: TextStyle(fontSize: 12.5, color: AppColors.danger),

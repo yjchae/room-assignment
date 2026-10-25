@@ -356,6 +356,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
 
     x.name = name.text.trim();
     if (x.name.isEmpty) errs.add('집회 이름을 입력하세요.');
+    if (x.dateless) x.end = x.start; // 기준일 하나 (start = end)
     if (x.end.isBefore(x.start)) errs.add('종료일이 시작일보다 빠릅니다.');
     x.place = _opt(place);
     x.address = _opt(address);
@@ -388,21 +389,28 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     }
     x.fee = FeeRule(
       full: column('full'),
-      perNight: column('perNight'),
-      dayOnly: column('dayOnly'),
+      // 날짜 없는 집회는 숨긴 1박당·당일·숙박비를 비운다 (화면의 참가비만으로 금액·무료가 정해지게).
+      perNight: x.dateless ? {} : column('perNight'),
+      dayOnly: x.dateless ? {} : column('dayOnly'),
       minAge: {...FeeRule.defaultMinAge, ...minAge},
       perRegistration: number(perReg.text, '가족당 금액') ?? 0,
-      fullDiscountPct: number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
+      // 날짜 없는 집회는 전체 참석 할인을 숨기고 0 으로 둔다 (참가 = 전체 참석이라 늘 걸린다).
+      fullDiscountPct: x.dateless
+          ? 0
+          : number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
       // 스위치를 숨기는 집회(하루짜리·홈스테이)는 끈다 — 날짜를 줄여 숨겨진 뒤에도 켜진 채 남지 않게.
       lodgingSeparate:
           x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
-      lodging: column('lodging'),
+      lodging: x.dateless ? {} : column('lodging'),
       // 일정 없는 날로 끈 날은 무료 날에서도 뺀다 (화면에선 꺼져 보이는데 0원으로 계산되지 않게).
-      freeDays: [
-        for (final d in x.fee.freeDays)
-          if (!x.isOff(d)) d,
-      ],
+      // 날짜 없는 집회는 무료 날을 비운다 (화면에 안 보이는 규칙으로 0원이 되지 않게).
+      freeDays: x.dateless
+          ? []
+          : [
+              for (final d in x.fee.freeDays)
+                if (!x.isOff(d)) d,
+            ],
     );
     x.schedule = [
       for (final l in lines)
@@ -531,7 +539,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       );
     }
     final x = g!;
-    final cols = _feeColsFor(separate: x.fee.lodgingSeparate);
+    // 날짜 없는 집회는 시작 나이와 `참가비`(키 full) 두 열뿐이다.
+    final cols = x.dateless
+        ? {'minAge': _feeCols['minAge']!, 'full': '참가비'}
+        : _feeColsFor(separate: x.fee.lodgingSeparate);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -617,6 +628,21 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                           label: Text(x.kind.label),
                         ),
                       ),
+                      if (x.dateless) ...[
+                        const SizedBox(width: 8),
+                        // 만들 때만 정한다 — 바꾸면 이미 받은 신청이 미참가로 보인다.
+                        const Tooltip(
+                          message: '날짜를 고르지 않고 사람마다 참가/미참가만 받습니다. 바꿀 수 없습니다.',
+                          child: Chip(
+                            avatar: Icon(
+                              Icons.event_busy_outlined,
+                              size: 16,
+                              color: AppColors.textMuted,
+                            ),
+                            label: Text('날짜 없음'),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -654,26 +680,51 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     spacing: 8,
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.event, size: 18),
-                        label: Text(
-                          '${x.start.year}-${mdw(x.start)} ~ ${mdw(x.end)}',
-                        ),
-                        onPressed: () async {
-                          final r = await pickRange(context, x.start, x.end);
-                          if (r == null) return;
-                          setState(() {
-                            x.start = r.start;
-                            x.end = r.end;
-                          });
-                        },
-                      ),
-                      Text(
-                        stayLabel(x.nights),
-                        style: const TextStyle(color: AppColors.textMuted),
-                      ),
-                    ],
+                    children: x.dateless
+                        ? [
+                            // 날짜 없는 집회는 기준일 하나 (start = end).
+                            OutlinedButton.icon(
+                              icon: const Icon(Icons.event, size: 18),
+                              label: Text(
+                                '기준일 ${x.start.year}-${mdw(x.start)}',
+                              ),
+                              onPressed: () async {
+                                final d = await pickDate(context, x.start);
+                                if (d == null) return;
+                                setState(() => x.start = x.end = d);
+                              },
+                            ),
+                            const Text(
+                              '신청 웹에 보이지 않습니다. 나이 계산·사전등록 할인 기준입니다.',
+                              style: TextStyle(color: AppColors.textMuted),
+                            ),
+                          ]
+                        : [
+                            OutlinedButton.icon(
+                              icon: const Icon(Icons.event, size: 18),
+                              label: Text(
+                                '${x.start.year}-${mdw(x.start)} ~ ${mdw(x.end)}',
+                              ),
+                              onPressed: () async {
+                                final r = await pickRange(
+                                  context,
+                                  x.start,
+                                  x.end,
+                                );
+                                if (r == null) return;
+                                setState(() {
+                                  x.start = r.start;
+                                  x.end = r.end;
+                                });
+                              },
+                            ),
+                            Text(
+                              stayLabel(x.nights),
+                              style: const TextStyle(
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ],
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -708,15 +759,17 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     ),
                   ),
                 ]),
-                _card('일정표', [
-                  const Text(
-                    '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.\n'
-                    '토글을 끈 날은 일정 없는 날로, 신청자가 부분 참석 날짜로 고를 수 없습니다.',
-                    style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 4),
-                  for (final d in x.days) _scheduleDay(x, d),
-                ]),
+                // 날짜 없는 집회는 일정표를 쓰지 않는다 (적어 둔 항목은 지우지 않고 숨긴다).
+                if (!x.dateless)
+                  _card('일정표', [
+                    const Text(
+                      '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.\n'
+                      '토글을 끈 날은 일정 없는 날로, 신청자가 부분 참석 날짜로 고를 수 없습니다.',
+                      style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final d in x.days) _scheduleDay(x, d),
+                  ]),
                 _card('이미지', [
                   Wrap(
                     spacing: 20,
@@ -735,7 +788,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                 _card('회비', [
                   // 기본은 꺼짐 — 끈 동안은 예전 방식 그대로 (§22). 하루짜리는 밤이 없고,
                   // 홈스테이 신청자는 재워 주는 가정이라 숙박비가 뜻이 없다.
-                  if (x.nights > 0 && !x.isHomestay) ...[
+                  if (x.nights > 0 && !x.isHomestay && !x.dateless) ...[
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('숙박비 별도'),
@@ -796,7 +849,9 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    x.fee.lodgingSeparate
+                    x.dateless
+                        ? '나이는 연 나이(기준일 연도 − 출생연도)입니다. 참가하는 사람만 참가비를 받고, 미참가는 받지 않습니다.'
+                        : x.fee.lodgingSeparate
                         ? '나이는 연 나이(집회 연도 − 출생연도)입니다. 참가비는 전체 참석을 비워 두면 하루 참가 × ${x.days.length}일로 계산하고, '
                               '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다. 숙박비는 묵는 밤마다 숙박 1박 금액을 받습니다.'
                         : '나이는 연 나이(집회 연도 − 출생연도)입니다. 전체 참석을 비워 두면 1박당 × ${x.nights}박으로 계산하고, '
@@ -818,8 +873,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       ),
                     ),
                   ),
-                  // 하루짜리 집회는 그 하루가 곧 전체 참석이라 뜻이 없다.
-                  if (x.nights > 0) ...[
+                  // 하루짜리 집회는 그 하루가 곧 전체 참석이라 뜻이 없다 (날짜 없는 집회도).
+                  if (x.nights > 0 && !x.dateless) ...[
                     const SizedBox(height: 20),
                     const Text(
                       '당일 무료인 날',
@@ -859,30 +914,39 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   ],
                 ]),
                 _card('할인', [
-                  const Text(
-                    '전체 참석 할인',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                  ),
-                  const Text(
-                    '집회 기간 전체를 참석하는 사람의 금액에만 적용합니다.',
-                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: SizedBox(
-                      width: 220,
-                      child: TextField(
-                        controller: fullPct,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: '할인율',
-                          suffixText: '%',
+                  // 날짜 없는 집회는 참가 = 전체 참석이라 전체 참석 할인을 숨긴다 (저장 때 0).
+                  if (!x.dateless) ...[
+                    const Text(
+                      '전체 참석 할인',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Text(
+                      '집회 기간 전체를 참석하는 사람의 금액에만 적용합니다.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        width: 220,
+                        child: TextField(
+                          controller: fullPct,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: '할인율',
+                            suffixText: '%',
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
+                    const SizedBox(height: 20),
+                  ],
                   const Text(
                     '사전등록 할인',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),

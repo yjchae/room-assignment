@@ -638,7 +638,7 @@ Future<void> _downloadCsv(BuildContext context) async {
       fileName: '${name}_참석자_${ymd(DateTime.now())}.csv',
       // BOM 이 있어야 엑셀이 한글을 UTF-8 로 읽는다.
       bytes: utf8.encode(
-        '﻿${attendeesCsv(store.event, store.everyone(g, regs))}',
+        '﻿${attendeesCsv(store.event, g?.dateless == true ? store.event.attendees : store.everyone(g, regs), g?.dateless != true)}',
       ),
       mimeType: 'text/csv',
       type: FileType.custom,

@@ -55,6 +55,8 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 - 신청자는 `lookup_registration` 이 같이 돌려주는 `assigned`(`schema.sql` 의 `_assigned`)로 자기 집에 배정된 사람을 본다. 운영자 메모는 빼고 준다.
 - 화면은 같은 걸 쓰고 이름만 바꾼다(`방 관리 → 가정 관리`). 홈스테이의 [신청에서 가져오기]는 참석자 화면이 아니라 **가정 관리** 화면에 있다.
 
+**날짜 없는 집회** (`Gathering.dateless`, `gatherings.dateless`): 날짜 대신 사람마다 [참가][미참가]만 받는 집회. 구분이 집회일 때 만들 때만 정한다. 안쪽은 하루짜리 집회(start = end = 기준일)이고 신청 데이터는 새 칸 없이 `Person.days`(참가 = null, 미참가 = `[]`)에 담는다. `quote(dateless: true)` 가 참가 = 참가비(`full`, 비면 `dayOnly`)·미참가 = 0원으로 세고 무료 날·숙박비 별도는 보지 않으며, 전원 미참가면 `Quote.noShow`(그룹당 금액·입금 없음). `Store._wanted` 는 이 집회에서만 0박 참가자도 참석자로 가져온다 — 기존 하루짜리 집회는 그대로 안 가져온다. 방 추가는 이름('1조')도 받는다(`addRoomRange(names: true)`). 화면 판정은 `current.value?.dateless == true` 하나. `toRow` 는 켰을 때만 키를 쓴다. 요구사항은 `PLAN_GATHERING.md` §25.
+
 **기간을 나눈 참석자** (`Attendee.splitOf`): 한 사람이 기간별로 다른 방(홈스테이는 다른 집)에 묵으면 참석자 행이 조각으로 나뉜다. `Store.splitStay`(경계 날짜로 자르기)·`assignRange`(고른 기간만 배정, 나머지는 미배정 조각)가 만들고, 같은 사람은 `Attendee.personId` 로 묶어 화면에서 한 줄로 그린다. 조각도 제 일정을 가진 보통 참석자라 정원·보드·자동배정은 손댈 필요가 없다. 나뉜 조각은 `registrationId` 를 떼고 원본에 `editedByAdmin` 을 붙여 [신청에서 가져오기]가 되돌리지 않게 한다.
 
 **신청서 추가 항목 형식** (`FieldSpec`, `models.dart`): 텍스트·숫자·체크박스·셀렉트박스(보기 목록)·토글 버튼. 이름처럼 방배정 문서(`Event.fieldSpecs`)에 살다가 집회 설정 [저장] 때 `gatherings.field_specs` 로 복사된다. 키가 없으면 텍스트, 값은 형식과 상관없이 `extra` 의 문자열 하나(켜고 끄는 형식은 `fieldOn`='예'). 신청 웹·참석자 편집 창은 `widgets/custom_field_input.dart` 의 `CustomFieldInput` 하나로 그리고, 추가·고치기는 `attendees.dart` 의 `_customFieldDialog` 하나다. `field_specs` 는 칸이 있는 DB 에서 읽었거나 형식이 있을 때만 보낸다(schema.sql 전 DB 에서도 저장이 안 깨지게). 요구사항은 `PLAN_GATHERING.md` §21.

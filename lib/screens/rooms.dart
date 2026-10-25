@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../main.dart';
 import '../models.dart';
+import '../store.dart' show parseRoomRange;
 import '../theme.dart';
 import '../widgets/room_board.dart' show RoomBoard, RoomLegend;
 import 'attendees.dart' show importRegistrations;
@@ -124,6 +125,8 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
   final messenger = ScaffoldMessenger.of(context);
   // 홈스테이는 방이 가정이다 — 이름이 호수가 아니라서 범위(301-310)로 만들지 않는다.
   final homestay = current.value?.isHomestay == true;
+  // 날짜 없는 집회는 방(그룹)을 이름으로도 만든다 ('1조', '찬양팀').
+  final dateless = current.value?.dateless == true;
 
   final action = await showDialog<String>(
     context: context,
@@ -157,12 +160,19 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
                 controller: noCtl,
                 autofocus: true,
                 decoration: InputDecoration(
-                  labelText: homestay ? '가정 이름' : '호수',
+                  labelText: homestay
+                      ? '가정 이름'
+                      : dateless
+                      ? '방·그룹 이름'
+                      : '호수',
                   helperText: homestay
                       ? '보통은 [신청에서 가져오기]로 신청자 이름이 들어옵니다.'
-                      : room == null
-                      ? '범위 가능: 301-310, 401'
-                      : null,
+                      : room != null
+                      ? null
+                      : dateless
+                      ? '범위 가능: 301-310 · 이름도 됩니다: 1조, 찬양팀'
+                      : '범위 가능: 301-310, 401',
+                  helperMaxLines: dateless ? 2 : null,
                 ),
               ),
               TextField(
@@ -289,14 +299,24 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
     return;
   }
 
+  final name = noCtl.text.trim();
+  if (dateless && name.isEmpty) return;
   final (made, skipped) = store.addRoomRange(
     noCtl.text,
     capacity: cap,
     building: building,
     gender: gender,
     note: note,
+    names: dateless,
   );
-  if (made == 0 && skipped == 0) {
+  // 날짜 없는 집회는 호수로 못 읽은 입력('1조')을 이름 방 하나로 만든다.
+  if (dateless && name.isNotEmpty && parseRoomRange(name).isEmpty) {
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(made > 0 ? '$name 방을 추가했습니다.' : '$name 방이 이미 있습니다.'),
+      ),
+    );
+  } else if (made == 0 && skipped == 0) {
     messenger.showSnackBar(
       const SnackBar(content: Text('호수를 인식하지 못했습니다. 예: 301 또는 301-310')),
     );

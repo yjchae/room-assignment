@@ -9,6 +9,7 @@ import 'package:room_assignment/gathering.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/remote.dart';
 import 'package:room_assignment/store.dart';
+import 'package:room_assignment/theme.dart' show RoomStatus, statusOf;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 final start = DateTime(2026, 10, 9);
@@ -1399,6 +1400,200 @@ void main() {
       final back = Gathering.fromRow(row);
       expect(back.fee.lodgingSeparate, isFalse);
       expect({...back.toRow(), 'id': 'g1'}, row);
+    });
+  });
+
+  group('날짜 없는 집회 (PLAN_GATHERING §25)', () {
+    // 기준일 하나 (start = end).
+    Gathering dateless() => Gathering(
+      id: 'g1',
+      name: '참가 조사',
+      start: start,
+      end: start,
+      dateless: true,
+    );
+    Person going(String n) => person(n, 1985); // days null = 참가
+    Person absent(String n) => person(n, 1985)..days = [];
+
+    /// 집회를 열 때처럼 기간을 반영한 Store (기준일 ~ 다음 날, 1박).
+    Store opened(Gathering g) => tmpStore()..applyGathering(g);
+
+    test('JSON: 켠 집회는 왕복, 기존 집회 행에는 dateless 키가 안 생긴다', () {
+      final on = Gathering.fromRow({...dateless().toRow(), 'id': 'g1'});
+      expect(on.dateless, isTrue);
+      expect(on.toRow()['dateless'], isTrue);
+      for (final g in [sample(), homestay()]) {
+        final row = {...g.toRow(), 'id': g.id};
+        expect(row.containsKey('dateless'), isFalse);
+        final back = Gathering.fromRow(row);
+        expect(back.dateless, isFalse);
+        expect({...back.toRow(), 'id': g.id}, row);
+      }
+      // 칸이 생긴 뒤 서버가 돌려준 false 도 그대로 꺼짐, 다시 써도 키가 없다.
+      final old = Gathering.fromRow({
+        ...sample().toRow(),
+        'id': 'g1',
+        'dateless': false,
+      });
+      expect(old.dateless, isFalse);
+      expect(old.toRow().containsKey('dateless'), isFalse);
+    });
+
+    test('0박 참가자(입금대기 포함)를 가져오고 미참가는 뺀다. 두 번 불러도 같다', () {
+      final g = dateless();
+      final s = opened(g);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [going('아빠'), absent('엄마')]),
+        reg('r2', RegStatus.pending, [going('대기')]),
+        reg('r3', RegStatus.cancelled, [going('취소')]),
+      ];
+      final r = s.syncRegistrations(g, regs);
+      expect((r.added, r.removed, r.dayOnly), (2, 0, 1)); // dayOnly = 미참가 수
+      expect(s.event.attendees.map((a) => a.name), ['아빠', '대기']);
+      final dad = s.event.attendees.first;
+      expect((dad.checkIn, dad.checkOut), (start, start));
+      final again = s.syncRegistrations(g, regs);
+      expect((again.added, again.updated, again.removed), (0, 0, 0));
+      expect(s.syncFromRegistrations(g, regs), (added: 0, removed: 0));
+      expect(s.event.attendees, hasLength(2));
+      expect(s.everyone(g, regs).map((a) => a.name), [
+        '아빠',
+        '대기',
+      ], reason: '미참가는 오는 사람 명단에도 없다');
+    });
+
+    test('참가 → 미참가: 방 없으면 자동으로 빠지고, 방 있으면 경고로 넘긴다', () {
+      final g = dateless();
+      final s = opened(g);
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [going('가'), going('나')]),
+      ]);
+      s.event.rooms.add(Room(id: 'g1조', roomNo: '1조', capacity: 4));
+      s.event.attendees.firstWhere((a) => a.name == '나').roomId = 'g1조';
+      final changed = [
+        reg('r1', RegStatus.confirmed, [absent('가'), absent('나')]),
+      ];
+      expect(s.syncWouldRemove(g, changed).map((a) => a.name), ['나']);
+      s.syncFromRegistrations(g, changed);
+      expect(s.event.attendees.map((a) => a.name), ['나']);
+    });
+
+    test('이름 방(1조)의 정원은 0박 참가자를 1명씩 센다 — 정원 4에 5명이면 초과', () {
+      final g = dateless();
+      final s = opened(g);
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [
+          for (final n in ['가', '나', '다', '라', '마']) going(n),
+        ]),
+      ]);
+      final room = Room(id: 'r1조', roomNo: '1조', capacity: 4);
+      s.event.rooms.add(room);
+      expect(room.floor, isNull);
+      s.assignAll(s.event.attendees.take(4), room.id);
+      expect(s.peakOccupancy(room), 4);
+      s.assignAll(s.event.attendees, room.id);
+      expect(s.peakOccupancy(room), 5);
+      expect(
+        statusOf(used: s.peakOccupancy(room), capacity: 4),
+        RoomStatus.over,
+      );
+    });
+
+    test('자동배정이 이름 방(호수 없음)에 0박 참가자를 채운다', () {
+      final g = dateless();
+      final s = opened(g);
+      s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [
+          for (final n in ['가', '나', '다', '라', '마']) going(n),
+        ]),
+      ]);
+      s.event.rooms
+        ..add(Room(id: 'a', roomNo: '1조', capacity: 3))
+        ..add(Room(id: 'b', roomNo: '찬양팀', capacity: 3));
+      final res = autoAssign(s.event, AutoRule());
+      expect(res.unplaced, isEmpty);
+      expect(res.assignments, hasLength(5));
+      final per = <String, int>{};
+      for (final x in res.assignments) {
+        per[x.room.id] = (per[x.room.id] ?? 0) + 1;
+      }
+      expect(per.values.every((n) => n <= 3), isTrue);
+    });
+
+    test('방 추가: names 면 이름 그대로 하나(같은 이름은 건너뜀), 숫자 범위는 지금처럼', () {
+      final s = tmpStore();
+      expect(s.addRoomRange('1조', capacity: 4, names: true), (1, 0));
+      expect(s.addRoomRange(' 1조 ', capacity: 4, names: true), (0, 1));
+      expect(s.addRoomRange('301-303', capacity: 4, names: true), (3, 0));
+      expect(s.event.rooms.map((r) => r.label), ['1조', '301', '302', '303']);
+      // 날짜 있는 집회(names 끔)는 지금처럼 호수로 못 읽으면 아무것도 안 만든다.
+      expect(s.addRoomRange('2조', capacity: 4), (0, 0));
+      expect(s.addRoomRange('   ', capacity: 4, names: true), (0, 0));
+    });
+
+    test('attendeeRows(dates: false) 는 체크인·체크아웃 칸을 뺀다. 기본은 그대로', () {
+      final s = tmpStore();
+      s.syncRegistrations(sample()..fee = FeeRule(), [
+        reg('r1', RegStatus.confirmed, [going('가')]),
+      ]);
+      final withDates = attendeeRows(s.event, s.event.attendees);
+      expect(withDates.first, containsAll(['체크인', '체크아웃']));
+      expect(withDates.first.length, withDates.last.length);
+      final without = attendeeRows(s.event, s.event.attendees, dates: false);
+      expect(without.first, isNot(contains('체크인')));
+      expect(without.first, isNot(contains('체크아웃')));
+      expect(without.first.length, withDates.first.length - 2);
+      expect(without.last.length, without.first.length);
+      expect(without.last.last, withDates.last.last); // 입금 칸은 그대로 끝
+    });
+  });
+
+  group('기존 집회 회귀 — 날짜 없는 집회 기능의 사이드 이펙트 없음', () {
+    test('기존 하루짜리 집회(dateless 끔)는 지금처럼 아무도 참석자로 안 가져온다', () {
+      final g = sample()
+        ..end = start
+        ..fee = FeeRule();
+      final s = tmpStore()..applyGathering(g);
+      final regs = [
+        reg('r1', RegStatus.confirmed, [person('가', 1985), person('나', 1990)]),
+      ];
+      final r = s.syncRegistrations(g, regs);
+      expect((r.added, r.dayOnly), (0, 2));
+      expect(s.event.attendees, isEmpty);
+      expect(s.everyone(g, regs).map((a) => a.name), [
+        '가',
+        '나',
+      ], reason: '당일 참석자로 명단에는 지금처럼 보인다');
+    });
+
+    test('여러 날 집회: days [] 인 사람·당일만 오는 사람은 지금처럼 안 가져온다', () {
+      final g = sample()..fee = FeeRule();
+      final s = tmpStore();
+      final r = s.syncRegistrations(g, [
+        reg('r1', RegStatus.confirmed, [
+          person('전체', 1985),
+          person('빈날', 1985)..days = [],
+          person('토요일', 1985)..days = [DateTime(2026, 10, 10)],
+        ]),
+      ]);
+      expect((r.added, r.dayOnly), (1, 2));
+      final a = s.event.attendees.single;
+      expect((a.name, a.checkIn, a.checkOut), ('전체', start, end));
+    });
+
+    test('홈스테이는 그대로 가정을 만든다 (dateless 키 없음)', () {
+      final s = tmpStore();
+      final h = homestay();
+      expect(h.dateless, isFalse);
+      s.syncFromRegistrations(h, [homeReg('1', '김집사', capacity: '3')]);
+      expect(s.event.attendees, isEmpty);
+      expect(s.event.rooms.single.roomNo, '김집사');
+    });
+
+    test('addRoomRange 기본값(names 끔)은 숫자 호수만 만든다', () {
+      final s = tmpStore();
+      expect(s.addRoomRange('301-302, 1조', capacity: 4), (2, 0));
+      expect(s.event.rooms.map((r) => r.label), ['301', '302']);
     });
   });
 }

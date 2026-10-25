@@ -91,6 +91,7 @@ set request.jwt.claim.sub = '';
 
 select t.ok((select count(*) from room.gatherings) = 3, '누구나 집회를 읽는다');
 select t.ok((select bool_and(field_specs = '{}') from room.gatherings), '추가 항목 형식 칸은 기본이 {} (모두 텍스트)');
+select t.ok((select bool_and(not dateless) from room.gatherings), '날짜 없는 집회 칸은 기본이 false (기존 집회 그대로)');
 select t.err($q$insert into room.gatherings (name, start_date, end_date) values ('x', '2026-01-01', '2026-01-02')$q$,
              'permission denied');
 select t.err($q$update room.gatherings set open = true$q$, 'permission denied');

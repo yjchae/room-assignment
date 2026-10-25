@@ -766,6 +766,8 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
     var end = start.add(const Duration(days: 2));
     String? err;
     var kind = GatheringKind.gathering;
+    // 날짜 없이 참가/미참가만 받는다 (구분이 집회일 때만). 켜면 기간 대신 기준일 하나, end = start.
+    var dateless = false;
     // 과거 집회에서 가져오기. null = 새로 시작.
     Gathering? src;
     var copySettings = true, copyRooms = true, copyPeople = false;
@@ -804,7 +806,14 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                       ),
                     ],
                     selected: {kind},
-                    onSelectionChanged: (v) => setLocal(() => kind = v.first),
+                    onSelectionChanged: (v) => setLocal(() {
+                      kind = v.first;
+                      // 홈스테이와 같이 쓰지 않는다 — 갔다 오면 꺼져 있다.
+                      if (kind != GatheringKind.gathering && dateless) {
+                        dateless = false;
+                        end = start.add(const Duration(days: 2));
+                      }
+                    }),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(2, 8, 2, 12),
@@ -812,6 +821,8 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                       kind == GatheringKind.homestay
                           ? '신청자가 재워 줄 가정입니다. 확정하면 그 이름으로 방이 생기고, '
                                 '운영자가 등록한 참석자를 그 방에 배치합니다.'
+                          : dateless
+                          ? '신청자 중 참가하는 사람이 참석자가 됩니다. 방(그룹)은 이름으로도 만들 수 있습니다.'
                           : '신청자가 참석자가 됩니다. 방은 운영자가 호수로 만듭니다.',
                       style: const TextStyle(
                         fontSize: 12,
@@ -820,6 +831,23 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                       ),
                     ),
                   ),
+                  if (kind == GatheringKind.gathering)
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('날짜 없이 신청 받기'),
+                      subtitle: const Text(
+                        '날짜를 고르지 않고 사람마다 참가/미참가만 받습니다. 나중에 바꿀 수 없습니다.',
+                      ),
+                      value: dateless,
+                      onChanged: (x) => setLocal(() {
+                        dateless = x == true;
+                        end = dateless
+                            ? start
+                            : start.add(const Duration(days: 2));
+                      }),
+                    ),
                   if (list.isNotEmpty) ...[
                     DropdownButtonFormField<Gathering?>(
                       initialValue: src,
@@ -845,6 +873,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                         src = x;
                         if (x == null) return;
                         kind = x.kind;
+                        dateless = x.dateless;
                         if (name.text.trim().isEmpty) name.text = x.name;
                         end = DateTime(
                           start.year,
@@ -878,19 +907,33 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('기간'),
-                    trailing: Text('${start.year}-${mdw(start)} ~ ${mdw(end)}'),
-                    onTap: () async {
-                      final r = await pickRange(context, start, end);
-                      if (r == null) return;
-                      setLocal(() {
-                        start = r.start;
-                        end = r.end;
-                      });
-                    },
-                  ),
+                  if (dateless)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('기준일'),
+                      trailing: Text('${start.year}-${mdw(start)}'),
+                      onTap: () async {
+                        final d = await pickDate(context, start);
+                        if (d == null) return;
+                        setLocal(() => start = end = d);
+                      },
+                    )
+                  else
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('기간'),
+                      trailing: Text(
+                        '${start.year}-${mdw(start)} ~ ${mdw(end)}',
+                      ),
+                      onTap: () async {
+                        final r = await pickRange(context, start, end);
+                        if (r == null) return;
+                        setLocal(() {
+                          start = r.start;
+                          end = r.end;
+                        });
+                      },
+                    ),
                   Text(
                     src != null && copySettings
                         ? '포스터·배경 이미지와 신청 받기·마감일은 복사하지 않습니다. 만든 뒤 [집회 설정]에서 확인하세요.'
@@ -924,6 +967,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
       ),
     );
     if (ok != true) return;
+    if (dateless) end = start; // 날짜 없는 집회는 하루짜리 (start = end = 기준일)
     final n = name.text.trim();
     final from = src;
     try {
@@ -937,6 +981,18 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
               ..backgroundUrl = null)
           : Gathering(name: n, start: start, end: end);
       base.kind = kind;
+      // 날짜 없는 집회는 날짜에 붙는 회비 규칙을 끈다 — 화면에 안 보이는 규칙으로 금액이 바뀌지 않게.
+      base.dateless = dateless;
+      if (dateless) {
+        base.fee
+          ..lodgingSeparate = false
+          ..fullDiscountPct = 0
+          ..freeDays = []
+          // 1박당·당일·숙박비도 화면에 없다 — 참가비(full)만으로 금액·무료가 정해지게 비운다.
+          ..perNight = {}
+          ..dayOnly = {}
+          ..lodging = {};
+      }
       // 숙박비 별도는 홈스테이에 뜻이 없고 스위치도 숨는다 — 집회에서 설정을 복사해도 끈다.
       if (base.isHomestay) base.fee.lodgingSeparate = false;
       // 홈스테이는 수용 인원을 받아야 방 정원이 정해진다. 신청서 항목으로 넣어 둔다.
@@ -1028,13 +1084,16 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
                     for (final g in list)
                       _GatheringCard(
                         name: g.name,
-                        dates:
-                            '${g.start.year}-${mdw(g.start)} ~ ${mdw(g.end)} · ${stayLabel(g.nights)}',
+                        dates: g.dateless
+                            ? '참가 신청 · 기준일 ${g.start.year}-${mdw(g.start)}'
+                            : '${g.start.year}-${mdw(g.start)} ~ ${mdw(g.end)} · ${stayLabel(g.nights)}',
                         place: g.place,
                         imageUrl: g.backgroundUrl,
                         badges: [
                           if (g.isHomestay)
                             const _Badge('홈스테이', AppColors.brand),
+                          if (g.dateless)
+                            const _Badge('날짜 없음', AppColors.brand),
                           g.acceptingOn(DateTime.now())
                               ? const _Badge('신청 받는 중', AppColors.ok)
                               : const _Badge('신청 닫힘', AppColors.textMuted),

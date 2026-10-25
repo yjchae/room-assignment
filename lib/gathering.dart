@@ -382,6 +382,7 @@ class Gathering {
     this.id = '',
     required this.name,
     this.kind = GatheringKind.gathering,
+    this.dateless = false,
     required this.start,
     required this.end,
     List<String>? themes,
@@ -425,6 +426,11 @@ class Gathering {
   /// 집회냐 홈스테이냐. 홈스테이는 확정한 신청마다 방이 생긴다 (store.syncHomestayRooms).
   GatheringKind kind;
   bool get isHomestay => kind == GatheringKind.homestay;
+
+  /// 날짜 없이 참가/미참가만 받는 집회. 만들 때만 정한다 (PLAN_GATHERING §25).
+  /// 안쪽은 하루짜리 집회(start = end, 기준일)이고, 참가 = `Person.days` null, 미참가 = `[]`.
+  /// 0박 참가자도 참석자로 가져와 방(그룹)에 배정한다 (`Store._wanted`).
+  bool dateless;
   DateTime start, end;
   List<String> themes;
 
@@ -516,7 +522,8 @@ class Gathering {
 
   /// 이 신청에 입금이 없는가 — 무료 집회이거나 무료 날 당일로만 오는 신청.
   /// 할인으로 0원이 된 신청은 아니다 (입금 확인 흐름 그대로).
-  bool freeFor(Quote q) => fee.isFree || q.freeDayOnly;
+  /// 날짜 없는 집회에서 전원 미참가인 신청도 입금이 없다 ([Quote.noPayment]).
+  bool freeFor(Quote q) => fee.isFree || q.noPayment;
 
   Quote quoteFor(
     List<Person> people,
@@ -529,6 +536,7 @@ class Gathering {
     people: people,
     appliedAt: appliedAt,
     discount: discount,
+    dateless: dateless,
   );
 
   Gathering copy() => Gathering.fromRow({...toRow(), 'id': id});
@@ -537,6 +545,8 @@ class Gathering {
   Map<String, dynamic> toRow() => {
     'name': name,
     'kind': kind.name,
+    // 켰을 때만 쓴다 — 기존 집회 행이 그대로고, 칸이 없는 DB 에서도 기존 집회 저장이 안 깨진다.
+    if (dateless) 'dateless': true,
     'themes': themes,
     'schedule': [
       for (final s in schedule)
@@ -568,6 +578,7 @@ class Gathering {
     id: '${r['id'] ?? ''}',
     name: '${r['name'] ?? ''}',
     kind: GatheringKind.parse(r['kind']),
+    dateless: r['dateless'] == true,
     start: _date(r['start_date']) ?? DateTime.now(),
     end: _date(r['end_date']) ?? DateTime.now(),
     schedule: _scheduleIn(r['schedule']),
@@ -718,6 +729,7 @@ class QuoteLine {
     this.freeDay = false,
     this.lodging = 0,
     this.stayNights,
+    this.dateless = false,
   });
   final Person person;
   final AgeGroup group;
@@ -740,12 +752,16 @@ class QuoteLine {
   final List<DateTime>? stayNights;
   bool get separate => stayNights != null;
 
+  /// 날짜 없는 집회의 줄 ([Gathering.dateless]). [stay] 가 '참가' / '미참가' 가 된다.
+  final bool dateless;
+
   /// 이 사람이 묵는 박수. 0 = 당일만.
   int get nights => stayNights?.length ?? nightsOf(days).length;
 
   /// "전체" / "1박" / "당일" / "1박 + 당일" / "당일(무료)".
   /// 숙박비 별도면 "전체 · 숙박 2박" / "2일 · 숙박 안 함" / "1일(무료) · 숙박 1박".
   String get stay {
+    if (dateless) return days.isEmpty ? '미참가' : '참가';
     if (separate) {
       final attend = full ? '전체' : '${days.length}일${freeDay ? '(무료)' : ''}';
       return '$attend · ${nights > 0 ? '숙박 $nights박' : '숙박 안 함'}';
@@ -800,11 +816,15 @@ class Quote {
     this.earlyPct,
     this.perRegistration, [
     this.discount = Discount.none,
+    this.noShow = false,
   ]);
   final List<QuoteLine> lines;
   final int earlyPct;
   final int perRegistration;
   final Discount discount;
+
+  /// 날짜 없는 집회에서 신청 전원이 미참가. 금액·그룹당 금액이 0이고 입금이 없다.
+  final bool noShow;
 
   int get subtotal => lines.fold(0, (s, l) => s + l.amount);
 
@@ -817,6 +837,9 @@ class Quote {
 
   /// 무료 날 당일로만 오는 신청 (날짜를 아직 안 고른 사람은 빼고 본다). 입금이 없다.
   bool get freeDayOnly => _freeDayOnly(lines);
+
+  /// 입금이 없는 신청 — 무료 날 당일만 오거나, 날짜 없는 집회에서 전원 미참가.
+  bool get noPayment => freeDayOnly || noShow;
 
   /// 할인 후 금액의 원 미만을 버리도록 계산한다 (할인액 쪽이 올림).
   int get earlyDiscount => subtotal - subtotal * (100 - earlyPct) ~/ 100;
@@ -855,6 +878,9 @@ class Quote {
 /// - 부분 참석 금액은 전체 참석자가 내는 금액을 넘지 않는다.
 /// - 참석자가 없으면 그룹당 금액도 붙지 않는다 (빈 신청서에 금액이 뜨지 않게).
 /// - 숙박비 별도([FeeRule.lodgingSeparate])면 [_separateLine] — 참가비 + 숙박비 (PLAN_GATHERING §20).
+/// - [dateless](날짜 없는 집회)면 참가 = 하루짜리 전체 참석 금액, 미참가(`days` 빈 목록) = 0원.
+///   무료 날·숙박비 별도는 보지 않고, 전원 미참가면 그룹당 금액도 없다 ([Quote.noShow], §25).
+///   false 면 계산이 한 글자도 안 바뀐다.
 Quote quote(
   FeeRule fee, {
   required DateTime start,
@@ -862,12 +888,21 @@ Quote quote(
   required List<Person> people,
   required DateTime appliedAt,
   Discount discount = Discount.none,
+  bool dateless = false,
 }) {
   final s = _day(start);
   final e = _day(end).isBefore(s) ? s : _day(end);
   final allNights = _nights(s, e);
 
   QuoteLine line(Person p) {
+    if (dateless) {
+      // 기간을 기준일 하루로 본다 — 저장된 end 가 어긋나 있어도 참가 = 전체 참석.
+      final g = fee.groupOf(s.year - p.birthYear);
+      final days = p.daysIn(s, s);
+      final isFull = days.isNotEmpty;
+      final amount = isFull ? fee.fullPrice(g, 0) : 0;
+      return QuoteLine(p, g, days, isFull, amount, dateless: true);
+    }
     if (fee.lodgingSeparate) return _separateLine(fee, p, s, e);
     final g = fee.groupOf(s.year - p.birthYear);
     final days = p.daysIn(s, e);
@@ -895,10 +930,13 @@ Quote quote(
   final lines = people.map(line).toList();
   // 모두 무료 날 당일로만 오면 가족당 금액도 붙이지 않는다.
   final freeOnly = _freeDayOnly(lines);
+  // 날짜 없는 집회에서 전원 미참가면 그룹당 금액도 없다.
+  final noShow =
+      dateless && lines.isNotEmpty && lines.every((l) => l.days.isEmpty);
   return Quote(
     lines,
     lines.isEmpty ? 0 : fee.earlyPctOn(appliedAt, s).clamp(0, 100),
-    lines.isEmpty || freeOnly ? 0 : fee.perRegistration,
+    lines.isEmpty || freeOnly || noShow ? 0 : fee.perRegistration,
     lines.isEmpty
         ? Discount.none
         : Discount(
@@ -906,6 +944,7 @@ Quote quote(
             amount: math.max(0, discount.amount),
             note: discount.note,
           ),
+    noShow,
   );
 }
 

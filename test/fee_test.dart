@@ -509,4 +509,154 @@ void main() {
       expect(f.isFree, isFalse);
     });
   });
+
+  group('날짜 없는 집회 (PLAN_GATHERING §25)', () {
+    // 기준일 하나 (start = end).
+    final base = DateTime(2026, 10, 9);
+    FeeRule rule() => FeeRule(
+      full: {AgeGroup.adult: 50000},
+      dayOnly: {AgeGroup.youth: 20000}, // 참가비가 비면 하루 금액
+      perRegistration: 10000,
+    );
+    Person going(String n, int y) => p(n, y); // days null = 참가
+    Person absent(String n, int y) => p(n, y)..days = [];
+    Quote dq(FeeRule f, List<Person> people, {DateTime? to}) => quote(
+      f,
+      start: base,
+      end: to ?? base,
+      people: people,
+      appliedAt: DateTime(2026, 9, 10),
+      dateless: true,
+    );
+
+    test('참가 = 참가비, 미참가 = 0원, 그룹당 금액은 붙는다', () {
+      final r = dq(rule(), [
+        going('아빠', 1985),
+        going('아들', 2010),
+        absent('할머니', 1950),
+      ]);
+      expect([for (final l in r.lines) l.amount], [50000, 20000, 0]);
+      expect([for (final l in r.lines) l.stay], ['참가', '참가', '미참가']);
+      expect(r.perRegistration, 10000);
+      expect(r.total, 80000);
+      expect((r.noShow, r.noPayment), (false, false));
+    });
+
+    test('전원 미참가 → 0원 · 그룹당 0원 · 입금 없음', () {
+      final r = dq(rule(), [absent('가', 1985), absent('나', 1990)]);
+      expect(r.total, 0);
+      expect(r.perRegistration, 0);
+      expect((r.noShow, r.noPayment), (true, true));
+      final g = Gathering(
+        name: 'x',
+        start: base,
+        end: base,
+        fee: rule(),
+        dateless: true,
+      );
+      expect(g.freeFor(g.quoteFor([absent('가', 1985)], base)), isTrue);
+      expect(g.freeFor(g.quoteFor([going('가', 1985)], base)), isFalse);
+    });
+
+    test('무료 날·숙박비 별도가 남아 있어도 참가 = 참가비 (계산이 무시한다)', () {
+      final f = rule()
+        ..freeDays = [base]
+        ..lodgingSeparate = true
+        ..lodging[AgeGroup.adult] = 9999;
+      final r = dq(f, [going('가', 1985)]);
+      expect(r.lines.single.amount, 50000);
+      expect(r.lines.single.freeDay, isFalse);
+      expect(r.noPayment, isFalse);
+    });
+
+    test('저장된 end 가 기준일과 달라도 참가 = 하루 전체 참석', () {
+      final r = dq(rule(), [
+        going('가', 1985),
+      ], to: base.add(const Duration(days: 2)));
+      expect(r.lines.single.amount, 50000);
+      expect(r.lines.single.stay, '참가');
+    });
+
+    test('Gathering.quoteFor 가 dateless 를 넘긴다', () {
+      final g = Gathering(
+        name: 'x',
+        start: base,
+        end: base,
+        fee: rule(),
+        dateless: true,
+      );
+      expect(g.quoteFor([absent('가', 1985)], base).lines.single.stay, '미참가');
+    });
+  });
+
+  group('기존 집회 회귀 — dateless 끄면 한 글자도 안 바뀐다', () {
+    test('여러 날 집회: days [] 가 섞여 있어도 금액·그룹당 금액·문구 그대로', () {
+      final people = [
+        p('전체', 1985),
+        p('빈날', 1985)..days = [],
+        p('토요일', 1985)..days = [DateTime(2026, 10, 10)],
+        p('1박', 1985)..days = [start, DateTime(2026, 10, 10)],
+      ];
+      for (final r in [
+        q(planRule(), people),
+        quote(
+          planRule(),
+          start: start,
+          end: end,
+          people: people,
+          appliedAt: DateTime(2026, 9, 10),
+          dateless: false,
+        ),
+      ]) {
+        expect([for (final l in r.lines) l.amount], [150000, 0, 30000, 70000]);
+        expect([for (final l in r.lines) l.stay], ['전체', '', '당일', '1박']);
+        expect(r.perRegistration, 10000);
+        expect(r.earlyPct, 10);
+        expect((r.noShow, r.noPayment), (false, false));
+      }
+    });
+
+    test('여러 날 집회: 전원 days [] 여도 그룹당 금액은 지금처럼 붙는다', () {
+      final r = q(planRule(), [p('가', 1985)..days = []]);
+      expect(r.perRegistration, 10000);
+      expect(r.noShow, isFalse);
+    });
+
+    test('하루짜리 집회(dateless 아님): 전체 = full, 문구 "전체", 무료 날 그대로', () {
+      final f = planRule()..freeDays = [start];
+      final r = q(f, [p('가', 1985), p('나', 2010)], to: start);
+      expect([for (final l in r.lines) l.amount], [150000, 120000]);
+      expect([for (final l in r.lines) l.stay], ['전체', '전체']);
+      expect(r.lines.every((l) => !l.dateless), isTrue);
+      // 여러 날 집회에서 무료 날 하루만 고른 당일 신청은 지금처럼 0원·입금 없음.
+      final free = q(
+        f,
+        [
+          p('다', 1985)..days = [start],
+        ],
+        from: start,
+        to: end,
+      );
+      expect(free.freeDayOnly, isTrue);
+      expect(free.noPayment, isTrue);
+    });
+
+    test('기존 집회 freeFor 는 그대로 (무료 날 당일만 → 입금 없음)', () {
+      final g = Gathering(
+        name: 'x',
+        start: start,
+        end: end,
+        fee: planRule()..freeDays = [start],
+      );
+      expect(
+        g.freeFor(
+          g.quoteFor([
+            p('가', 1985)..days = [start],
+          ], start),
+        ),
+        isTrue,
+      );
+      expect(g.freeFor(g.quoteFor([p('가', 1985)], start)), isFalse);
+    });
+  });
 }

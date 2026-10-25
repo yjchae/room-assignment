@@ -56,6 +56,7 @@ create table if not exists room.gatherings (
   name text not null,
   kind text not null default 'gathering'     -- 'gathering' | 'homestay' (lib/gathering.dart)
     check (kind in ('gathering', 'homestay')),
+  dateless boolean not null default false,   -- 날짜 없이 참가/미참가만 받는 집회. 만들 때만 정함 (start_date = end_date = 기준일)
   schedule jsonb not null default '[]',      -- 일정표 [{date, time, title}]
   off_days date[] not null default '{}',     -- 일정 없는 날 (신청 웹에서 못 고름)
   themes text[] not null default '{}',
@@ -93,6 +94,7 @@ alter table room.gatherings add column if not exists shown_fields text[] not nul
 alter table room.gatherings add column if not exists minister_notice_on boolean not null default true;
 alter table room.gatherings add column if not exists minister_notice text;
 alter table room.gatherings add column if not exists field_specs jsonb not null default '{}';
+alter table room.gatherings add column if not exists dateless boolean not null default false;
 
 -- 집회별 운영자. 이 집회의 설정·신청·방배정만 만질 수 있다 (새 집회는 못 만든다).
 -- 전체 운영자(room.admins)는 모든 집회를 관리하므로 여기 없어도 된다.

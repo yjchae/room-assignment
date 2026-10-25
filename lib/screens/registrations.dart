@@ -594,9 +594,9 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   }
 
   Future<void> _confirm(Registration r, Quote q) async {
-    // 무료 날 당일만인 신청은 금액·입금자 없이 바로 확정.
+    // 무료 날 당일만인 신청(날짜 없는 집회는 전원 미참가)은 금액·입금자 없이 바로 확정.
     // ponytail: 무료 집회는 예전처럼 입금 확인 창을 거친다 — 같이 바꾸려면 freeFor(q) 로.
-    if (q.freeDayOnly) {
+    if (q.noPayment) {
       return _patch(
         r,
         {
@@ -1112,6 +1112,10 @@ String _n(int n) => won(n).replaceAll('원', '');
 String _stay(Quote q) {
   final full = q.lines.where((l) => l.full).length;
   final part = q.lines.length - full;
+  // 날짜 없는 집회: 참가 = 전체 참석, 미참가 = 고른 날 없음.
+  if (q.lines.any((l) => l.dateless)) {
+    return [if (full > 0) '참가 $full', if (part > 0) '미참가 $part'].join(' · ');
+  }
   return [if (full > 0) '전체 $full', if (part > 0) '부분 $part'].join(' · ');
 }
 
@@ -1271,7 +1275,7 @@ class _RegRow extends StatelessWidget {
               SizedBox(
                 width: _wMoney,
                 child: Text(
-                  q.freeDayOnly ? '무료' : won(q.total),
+                  q.noPayment ? '무료' : won(q.total),
                   textAlign: TextAlign.right,
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
@@ -1466,7 +1470,7 @@ class _RegCard extends StatelessWidget {
                           ),
                         const SizedBox(width: 8),
                         Text(
-                          q.freeDayOnly ? '무료' : won(q.total),
+                          q.noPayment ? '무료' : won(q.total),
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontFeatures: _tabular,
@@ -1508,12 +1512,15 @@ class _Detail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = r.createdAt;
-    final free = q.freeDayOnly;
+    final free = q.noPayment;
     // 부분 참석자의 고른 날짜 (사람 id → "10-09(금) 10-10(토)").
     // 숙박비 별도 집회는 숙박한 밤도 붙인다 (전체 참석이어도 숙박은 사람마다 다르다).
     final days = {
       for (final l in q.lines)
-        if (!l.full || l.separate)
+        // 날짜 없는 집회는 날짜 대신 '참가' / '미참가'.
+        if (l.dateless)
+          l.person.id: l.stay
+        else if (!l.full || l.separate)
           l.person.id: [
             if (!l.full) l.days.map(mdw).join(' '),
             if (l.separate)

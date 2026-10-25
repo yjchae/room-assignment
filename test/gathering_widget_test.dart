@@ -2299,6 +2299,479 @@ void main() {
       }
     });
   });
+
+  // 날짜 없이 신청 받기 (PLAN_GATHERING §25). 모든 분기는 dateless 일 때만 —
+  // 같은 화면을 날짜 있는 집회로 그리면 예전 그대로여야 한다.
+  group('날짜 없이 신청 받기', () {
+    Gathering dateless() => sample()
+      ..dateless = true
+      ..end = DateTime(2026, 10, 9);
+
+    Future<void> fillPerson(WidgetTester tester, int i, String name) async {
+      await tester.enterText(field('이름 *').at(i), name);
+      await tester.enterText(field('출생연도 *').at(i), '1985');
+      await tester.tap(find.text('남').at(i));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('신청서: [참가][미참가]만 있고, 참가 2·미참가 1 이 days null/null/[] 로 간다', (
+      tester,
+    ) async {
+      setView(tester, const Size(400, 4000));
+      await pumpPage(tester, ApplyPage(gathering: dateless()));
+      expect(tester.takeException(), isNull);
+      expect(find.text('참가 여부'), findsOneWidget);
+      expect(find.widgetWithText(SegmentedButton<bool>, '참가'), findsOneWidget);
+      expect(find.text('미참가'), findsOneWidget);
+      expect(find.widgetWithText(SwitchListTile, '전체 참석'), findsNothing);
+      expect(find.textContaining('참석하는 날을'), findsNothing);
+      // 새 신청서는 [참가]가 골라져 있다.
+      expect(
+        tester
+            .widget<SegmentedButton<bool>>(find.byType(SegmentedButton<bool>))
+            .selected,
+        {true},
+      );
+
+      await fillPerson(tester, 0, '홍길동');
+      expect(find.text('성인 · 참가 · 150,000원'), findsOneWidget);
+      for (final (i, n) in ['홍동생', '홍미참'].indexed) {
+        await tester.tap(find.text('동반 참석자 추가 (가족 등)'));
+        await tester.pumpAndSettle();
+        await fillPerson(tester, i + 1, n);
+      }
+      // 동반자도 [참가]로 시작한다. 셋째를 미참가로.
+      await tester.tap(find.text('미참가').last);
+      await tester.pumpAndSettle();
+      expect(find.text('미참가 · 0원'), findsOneWidget);
+      expect(find.text('310,000원'), findsOneWidget); // 150,000 × 2 + 가족당 10,000
+
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await tester.tap(find.byType(CheckboxListTile).last); // 개인정보 동의
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final s = fake.lastSubmit!;
+      final people = s['people'] as List<Person>;
+      expect(people.map((p) => p.name), ['홍길동', '홍동생', '홍미참']);
+      expect(people.map((p) => p.days), [null, null, <DateTime>[]]);
+      expect(s['quoted'], 310000);
+    });
+
+    testWidgets('신청서: 모두 미참가면 0원, 완료 화면에 계좌가 없다', (tester) async {
+      setView(tester, const Size(400, 3000));
+      await pumpPage(tester, ApplyPage(gathering: dateless()));
+      await fillPerson(tester, 0, '홍길동');
+      await tester.tap(find.text('미참가'));
+      await tester.pumpAndSettle();
+      await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
+      await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
+      await tester.tap(find.byType(CheckboxListTile).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '신청'));
+      await tester.pumpAndSettle();
+      expect(fake.lastSubmit!['quoted'], 0);
+      expect(find.text('신청이 접수되었습니다'), findsOneWidget);
+      expect(find.text('입금 계좌'), findsNothing);
+    });
+
+    testWidgets('날짜 있는 집회의 같은 신청서는 예전 그대로 (전체 참석 스위치, [참가] 없음)', (
+      tester,
+    ) async {
+      setView(tester, const Size(400, 2400));
+      await pumpPage(tester, ApplyPage(gathering: sample()));
+      expect(find.widgetWithText(SwitchListTile, '전체 참석'), findsOneWidget);
+      expect(find.byType(SegmentedButton<bool>), findsNothing);
+      expect(find.text('참가 여부'), findsNothing);
+      expect(find.text('미참가'), findsNothing);
+      // 하루짜리(날짜 있는) 집회도 그대로 — 스위치가 꺼진 채 고정.
+      await pumpPage(
+        tester,
+        ApplyPage(
+          key: const ValueKey('one-day'),
+          gathering: sample()..end = DateTime(2026, 10, 9),
+        ),
+      );
+      expect(find.widgetWithText(SwitchListTile, '전체 참석'), findsOneWidget);
+      expect(find.byType(SegmentedButton<bool>), findsNothing);
+    });
+
+    testWidgets('집회 페이지: 날짜 줄·일정이 없고 회비는 참가비 한 열', (tester) async {
+      fake.gs
+        ..clear()
+        ..add(
+          dateless()
+            ..schedule = [
+              (date: DateTime(2026, 10, 9), time: '19:00', title: '저녁 집회'),
+            ],
+        );
+      setView(tester, const Size(400, 1400));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('참가비'), findsOneWidget);
+      expect(find.text('전체 참석'), findsNothing);
+      expect(find.text('당일'), findsNothing);
+      expect(find.text('저녁 집회'), findsNothing);
+      expect(find.textContaining('10-09'), findsNothing);
+      expect(find.textContaining('부분 참석'), findsNothing);
+      expect(find.textContaining('모두 미참가면 받지 않습니다'), findsOneWidget);
+    });
+
+    testWidgets('방 관리: 이름 방을 만들고, 같은 이름은 막고, 범위도 된다', (tester) async {
+      current.value = dateless();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RoomsScreen()));
+      Future<void> add(String v) async {
+        // 앞 알림이 사라진 뒤 다음 알림이 뜬다.
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, '방 추가'));
+        await tester.pumpAndSettle();
+        expect(find.text('범위 가능: 301-310 · 이름도 됩니다: 1조, 찬양팀'), findsOneWidget);
+        await tester.enterText(find.widgetWithText(TextField, '방·그룹 이름'), v);
+        await tester.tap(find.widgetWithText(FilledButton, '저장'));
+        await tester.pumpAndSettle();
+      }
+
+      await add('1조');
+      expect(store.event.rooms.map((r) => r.roomNo), ['1조']);
+      expect(find.text('1조 방을 추가했습니다.'), findsOneWidget);
+      await add('1조');
+      expect(store.event.rooms, hasLength(1));
+      expect(find.text('1조 방이 이미 있습니다.'), findsOneWidget);
+      await add('301-303');
+      expect(store.event.rooms, hasLength(4));
+    });
+
+    testWidgets('방 관리: 날짜 있는 집회는 예전처럼 호수만 받는다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RoomsScreen()));
+      await tester.tap(find.widgetWithText(FilledButton, '방 추가'));
+      await tester.pumpAndSettle();
+      expect(find.text('범위 가능: 301-310, 401'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '방·그룹 이름'), findsNothing);
+      await tester.enterText(find.widgetWithText(TextField, '호수'), '1조');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(store.event.rooms, isEmpty);
+      expect(find.text('호수를 인식하지 못했습니다. 예: 301 또는 301-310'), findsOneWidget);
+    });
+
+    testWidgets('새 집회: 체크하면 기준일 하나, 만들면 dateless·start = end, 날짜 규칙은 끈다', (
+      tester,
+    ) async {
+      fake.gs.first
+        ..fee.fullDiscountPct = 10
+        ..fee.freeDays = [DateTime(2026, 10, 10)];
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('새 집회'));
+      await tester.pumpAndSettle();
+      // 홈스테이에는 없고, 갔다 오면 꺼져 있다.
+      await tester.tap(find.text('홈스테이'));
+      await tester.pumpAndSettle();
+      expect(find.text('날짜 없이 신청 받기'), findsNothing);
+      await tester.tap(find.text('집회').last);
+      await tester.pumpAndSettle();
+      final box = find.widgetWithText(CheckboxListTile, '날짜 없이 신청 받기');
+      expect(tester.widget<CheckboxListTile>(box).value, isFalse);
+      expect(find.text('기간'), findsOneWidget);
+
+      // 설정을 복사해도 날짜에 붙는 회비 규칙은 끈다.
+      await tester.tap(find.byType(DropdownButtonFormField<Gathering?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('신촌하나교회 가족수양회 (').last);
+      await tester.pumpAndSettle();
+      await tester.tap(box);
+      await tester.pumpAndSettle();
+      expect(find.text('기준일'), findsOneWidget);
+      expect(find.text('기간'), findsNothing);
+      await tester.tap(find.text('만들기'));
+      await tester.pumpAndSettle();
+
+      final g2 = fake.gs.firstWhere((g) => g.id != 'g1');
+      expect(g2.dateless, isTrue);
+      expect(g2.start, g2.end);
+      expect(g2.fee.lodgingSeparate, isFalse);
+      expect(g2.fee.fullDiscountPct, 0);
+      expect(g2.fee.freeDays, isEmpty);
+      expect(fake.gs.first.dateless, isFalse, reason: '원본은 그대로');
+    });
+
+    testWidgets('집회 목록: 날짜 없는 집회 카드는 참가 신청 · 기준일, 날짜 있는 집회는 그대로', (
+      tester,
+    ) async {
+      fake.gs.add(
+        dateless()
+          ..id = 'g2'
+          ..name = '참가 조사',
+      );
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      expect(find.text('참가 신청 · 기준일 2026-10-09(금)'), findsOneWidget);
+      expect(find.text('날짜 없음'), findsOneWidget);
+      expect(find.text('2026-10-09(금) ~ 10-11(일) · 2박3일'), findsOneWidget);
+    });
+
+    testWidgets('신청·입금: 참가 n · 미참가 m, 전원 미참가는 무료', (tester) async {
+      final g = dateless();
+      fake.gs
+        ..clear()
+        ..add(g);
+      fake.regs
+        ..add(
+          Registration(
+            id: 'r1',
+            gatheringId: 'g1',
+            phone: '01012345678',
+            people: [
+              Person(id: 'a', name: '홍길동', gender: 'M', birthYear: 1985),
+              Person(
+                id: 'b',
+                name: '홍딸',
+                gender: 'F',
+                birthYear: 1990,
+                days: [],
+              ),
+            ],
+            quoted: 160000,
+            createdAt: DateTime(2026, 9, 10),
+          ),
+        )
+        ..add(
+          Registration(
+            id: 'r2',
+            gatheringId: 'g1',
+            phone: '01099998888',
+            people: [
+              Person(
+                id: 'c',
+                name: '김미참',
+                gender: 'M',
+                birthYear: 1985,
+                days: [],
+              ),
+            ],
+            quoted: 0,
+            createdAt: DateTime(2026, 9, 10),
+          ),
+        );
+      current.value = g;
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      expect(tester.takeException(), isNull);
+      expect(find.text('참가 1 · 미참가 1'), findsOneWidget);
+      expect(find.text('미참가 1'), findsOneWidget);
+      expect(find.text('무료'), findsOneWidget);
+    });
+
+    testWidgets('집회 설정: 날짜 없음 칩·기준일, 일정표·전체 참석 할인·1박·당일 열 없음', (tester) async {
+      final g = dateless()
+        ..fee.fullDiscountPct = 10
+        ..end = DateTime(2026, 10, 11); // 어긋난 end 도 저장하면 start 로 맞춘다
+      fake.gs
+        ..clear()
+        ..add(g);
+      current.value = g;
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(tester.takeException(), isNull);
+      expect(find.text('날짜 없음'), findsOneWidget);
+      expect(find.text('기준일 2026-10-09(금)'), findsOneWidget);
+      expect(find.text('일정표'), findsNothing);
+      expect(find.text('전체 참석 할인'), findsNothing);
+      expect(find.text('숙박비 별도'), findsNothing);
+      expect(find.text('당일 무료인 날'), findsNothing);
+      expect(find.text('참가비'), findsOneWidget);
+      expect(find.text('1박당 (부분 참석)'), findsNothing);
+      expect(find.text('당일'), findsNothing);
+      expect(find.text('사전등록 할인'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      final saved = fake.gs.single;
+      expect(saved.dateless, isTrue);
+      expect(saved.end, saved.start);
+      expect(saved.fee.fullDiscountPct, 0);
+      expect(saved.fee.full[AgeGroup.adult], 150000);
+    });
+
+    testWidgets('집회 설정: 날짜 있는 집회는 예전 그대로', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('날짜 없음'), findsNothing);
+      expect(find.textContaining('기준일'), findsNothing);
+      expect(find.text('일정표'), findsOneWidget);
+      expect(find.text('전체 참석 할인'), findsOneWidget);
+      expect(find.text('참가비'), findsNothing);
+      expect(find.text('1박당 (부분 참석)'), findsOneWidget);
+    });
+
+    testWidgets('새 집회: 1박당·당일 값이 있는 집회를 복사해 날짜 없이 만들면 그 값을 비운다', (tester) async {
+      fake.gs.first.fee.lodging = {AgeGroup.adult: 20000};
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const GatheringsScreen());
+      await tester.tap(find.text('새 집회'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<Gathering?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('신촌하나교회 가족수양회 (').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(CheckboxListTile, '날짜 없이 신청 받기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('만들기'));
+      await tester.pumpAndSettle();
+
+      final g2 = fake.gs.firstWhere((g) => g.id != 'g1');
+      expect(g2.fee.perNight, isEmpty);
+      expect(g2.fee.dayOnly, isEmpty);
+      expect(g2.fee.lodging, isEmpty);
+      expect(g2.fee.full[AgeGroup.adult], 150000, reason: '참가비는 복사');
+      expect(fake.gs.first.fee.perNight[AgeGroup.adult], 70000, reason: '원본은 그대로');
+    });
+
+    testWidgets('집회 설정: 날짜 없는 집회는 숨긴 1박당·당일을 비우고, 참가비를 비우면 무료', (tester) async {
+      final g = dateless()..fee.perRegistration = 0; // sample 의 1박당·당일 값이 남아 있다
+      fake.gs
+        ..clear()
+        ..add(g);
+      current.value = g;
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      for (final v in ['150000', '120000', '100000', '60000']) {
+        await tester.enterText(find.widgetWithText(TextField, v), '');
+      }
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final saved = fake.gs.single.fee;
+      expect(saved.perNight, isEmpty);
+      expect(saved.dayOnly, isEmpty);
+      expect(saved.lodging, isEmpty);
+      expect(saved.isFree, isTrue);
+      expect(saved.fullPrice(AgeGroup.adult, 0), 0);
+    });
+
+    testWidgets('집회 설정: 날짜 있는 집회는 저장해도 1박당·당일 값을 그대로 둔다', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 3600));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      final saved = fake.gs.single.fee;
+      expect(saved.perNight, {AgeGroup.adult: 70000, AgeGroup.youth: 60000});
+      expect(saved.dayOnly, {AgeGroup.adult: 30000});
+      expect(saved.full[AgeGroup.adult], 150000);
+    });
+
+    testWidgets('조회: 참가 여부가 보이고, [수정]하면 낸 대로 되살아나 그대로 저장된다', (tester) async {
+      final g = dateless();
+      fake.gs
+        ..clear()
+        ..add(g);
+      final people = [
+        Person(id: 'a', name: '홍길동', gender: 'M', birthYear: 1985),
+        Person(id: 'b', name: '홍미참', gender: 'M', birthYear: 1985, days: []),
+      ];
+      fake.regs.add(
+        Registration(
+          id: 'r1',
+          gatheringId: 'g1',
+          phone: '01012345678',
+          people: people,
+          quoted: 160000,
+          createdAt: DateTime(2026, 9, 10),
+        ),
+      );
+      fake.pins['r1'] = '1234';
+      final updates = <List<Person>>[];
+      remote = _EditRemote(fake, updates);
+      setView(tester, const Size(400, 3000));
+      await pumpPage(tester, LookupPage(gathering: g));
+      await tester.enterText(
+        find.widgetWithText(TextField, '휴대폰번호'),
+        '01012345678',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'PIN (숫자 4자리)'),
+        '1234',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '조회'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('참가 여부'), findsOneWidget);
+      expect(find.text('전체 참석'), findsNothing);
+      expect(find.text('참석하는 날이 없습니다.'), findsNothing);
+      final miss = tester.widget<Text>(find.text('미참가').last);
+      expect(miss.style?.color, AppColors.textMuted);
+
+      await tester.tap(find.text('신청 내용 수정'));
+      await tester.pumpAndSettle();
+      final segs = tester
+          .widgetList<SegmentedButton<bool>>(find.byType(SegmentedButton<bool>))
+          .map((b) => b.selected)
+          .toList();
+      expect(segs, [
+        {true},
+        {false},
+      ]);
+      await tester.tap(find.widgetWithText(FilledButton, '수정 저장'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '수정'));
+      await tester.pumpAndSettle();
+      expect(updates.single.map((p) => p.days), [null, <DateTime>[]]);
+    });
+
+    testWidgets('참석자: 날짜 세그먼트 없이 참가자만 들어오고, 편집 창에 묵는 기간이 없다', (tester) async {
+      final g = dateless();
+      fake.gs
+        ..clear()
+        ..add(g);
+      fake.regs.add(
+        Registration(
+          id: 'r1',
+          gatheringId: 'g1',
+          phone: '01012345678',
+          people: [
+            Person(id: 'a', name: '홍길동', gender: 'M', birthYear: 1985),
+            Person(
+              id: 'b',
+              name: '홍미참',
+              gender: 'M',
+              birthYear: 1985,
+              days: [],
+            ),
+          ],
+          createdAt: DateTime(2026, 9, 10),
+        ),
+      );
+      current.value = g;
+      store.applyGathering(g);
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: AttendeesScreen()));
+      expect(tester.takeException(), isNull);
+      expect(store.event.attendees.map((a) => a.name), ['홍길동']);
+      expect(find.textContaining('합계'), findsNothing);
+      expect(find.textContaining('전참'), findsNothing);
+      expect(find.text('당일'), findsNothing);
+
+      await tester.tap(find.textContaining('홍길동').first);
+      await tester.pumpAndSettle();
+      expect(find.text('묵는 기간'), findsNothing);
+      expect(find.text('체크인'), findsNothing);
+      expect(find.text('체크아웃'), findsNothing);
+    });
+  });
 }
 
 /// 수정(update_registration)만 가로채는 가짜.

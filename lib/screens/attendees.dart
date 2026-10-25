@@ -57,14 +57,16 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
   ) async {
     final messenger = ScaffoldMessenger.of(context);
     final name = store.event.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    final missed = regsError != null;
+    // 날짜 없는 집회는 당일 참석자가 없다 — 날짜 칸도 뺀다.
+    final dateless = current.value?.dateless == true;
+    final missed = regsError != null && !dateless;
     setState(() => saving = true);
     try {
       final saved = await FilePicker.saveFile(
         fileName: '${name}_참석자_${what.$1}_${ymd(DateTime.now())}.xlsx',
         bytes: xlsxBytes([
           for (final (sheet, people) in what.$2)
-            (sheet, attendeeRows(store.event, people)),
+            (sheet, attendeeRows(store.event, people, dates: !dateless)),
         ]),
         mimeType:
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -116,6 +118,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     final e = store.event;
     final g = current.value;
     final homestay = g?.isHomestay == true;
+    // 날짜 없는 집회: 날짜 세그먼트·'당일' 없이 참석자(참가자) 전체만 본다.
+    final dateless = g?.dateless == true;
     final days = [
       for (
         var d = dateOnly(e.startDate);
@@ -126,13 +130,14 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
     ];
     // 일정이 바뀌어 없는 날을 보고 있었으면 합계로.
     final on = days.where((d) => ymd(d) == view).firstOrNull;
-    final sel = view == 'full' || on != null ? view : 'total';
+    final sel = !dateless && (view == 'full' || on != null) ? view : 'total';
     final nights = e.nights;
 
     // 신청에서 온 사람(입금대기 포함)은 신청서의 참석일로 센다 — 엑셀 내려받기와 같은 판정.
     final comes = store.comesOn(g, regs);
     // 당일(0박)만 오는 사람은 방이 필요 없어 참석자에 없다 — CSV 내려받기와 같은 목록을 쓴다.
-    final everyone = store.everyone(g, regs);
+    // 날짜 없는 집회는 참가자가 모두 참석자로 들어와 있다 — 신청에서 보탤 당일 참석자가 없다.
+    final everyone = dateless ? [...e.attendees] : store.everyone(g, regs);
     final visitors = {
       for (final a in everyone)
         if (!e.attendees.any((x) => x.id == a.id)) a.id,
@@ -216,6 +221,8 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
       Tooltip(
         message: list.isEmpty
             ? '내려받을 사람이 없습니다'
+            : dateless
+            ? '지금 보이는 ${list.length}명을 엑셀로 받습니다'
             : switch (sel) {
                 'total' => '지금 보이는 ${list.length}명을 [전체] 시트와 날짜별 시트로 나눠 받습니다',
                 'full' => '모든 날 오는 사람 중 지금 보이는 ${list.length}명을 엑셀로 받습니다',
@@ -227,6 +234,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           onPressed: list.isEmpty || saving
               ? null
               : () => _downloadXlsx(switch (sel) {
+                  'total' when dateless => ('전체', [('전체', list)]),
                   'total' => (
                     '전체',
                     [
@@ -335,38 +343,39 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           // 대신 아래 표가 누가 어느 집에서 언제 묵는지를 보여준다.
           if (everyone.isNotEmpty && !homestay) ...[
             // 가장 큰 기준 = 날짜. 합계(기간 전체 인원) · 전참(모든 날) · 하루씩.
-            Align(
-              alignment: Alignment.centerLeft,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                child: SegmentedButton<String>(
-                  showSelectedIcon: false,
-                  segments: [
-                    ButtonSegment(
-                      value: 'total',
-                      label: Text('합계 ${everyone.length}명'),
-                      tooltip: '집회 기간 중 하루라도 오는 사람 전부 (당일 참석 포함)',
-                    ),
-                    ButtonSegment(
-                      value: 'full',
-                      label: Text('전참 ${everyone.where(full).length}명'),
-                      tooltip: '모든 날 참석하는 사람만',
-                    ),
-                    for (final d in days)
+            if (!dateless)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: SegmentedButton<String>(
+                    showSelectedIcon: false,
+                    segments: [
                       ButtonSegment(
-                        value: ymd(d),
-                        label: Text(
-                          '${mdw(d)} ${everyone.where((a) => comes(a, d)).length}명',
-                        ),
+                        value: 'total',
+                        label: Text('합계 ${everyone.length}명'),
+                        tooltip: '집회 기간 중 하루라도 오는 사람 전부 (당일 참석 포함)',
                       ),
-                  ],
-                  selected: {sel},
-                  onSelectionChanged: (s) => setState(() => view = s.first),
+                      ButtonSegment(
+                        value: 'full',
+                        label: Text('전참 ${everyone.where(full).length}명'),
+                        tooltip: '모든 날 참석하는 사람만',
+                      ),
+                      for (final d in days)
+                        ButtonSegment(
+                          value: ymd(d),
+                          label: Text(
+                            '${mdw(d)} ${everyone.where((a) => comes(a, d)).length}명',
+                          ),
+                        ),
+                    ],
+                    selected: {sel},
+                    onSelectionChanged: (s) => setState(() => view = s.first),
+                  ),
                 ),
               ),
-            ),
-            if (regsError != null)
+            if (regsError != null && !dateless)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Text(
@@ -1161,7 +1170,11 @@ Future<void> importRegistrations(BuildContext context) async {
       SnackBar(
         content: Text(
           '신청에서 가져옴: 추가 ${r.added} · 변경 ${r.updated} · 제거 ${r.removed}'
-          '${r.dayOnly > 0 ? '  (당일 참석 ${r.dayOnly}명은 방이 필요 없어 뺐습니다)' : ''}',
+          '${r.dayOnly <= 0
+              ? ''
+              : g.dateless
+              ? '  (미참가 ${r.dayOnly}명은 뺐습니다)'
+              : '  (당일 참석 ${r.dayOnly}명은 방이 필요 없어 뺐습니다)'}',
         ),
       ),
     );
@@ -1237,6 +1250,8 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
   final note = TextEditingController(text: a.note ?? '');
   var gender = a.gender;
   var checkIn = a.checkIn, checkOut = a.checkOut;
+  // 날짜 없는 집회는 묵는 기간을 보이지 않는다 (값은 그대로 둔다).
+  final dateless = current.value?.dateless == true;
   final messenger = ScaffoldMessenger.of(context);
   final homestay = current.value?.isHomestay == true;
   // 사용자 정의 항목: 이름 -> 입력칸
@@ -1297,59 +1312,61 @@ Future<void> attendeeDialog(BuildContext context, [Attendee? draft]) async {
                   controller: note,
                   decoration: const InputDecoration(labelText: '기타'),
                 ),
-                const Divider(height: 24),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    homestay ? '묵는 기간 (이 집에 있는 동안)' : '묵는 기간',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text('체크인'),
-                  trailing: Text(fmtDate(checkIn)),
-                  onTap: () async {
-                    final d = await pickDate(context, checkIn);
-                    if (d == null) return;
-                    setLocal(() {
-                      checkIn = d;
-                      if (!checkOut.isAfter(d)) {
-                        checkOut = d.add(const Duration(days: 1));
-                      }
-                    });
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text('체크아웃'),
-                  subtitle: Text(
-                    '${checkOut.difference(checkIn).inDays}박',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  trailing: Text(fmtDate(checkOut)),
-                  onTap: () async {
-                    final d = await pickDate(context, checkOut);
-                    if (d != null && d.isAfter(checkIn)) {
-                      setLocal(() => checkOut = d);
-                    }
-                  },
-                ),
-                if (!isNew && checkOut.difference(checkIn).inDays > 1)
+                if (!dateless) ...[
+                  const Divider(height: 24),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      icon: const Icon(Icons.call_split, size: 18),
-                      label: Text(homestay ? '기간 나누기 (다른 집으로)' : '기간 나누기'),
-                      onPressed: () => Navigator.pop(context, 'split'),
+                    child: Text(
+                      homestay ? '묵는 기간 (이 집에 있는 동안)' : '묵는 기간',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                   ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('체크인'),
+                    trailing: Text(fmtDate(checkIn)),
+                    onTap: () async {
+                      final d = await pickDate(context, checkIn);
+                      if (d == null) return;
+                      setLocal(() {
+                        checkIn = d;
+                        if (!checkOut.isAfter(d)) {
+                          checkOut = d.add(const Duration(days: 1));
+                        }
+                      });
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('체크아웃'),
+                    subtitle: Text(
+                      '${checkOut.difference(checkIn).inDays}박',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: Text(fmtDate(checkOut)),
+                    onTap: () async {
+                      final d = await pickDate(context, checkOut);
+                      if (d != null && d.isAfter(checkIn)) {
+                        setLocal(() => checkOut = d);
+                      }
+                    },
+                  ),
+                  if (!isNew && checkOut.difference(checkIn).inDays > 1)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.call_split, size: 18),
+                        label: Text(homestay ? '기간 나누기 (다른 집으로)' : '기간 나누기'),
+                        onPressed: () => Navigator.pop(context, 'split'),
+                      ),
+                    ),
+                ],
                 if (extras.isNotEmpty) const Divider(height: 24),
                 for (final f in store.event.customFields)
                   Row(

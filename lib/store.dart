@@ -138,12 +138,14 @@ class Store extends ChangeNotifier {
 
   /// 취소되지 않은 신청의 사람들 (사람 id → 참석자). 입금대기도 넣는다 — 입금 전에도
   /// 누가 오는지 한눈에 보고 방을 미리 잡아 두기 위해서다 (PLAN_GATHERING §19).
-  /// 당일(0박) 참석자는 방이 필요 없어 뺀다.
+  /// 당일(0박) 참석자는 방이 필요 없어 뺀다. 단 날짜 없는 집회([Gathering.dateless])는
+  /// 0박 참가자도 방(그룹)에 배정하므로 가져오고, 미참가(고른 날 없음)만 뺀다 (PLAN_GATHERING §25).
   Map<String, Attendee> _wanted(Gathering g, List<Registration> regs) => {
     for (final r in regs)
       if (r.status != RegStatus.cancelled)
         for (final line in g.quoteFor(r.people, r.createdAt).lines)
-          if (line.nights > 0) line.person.id: attendeeOf(g, r, line.person),
+          if (line.nights > 0 || (g.dateless && line.days.isNotEmpty))
+            line.person.id: attendeeOf(g, r, line.person),
   };
 
   /// 신청의 한 사람 → 참석자. [p] 는 집회 기간 안에 오는 날이 하루 이상 있어야 한다.
@@ -699,6 +701,7 @@ class Store extends ChangeNotifier {
 
   /// "301-310" 또는 "301" 범위 문자열을 [building] 건물의 방으로 일괄 생성.
   /// 같은 건물에 이미 있는 호수는 건너뛴다 (건물이 다르면 같은 호수도 만든다).
+  /// [names] 면(날짜 없는 집회) 호수로 못 읽은 입력('1조', '찬양팀')을 이름 그대로 방 하나로 만든다.
   /// 반환값: (생성 수, 건너뛴 수)
   (int, int) addRoomRange(
     String range, {
@@ -706,11 +709,14 @@ class Store extends ChangeNotifier {
     String? building,
     String? gender,
     String? note,
+    bool names = false,
   }) {
     final b = (building ?? '').trim().isEmpty ? null : building!.trim();
     final existing = event.rooms.map((r) => r.label).toSet();
     var made = 0, skipped = 0;
-    for (final n in parseRoomRange(range)) {
+    var nos = parseRoomRange(range);
+    if (names && nos.isEmpty && range.trim().isNotEmpty) nos = [range.trim()];
+    for (final n in nos) {
       final room = Room(
         id: newId(),
         roomNo: n,
@@ -965,7 +971,8 @@ List<String> parseRoomRange(String input) {
 /// 엑셀에서 복사해 [붙여넣기 등록]으로 되돌려 넣을 수 있다.
 /// [people] 을 주면 그 사람들을 적는다 — 화면과 같은 목록([Store.everyone])을 넘겨
 /// 당일(0박) 참석자가 빠지지 않게 한다.
-String attendeesCsv(Event e, [List<Attendee>? people]) {
+/// [dates] 는 [attendeeRows] 와 같다.
+String attendeesCsv(Event e, [List<Attendee>? people, bool dates = true]) {
   String cell(Object? v) {
     var s = '${v ?? ''}';
     // 신청 웹에서 들어온 값이 엑셀에서 수식으로 실행되지 않게 (CSV injection).
@@ -976,19 +983,24 @@ String attendeesCsv(Event e, [List<Attendee>? people]) {
   return attendeeRows(
     e,
     people ?? e.attendees,
+    dates: dates,
   ).map((row) => row.map(cell).join(',')).join('\r\n');
 }
 
 /// 참석자 표의 행들 (첫 줄은 머리글). CSV 와 엑셀 내려받기가 같은 칸·순서를 쓰도록 여기 한 곳에서 만든다.
-List<List<Object?>> attendeeRows(Event e, List<Attendee> people) {
+/// [dates] 가 false 면(날짜 없는 집회) `체크인`·`체크아웃` 칸을 뺀다.
+List<List<Object?>> attendeeRows(
+  Event e,
+  List<Attendee> people, {
+  bool dates = true,
+}) {
   final rooms = {for (final r in e.rooms) r.id: r.label};
   return [
     [
       for (final k in defaultColumns) builtinFieldLabels[k]!,
       ...e.customFields,
       '방',
-      '체크인',
-      '체크아웃',
+      if (dates) ...['체크인', '체크아웃'],
       '입금',
     ],
     for (final a in people)
@@ -1006,8 +1018,7 @@ List<List<Object?>> attendeeRows(Event e, List<Attendee> people) {
         a.note,
         for (final f in e.customFields) a.extra[f],
         rooms[a.roomId],
-        ymd(a.checkIn),
-        ymd(a.checkOut),
+        if (dates) ...[ymd(a.checkIn), ymd(a.checkOut)],
         switch (a.pay) {
           payPending => '입금대기',
           _ => a.registrationId == null ? '' : '입금확인', // 빈칸 = 붙여넣기·직접 추가

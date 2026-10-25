@@ -393,7 +393,9 @@ class _AssignScreenState extends State<AssignScreen> {
     final sub = [
       if ((a.zone ?? '').isNotEmpty) '존 ${a.zone}',
       if ((a.cell ?? '').isNotEmpty) '셀 ${a.cell}',
-      '${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}',
+      // 날짜 없는 집회는 일정 글자를 빼고 존·셀만.
+      if (current.value?.dateless != true)
+        '${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}',
     ].join('  ·  ');
 
     return InkWell(
@@ -444,16 +446,19 @@ class _AssignScreenState extends State<AssignScreen> {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    sub,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textMuted,
+                  // 날짜 없는 집회에서 존·셀도 없으면 빈 줄을 그리지 않는다.
+                  if (sub.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -619,7 +624,7 @@ class _AssignScreenState extends State<AssignScreen> {
                       '${a.name}  ${genderLabel(a.gender)} ${a.age}세'
                       '${(a.zone ?? '').isEmpty ? '' : '   존:${a.zone}'}'
                       '${(a.cell ?? '').isEmpty ? '' : '  셀:${a.cell}'}'
-                      '   ${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}',
+                      '${current.value?.dateless == true ? '' : '   ${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}'}',
                       style: const TextStyle(fontSize: 13),
                     ),
                   ),
@@ -669,11 +674,13 @@ class _AssignScreenState extends State<AssignScreen> {
             icon: const Icon(Icons.login, size: 18),
             label: Text('${chosen.length}명 → ${picked.length}개 방 배정'),
           ),
-          OutlinedButton.icon(
-            onPressed: chosen.isEmpty ? null : () => _setStay(chosen),
-            icon: const Icon(Icons.date_range, size: 18),
-            label: const Text('체크인/아웃'),
-          ),
+          // 날짜 없는 집회는 묵는 기간이 없다.
+          if (current.value?.dateless != true)
+            OutlinedButton.icon(
+              onPressed: chosen.isEmpty ? null : () => _setStay(chosen),
+              icon: const Icon(Icons.date_range, size: 18),
+              label: const Text('체크인/아웃'),
+            ),
           OutlinedButton.icon(
             onPressed: chosen.isEmpty
                 ? null
@@ -1454,7 +1461,9 @@ Future<void> showRoomOccupants(BuildContext context, Room room) {
                         ],
                       ),
                       subtitle: Text(
-                        '${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}  ${a.zone ?? ''} ${a.cell ?? ''}',
+                        current.value?.dateless == true
+                            ? '${a.zone ?? ''} ${a.cell ?? ''}'.trim()
+                            : '${fmtDate(a.checkIn)}~${fmtDate(a.checkOut)}  ${a.zone ?? ''} ${a.cell ?? ''}',
                         style: const TextStyle(fontSize: 11),
                       ),
                       trailing: IconButton(
