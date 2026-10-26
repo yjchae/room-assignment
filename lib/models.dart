@@ -284,7 +284,9 @@ class Room {
   String? pay;
   bool get unpaid => pay == payPending;
 
-  /// 홈스테이에서 이 가정이 신청서에 적은 "받을 수 있는 기간". null = 집회 전체.
+  /// 이 방을 쓸 수 있는 기간 (나오는 날 아침까지). null = 집회 전체.
+  /// 홈스테이는 가정이 신청서에 적은 "받을 수 있는 기간"이고, 일반 방은 운영자가 방 수정 창에서
+  /// 정하는 "사용 기간"이다(`Store.setRoomPeriod`, PLAN_GATHERING §26).
   /// 배정할 때 이 기간을 보여 주고 며칠을 넣을지 고른다.
   DateTime? hostFrom, hostTo;
 
@@ -306,7 +308,7 @@ class Room {
     this.hostNights,
   });
 
-  /// 이 가정이 [night] 밤을 받을 수 있는가. 신청서에 기간이 없으면(= 일반 방) 늘 참.
+  /// 이 방(가정)이 [night] 밤을 받을 수 있는가. 기간을 안 정했으면 늘 참.
   bool hostsOn(DateTime night) {
     final n = dateOnly(night);
     if (hostNights case final ns?) return ns.contains(n);

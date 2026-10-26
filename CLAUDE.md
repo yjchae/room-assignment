@@ -59,6 +59,8 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 **기간을 나눈 참석자** (`Attendee.splitOf`): 한 사람이 기간별로 다른 방(홈스테이는 다른 집)에 묵으면 참석자 행이 조각으로 나뉜다. `Store.splitStay`(경계 날짜로 자르기)·`assignRange`(고른 기간만 배정, 나머지는 미배정 조각)가 만들고, 같은 사람은 `Attendee.personId` 로 묶어 화면에서 한 줄로 그린다. 조각도 제 일정을 가진 보통 참석자라 정원·보드·자동배정은 손댈 필요가 없다. 나뉜 조각은 `registrationId` 를 떼고 원본에 `editedByAdmin` 을 붙여 [신청에서 가져오기]가 되돌리지 않게 한다.
 
+**방 사용 기간** (`Room.hostFrom`·`hostTo`): 일반 집회 방도 쓰는 기간을 정할 수 있다(방 수정 창 [사용 기간], 2박 이상 집회만). 홈스테이 가정의 받는 기간과 같은 칸이라 자동배정·배정 경고가 그대로 지킨다. 기간을 줄이면 `Store.setRoomPeriod` 가 배정된 사람을 기간 안은 그 방에 두고 기간 밖은 미배정 조각(`splitStay`)으로 떼어내, 집회 중간에 다른 방으로 옮길 수 있게 한다. 요구사항은 `PLAN_GATHERING.md` §26.
+
 **신청서 추가 항목 형식** (`FieldSpec`, `models.dart`): 텍스트·숫자·체크박스·셀렉트박스(보기 목록)·토글 버튼. 이름처럼 방배정 문서(`Event.fieldSpecs`)에 살다가 집회 설정 [저장] 때 `gatherings.field_specs` 로 복사된다. 키가 없으면 텍스트, 값은 형식과 상관없이 `extra` 의 문자열 하나(켜고 끄는 형식은 `fieldOn`='예'). 신청 웹·참석자 편집 창은 `widgets/custom_field_input.dart` 의 `CustomFieldInput` 하나로 그리고, 추가·고치기는 `attendees.dart` 의 `_customFieldDialog` 하나다. `field_specs` 는 칸이 있는 DB 에서 읽었거나 형식이 있을 때만 보낸다(schema.sql 전 DB 에서도 저장이 안 깨지게). 요구사항은 `PLAN_GATHERING.md` §21.
 
 **신청서 기본 항목**: 운영자가 칸마다 [안 받음 | 선택 | 필수]를 정한다. 보통 칸은 뺀 목록(`hidden_fields`)으로,

@@ -249,7 +249,7 @@ AutoAssignResult autoAssign(Event event, AutoRule rule) {
     for (var i = 0; i < nights.length; i++) {
       if (!stays[i]) continue;
       if (c[i] + 1 > r.capacity) return false;
-      // 홈스테이: 그 가정이 신청하지 않은 밤에 묵는 사람은 넣지 않는다.
+      // 홈스테이 가정이 신청하지 않은 밤, 방의 사용 기간 밖에 묵는 사람은 넣지 않는다.
       if (!r.hostsOn(nights[i])) return false;
     }
     return true;

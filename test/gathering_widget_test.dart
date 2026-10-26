@@ -2466,6 +2466,59 @@ void main() {
       expect(find.text('호수를 인식하지 못했습니다. 예: 301 또는 301-310'), findsOneWidget);
     });
 
+    testWidgets('방 관리: 사용 기간을 줄이면 묻고, 배정된 사람의 남은 기간을 미배정으로 나눈다', (
+      tester,
+    ) async {
+      current.value = sample();
+      store.event.rooms.add(Room(id: 'A', roomNo: '301', capacity: 4));
+      store.event.attendees.add(
+        Attendee(
+          id: 'p1',
+          name: '김철수',
+          gender: 'M',
+          age: 30,
+          roomId: 'A',
+          checkIn: DateTime(2026, 10, 9),
+          checkOut: DateTime(2026, 10, 11),
+        ),
+      );
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RoomsScreen()));
+      await tester.tap(find.text('301'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('기간 지정'));
+      await tester.pumpAndSettle();
+      // 비우는 날을 10일로 — 첫 밤만 이 방을 쓴다.
+      await tester.tap(find.text('비우는 날'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('10'));
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      expect(find.text('1박'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(find.text('기간 밖에도 묵는 사람이 있습니다'), findsOneWidget);
+      expect(find.text('김철수'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '나누고 저장'));
+      await tester.pumpAndSettle();
+
+      final room = store.event.rooms.single;
+      expect(room.hostTo, DateTime(2026, 10, 10));
+      expect(store.event.attendees, hasLength(2));
+      expect(store.occupantsOf(room).single.checkOut, DateTime(2026, 10, 10));
+      expect(store.unassigned.single.checkIn, DateTime(2026, 10, 10));
+      expect(find.textContaining('1명의 남은 기간은 미배정입니다'), findsOneWidget);
+    });
+
+    testWidgets('방 관리: 날짜 없는 집회에는 사용 기간 칸이 없다', (tester) async {
+      current.value = dateless();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RoomsScreen()));
+      await tester.tap(find.widgetWithText(FilledButton, '방 추가'));
+      await tester.pumpAndSettle();
+      expect(find.text('기간 지정'), findsNothing);
+    });
+
     testWidgets('새 집회: 체크하면 기준일 하나, 만들면 dateless·start = end, 날짜 규칙은 끈다', (
       tester,
     ) async {

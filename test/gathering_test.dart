@@ -1312,6 +1312,132 @@ void main() {
       expect(reg('r2', RegStatus.pending, []).assigned, isEmpty);
     });
   });
+  group('방 사용 기간 (PLAN_GATHERING §26)', () {
+    // 4박 집회 (10/9 ~ 10/13)
+    Store fourNights() => Store()
+      ..event = Event(
+        name: 'x',
+        startDate: DateTime(2026, 10, 9),
+        endDate: DateTime(2026, 10, 13),
+        rooms: [
+          Room(id: 'A', roomNo: '301', capacity: 4),
+          Room(id: 'B', roomNo: '302', capacity: 4),
+        ],
+      );
+    Attendee guest(String id, int inDay, int outDay) => Attendee(
+      id: id,
+      name: id,
+      gender: 'M',
+      age: 30,
+      roomId: 'A',
+      checkIn: DateTime(2026, 10, inDay),
+      checkOut: DateTime(2026, 10, outDay),
+    );
+
+    test('기간을 줄이면 배정된 사람은 기간 안은 그 방에 남고 나머지는 미배정 조각이 된다', () {
+      final s = fourNights();
+      s.event.attendees.addAll([
+        guest('전체', 9, 13), // 앞 2박은 A, 뒤 2박은 미배정
+        guest('앞만', 9, 11), // 기간 안 — 그대로
+        guest('뒤만', 11, 13), // 기간과 안 겹친다 — 통째로 미배정
+      ]);
+      final room = s.event.rooms.first;
+      expect(
+        s
+            .outsidePeriod(room, DateTime(2026, 10, 9), DateTime(2026, 10, 11))
+            .map((a) => a.id),
+        ['전체', '뒤만'],
+      );
+      final n = s.setRoomPeriod(
+        room,
+        DateTime(2026, 10, 9),
+        DateTime(2026, 10, 11),
+      );
+      expect(n, 2);
+      expect(
+        (room.hostFrom, room.hostTo),
+        (DateTime(2026, 10, 9), DateTime(2026, 10, 11)),
+      );
+      expect(occupancyByNight(s.occupantsOf(room), s.event.nights), [
+        2,
+        2,
+        0,
+        0,
+      ]);
+
+      final all = s.event.attendees.firstWhere((a) => a.id == '전체');
+      expect((all.roomId, all.checkOut), ('A', DateTime(2026, 10, 11)));
+      final rest = s.partsOf(all).firstWhere((a) => a.id != '전체');
+      expect(
+        (rest.roomId, rest.checkIn, rest.checkOut),
+        (null, DateTime(2026, 10, 11), DateTime(2026, 10, 13)),
+      );
+      expect(s.event.attendees.firstWhere((a) => a.id == '앞만').roomId, 'A');
+      expect(s.event.attendees.firstWhere((a) => a.id == '뒤만').roomId, isNull);
+    });
+
+    test('기간이 늦게 시작하면 뒤 조각이 방에 남고 앞이 미배정이 된다', () {
+      final s = fourNights();
+      final a = guest('전체', 9, 13);
+      s.event.attendees.add(a);
+      final room = s.event.rooms.first;
+      s.setRoomPeriod(room, DateTime(2026, 10, 11), DateTime(2026, 10, 13));
+      expect((a.roomId, a.checkOut), (null, DateTime(2026, 10, 11)));
+      final later = s.partsOf(a).firstWhere((x) => x.id != a.id);
+      expect((later.roomId, later.checkIn), ('A', DateTime(2026, 10, 11)));
+      expect(later.personId, a.personId); // 화면에서는 한 사람
+    });
+
+    test('남은 기간은 자동배정이 기간 밖 방을 피해 다른 방에 넣는다', () {
+      final s = fourNights();
+      s.event.attendees.add(guest('전체', 9, 13));
+      s.setRoomPeriod(
+        s.event.rooms.first,
+        DateTime(2026, 10, 9),
+        DateTime(2026, 10, 11),
+      );
+      final r = autoAssign(s.event, AutoRule());
+      expect(r.unplaced, isEmpty);
+      expect(r.assignments.single.room.id, 'B');
+    });
+
+    test('기간을 안 정한 방은 문서가 그대로고, 집회 전체로 되돌리면 아무도 안 나뉜다', () {
+      final s = fourNights();
+      final room = s.event.rooms.first;
+      expect(room.toJson().containsKey('hostFrom'), isFalse);
+      s.event.attendees.add(guest('전체', 9, 13));
+      s.setRoomPeriod(room, DateTime(2026, 10, 9), DateTime(2026, 10, 11));
+      final back = Event.fromJson(s.event.toJson()).rooms.first;
+      expect((back.hostFrom, back.hostTo), (room.hostFrom, room.hostTo));
+
+      final before = s.event.attendees.length;
+      expect(s.setRoomPeriod(room, null, null), 0);
+      expect((room.hostFrom, room.hostTo), (null, null));
+      expect(s.event.attendees, hasLength(before));
+      expect(room.toJson().containsKey('hostFrom'), isFalse);
+    });
+
+    test('범위로 방을 만들 때 기간을 같이 준다', () {
+      final s = fourNights();
+      s.addRoomRange(
+        '401-402',
+        capacity: 4,
+        from: DateTime(2026, 10, 11),
+        to: DateTime(2026, 10, 13),
+      );
+      final made = s.event.rooms.where((r) => r.roomNo.startsWith('4'));
+      expect(made, hasLength(2));
+      expect(
+        made.every(
+          (r) =>
+              !r.hostsOn(DateTime(2026, 10, 10)) &&
+              r.hostsOn(DateTime(2026, 10, 11)),
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('추가 항목 형식 (PLAN_GATHERING §21)', () {
     const church = FieldSpec(type: FieldType.select, options: ['A교회', 'B교회']);
 
