@@ -152,6 +152,9 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
         })
           a,
     ];
+    // 기간을 나눈 사람은 조각이 여럿이다 — 인원·통계는 사람 하나로 센다.
+    // 목록은 조각째 보여 준다 (조각마다 방·기간이 달라 따로 고친다).
+    final persons = onePerPerson(people);
     final key = attendeeStats[pick?.$1];
     // 입금 전 신청자도 참석자에 있다 — 확정 인원과 따로 셀 수 있게.
     // 기간을 나눈 사람은 한 명으로 센다 (방배정·현황 화면과 같은 기준).
@@ -273,12 +276,9 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
           onDeleted: () => setState(() => pick = null),
         ),
       ],
+      // 기간을 나눈 사람은 조각이 여럿이라 사람 수로 센다.
       Text(
-        homestay
-            // 기간을 나눈 아이는 조각이 여럿이라 사람 수로 센다.
-            ? '${list.map((a) => a.personId).toSet().length} / '
-                  '${people.map((a) => a.personId).toSet().length}명'
-            : '${list.length} / ${people.length}명',
+        '${list.map((a) => a.personId).toSet().length} / ${persons.length}명',
       ),
     ];
     return Scaffold(
@@ -392,7 +392,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
               child: SizedBox(
                 height: 224,
                 child: _StatsPanel(
-                  people: people,
+                  people: persons,
                   pick: pick,
                   onPick: (p) => setState(() => pick = pick == p ? null : p),
                 ),
@@ -439,7 +439,9 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, i) {
                       final a = list[i];
-                      final room = store.roomById(a.roomId);
+                      final room = a.noStay
+                          ? '미숙박'
+                          : store.roomById(a.roomId)?.label;
                       // 당일 참석자는 신청에만 있다 — 고친 내용은 방배정 참석자와 따로 둔다.
                       final visitor = visitors.contains(a.id);
                       return ListTile(
@@ -469,11 +471,7 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                           ].join('  '),
                         ),
                         trailing: Text(
-                          visitor
-                              ? '당일'
-                              : room == null
-                              ? '미배정'
-                              : room.label,
+                          visitor ? '당일' : room ?? '미배정',
                           style: TextStyle(
                             color: room == null ? Colors.grey : Colors.indigo,
                             fontWeight: FontWeight.bold,
@@ -1509,6 +1507,7 @@ Future<void> attendeeDialog(
       a.checkIn != checkIn ||
       a.checkOut != checkOut ||
       !mapEquals(a.extra, extraValues);
+  final datesChanged = a.checkIn != checkIn || a.checkOut != checkOut;
   if (visitor) {
     if (!changed && a.note == opt(note)) return;
     a
@@ -1527,6 +1526,7 @@ Future<void> attendeeDialog(
     } else {
       store.saveVisitor(a);
     }
+    if (datesChanged) await pushStay(messenger, [a]);
     return;
   }
   // 일정을 고치면 띄엄띄엄 묵던 밤 목록은 버린다 (운영자가 정한 기간이 이긴다).
@@ -1548,6 +1548,31 @@ Future<void> attendeeDialog(
     a.editedByAdmin = true;
   }
   store.commit();
+  if (!isNew && datesChanged) await pushStay(messenger, [a]);
+}
+
+/// 참석자 쪽에서 고친 일정을 그 사람의 신청서·회비에도 적는다 ([Store.writeStayToRegistrations]).
+/// 방배정은 이미 저장됐으니 실패해도 알리기만 한다.
+Future<void> pushStay(
+  ScaffoldMessengerState messenger,
+  Iterable<Attendee> people,
+) async {
+  final g = current.value;
+  if (g == null || !remote.signedIn) return;
+  try {
+    final n = await store.writeStayToRegistrations(g, people);
+    if (n > 0) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('신청 $n건의 날짜도 새 일정으로 바꿨습니다. 금액이 달라졌으면 [신청·입금]에 경고가 뜹니다.'),
+        ),
+      );
+    }
+  } catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('신청서의 날짜는 바꾸지 못했습니다. ${errorText(e)}')),
+    );
+  }
 }
 
 /// 참석자의 일정을 날짜로 잘라 뒤쪽을 미배정으로 떼어낸다 — 그 기간만 다른 방(가정)에 보낼 때.

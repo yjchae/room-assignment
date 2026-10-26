@@ -1074,28 +1074,43 @@ void main() {
       expect(r.data!['attendees'] as List, hasLength(10));
     });
 
-    test('다른 기기가 먼저 저장했으면 덮어쓰지 않고 그 내용을 불러온다', () async {
+    test('다른 기기가 먼저 저장했으면 그 내용 위에 내 변경을 얹어 다시 올린다', () async {
       final r = PlanRemote();
       remote = r;
       final a = Store(), b = Store();
-      await a.open('g1', ev());
+      await a.open('g1', ev(rooms: [room('301', 4)]));
+      a.commit();
+      await a.pendingWrites;
       await b.open('g1', ev());
       b.event.attendees.add(person('B가 추가'));
+      b.event.rooms.single.capacity = 6;
       b.commit();
       await b.pendingWrites;
 
-      a.event.attendees.add(person('A가 추가'));
+      // A 는 B 의 저장을 모른 채 방을 추가한다 — 사라지면 안 된다.
+      a.event.rooms.add(room('501', 2));
       a.commit();
       await a.pendingWrites;
-      expect((r.data!['attendees'] as List).single['name'], 'B가 추가');
-      expect(a.event.attendees.single.name, 'B가 추가');
-      expect(a.saveError, contains('다른 기기'));
-
-      // 그다음 변경은 최신 버전 위에 저장된다
-      a.commit();
-      await a.pendingWrites;
-      expect(r.version, 2);
+      final saved = Event.fromJson(r.data!);
+      expect(saved.attendees.map((x) => x.name), ['B가 추가']);
+      expect(saved.rooms.map((x) => '${x.roomNo}/${x.capacity}'), [
+        '301/6',
+        '501/2',
+      ]);
+      expect(a.event.rooms, hasLength(2));
       expect(a.saveError, isNull);
+
+      // A 가 지운 방은 B 의 문서에서도 빠진다
+      await b.open('g1', ev());
+      a.event.rooms.removeWhere((x) => x.roomNo == '301');
+      a.commit();
+      await a.pendingWrites;
+      b.event.attendees.add(person('B 둘째'));
+      b.commit();
+      await b.pendingWrites;
+      final last = Event.fromJson(r.data!);
+      expect(last.rooms.map((x) => x.roomNo), ['501']);
+      expect(last.attendees, hasLength(2));
     });
 
     test('집회를 열기만 해서는 저장하지 않는다 (다른 기기와 괜한 충돌 방지)', () async {

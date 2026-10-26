@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../store.dart' show onePerPerson;
 import '../responsive.dart';
 import '../theme.dart';
 import '../widgets/room_board.dart';
@@ -12,8 +13,21 @@ class StatusScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final e = store.event;
-    final assigned = e.attendees.where((a) => a.roomId != null).length;
+    // 사람 단위로 센다 — 기간을 나눈 사람은 조각이 여럿이다.
+    // 조각 하나라도 방이 없으면 미배정, 전부 미숙박이면 미숙박, 나머지가 배정완료.
     final unassigned = store.unassigned;
+    final total = onePerPerson(e.attendees).length;
+    final waiting = unassigned.map((a) => a.personId).toSet();
+    final noStay = e.attendees
+        .where((a) => !waiting.contains(a.personId))
+        .fold(<String, bool>{}, (m, a) {
+          m[a.personId] = (m[a.personId] ?? true) && a.noStay;
+          return m;
+        })
+        .values
+        .where((v) => v)
+        .length;
+    final assigned = total - waiting.length - noStay;
     final free = e.rooms
         .map(store.freeSeats)
         .fold(0, (s, x) => s + (x > 0 ? x : 0));
@@ -22,7 +36,7 @@ class StatusScreen extends StatelessWidget {
     final unpaid = e.attendees.where((a) => a.unpaid);
     final unpaidPeople = unpaid.map((a) => a.personId).toSet().length;
     final unpaidInRoom = unpaid
-        .where((a) => a.roomId != null)
+        .where((a) => a.roomId != null && !a.noStay)
         .map((a) => a.personId)
         .toSet()
         .length;
@@ -34,12 +48,13 @@ class StatusScreen extends StatelessWidget {
           spacing: 12,
           runSpacing: 12,
           children: [
-            StatCard('총원', '${e.attendees.length}', unit: '명'),
+            StatCard('총원', '$total', unit: '명'),
             StatCard('배정완료', '$assigned', unit: '명'),
+            if (noStay > 0) StatCard('미숙박', '$noStay', unit: '명'),
             // 색은 손봐야 할 게 남았을 때만.
             StatCard(
               '미배정',
-              '${unassigned.length}',
+              '${waiting.length}',
               unit: '명',
               color: unassigned.isEmpty ? null : AppColors.warnInk,
             ),

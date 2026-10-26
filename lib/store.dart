@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -49,6 +50,9 @@ class Store extends ChangeNotifier {
       if (p != null) {
         event = Event.fromJson(p.data);
         version = p.version;
+        _base = event.toJson();
+      } else {
+        _base = null;
       }
       loadError = null;
     } catch (e) {
@@ -74,19 +78,53 @@ class Store extends ChangeNotifier {
   /// 테스트/집회 전환 때 저장이 끝날 때까지 기다린다.
   Future<void> get pendingWrites => _saving ?? Future.value();
 
+  /// 마지막으로 읽거나 저장한 서버 문서. 충돌 때 "내가 바꾼 것"을 가려내는 기준이다.
+  Map<String, dynamic>? _base;
+
+  /// 다음 저장은 충돌해도 합치지 않고 내 문서로 덮는다 (백업 되살리기 — [replaceEvent]).
+  bool _overwrite = false;
+
+  /// 문서를 통째로 바꾼다 (백업 되살리기). 그사이 다른 기기가 저장했어도 이 문서가 이긴다 —
+  /// 합치면 백업과 지금 내용이 섞인다.
+  void replaceEvent(Event e) {
+    event = e;
+    _overwrite = true;
+    commit();
+  }
+
   Future<void> _flush() async {
+    var conflicts = 0;
     while (_dirty && gatheringId != null && loadError == null) {
       _dirty = false;
+      final data = event.toJson();
       try {
-        version = await remote.saveRoomPlan(
-          gatheringId!,
-          event.toJson(),
-          version,
-        );
+        version = await remote.saveRoomPlan(gatheringId!, data, version);
+        _base = data;
+        _overwrite = false;
         saveError = null;
       } catch (e) {
-        if (isConflict(e)) {
-          // 다른 기기가 먼저 저장했다. 덮어쓰지 않고 그쪽 내용으로 바꾼다.
+        if (isConflict(e) && ++conflicts <= 3) {
+          // 다른 기기가 먼저 저장했다. 그쪽 내용 위에 내가 바꾼 것만 얹어 다시 올린다
+          // (안 그러면 방금 추가한 방·배정이 말없이 사라진다).
+          try {
+            final p = await remote.roomPlan(gatheringId!);
+            if (p == null) throw StateError('방배정 문서가 없습니다');
+            final server = Event.fromJson(p.data).toJson();
+            if (!_overwrite) {
+              event = Event.fromJson(
+                mergePlan(_base ?? const {}, event.toJson(), server),
+              );
+              // 화면이 옛 문서의 방·사람을 붙잡고 고치지 않게 바로 다시 그린다.
+              notifyListeners();
+            }
+            version = p.version;
+            _base = server;
+            _dirty = true;
+          } catch (_) {
+            await load();
+            saveError = '다른 기기에서 먼저 저장해 최신 내용을 다시 불러왔습니다. 방금 한 변경은 다시 해주세요.';
+          }
+        } else if (isConflict(e)) {
           await load();
           saveError = '다른 기기에서 먼저 저장해 최신 내용을 다시 불러왔습니다. 방금 한 변경은 다시 해주세요.';
         } else {
@@ -306,7 +344,8 @@ class Store extends ChangeNotifier {
           (a) =>
               a.registrationId != null &&
               !want.containsKey(a.id) &&
-              a.roomId != null,
+              a.roomId != null &&
+              !a.noStay,
         )
         .toList();
   }
@@ -395,7 +434,7 @@ class Store extends ChangeNotifier {
     // 기간을 나눈 사람은 조각 중 하나라도 방에 있으면 남긴다 — 원본만 지우면 조각이 고아가 된다.
     final housed = {
       for (final a in event.attendees)
-        if (a.roomId != null) a.personId,
+        if (a.roomId != null && !a.noStay) a.personId, // 미숙박은 방이 없다
     };
     // 운영자가 고친 사람은 신청에 남아 있는 한 빼지 않는다 — 당일 신청자를 묵게 고친 경우
     // ([promoteVisitor])처럼 신청 내용으로는 참석자가 아니어도 운영자가 정한 일정이 이긴다.
@@ -752,7 +791,7 @@ class Store extends ChangeNotifier {
 
   /// "301-310" 또는 "301" 범위 문자열을 [building] 건물의 방으로 일괄 생성.
   /// 같은 건물에 이미 있는 호수는 건너뛴다 (건물이 다르면 같은 호수도 만든다).
-  /// [names] 면(날짜 없는 집회) 호수로 못 읽은 입력('1조', '찬양팀')을 이름 그대로 방 하나로 만든다.
+  /// [names] 면 호수로 못 읽은 입력('1조', 'A101', '세미나실')을 이름 그대로 방 하나로 만든다.
   /// 반환값: (생성 수, 건너뛴 수)
   (int, int) addRoomRange(
     String range, {
@@ -767,8 +806,17 @@ class Store extends ChangeNotifier {
     final b = (building ?? '').trim().isEmpty ? null : building!.trim();
     final existing = event.rooms.map((r) => r.label).toSet();
     var made = 0, skipped = 0;
-    var nos = parseRoomRange(range);
-    if (names && nos.isEmpty && range.trim().isNotEmpty) nos = [range.trim()];
+    // 쉼표로 나눈 칸마다: 숫자 범위면 호수들, 아니면([names] 일 때) 그 글자 그대로 방 하나.
+    final nos = [
+      for (final part in range.split(','))
+        ...switch (parseRoomRange(part)) {
+          final xs when xs.isNotEmpty => xs,
+          // 숫자·범위 기호뿐인데 못 읽었으면('310-301', '301 302') 오타다 — 이름 방으로 만들지 않는다.
+          _ when names && !RegExp(r'^[\d\s\-~]*$').hasMatch(part) =>
+            [part.trim()],
+          _ => const <String>[],
+        },
+    ];
     for (final n in nos) {
       final room = Room(
         id: newId(),
@@ -848,6 +896,83 @@ class Store extends ChangeNotifier {
       a.stayNights = null;
     }
     commit();
+  }
+
+  /// 운영자가 참석자 쪽에서 고친 일정을 그 사람의 신청서에도 적는다 — 신청·입금 화면의 날짜와
+  /// 계산 금액([Gathering.quoteFor], 신청서 날짜로 센다)이 참석자와 같아지게. 기간을 나눈 사람은 조각들의 밤을 합쳐 적는다.
+  /// 신청에서 오지 않은 사람은 건너뛴다. 고친 신청 수를 돌려준다.
+  /// 묵는 기간과 떨어진 당일 방문(1·2·4일의 4일)은 신청서에 있던 대로 남긴다.
+  /// ponytail: 신청을 읽은 뒤 고쳐 쓰기까지 사이에 신청자가 자기 신청을 고치면 그 변경을 덮는다
+  /// (몇 초 안). 문제가 되면 서버 함수로 people 의 날짜 칸만 바꾼다.
+  Future<int> writeStayToRegistrations(
+    Gathering g,
+    Iterable<Attendee> people,
+  ) async {
+    if (g.isHomestay || g.dateless) return 0;
+    final ids = {for (final a in people) a.personId};
+    if (ids.isEmpty) return 0;
+    var n = 0;
+    for (final r in await remote.registrations(g.id)) {
+      if (r.status == RegStatus.cancelled) continue;
+      var touched = false;
+      for (final p in r.people) {
+        if (!ids.contains(p.id)) continue;
+        var (days, nights) = _stayOf(p.id);
+        if (days.isEmpty) continue;
+        final separate = g.fee.lodgingSeparate || p.stays != null;
+        if (nights.isNotEmpty) {
+          // 묵는 기간과 떨어진 당일 방문(1·2·4일의 4일)은 신청서에 있던 대로 남긴다.
+          final old = p.nightsIn(g.start, g.end, separate: separate);
+          final stayDays = {
+            for (final n in old) ...[n, DateTime(n.year, n.month, n.day + 1)],
+          };
+          days = {
+            ...days,
+            ...p.daysIn(g.start, g.end).where((d) => !stayDays.contains(d)),
+          }.toList()..sort();
+        }
+        if (listEquals(p.daysIn(g.start, g.end), days) &&
+            (!separate ||
+                listEquals(
+                  p.nightsIn(g.start, g.end, separate: true),
+                  nights,
+                ))) {
+          continue;
+        }
+        p
+          ..days = days
+          ..checkIn = null
+          ..checkOut = null;
+        if (separate) p.stays = nights;
+        touched = true;
+      }
+      if (!touched) continue;
+      // 날짜만 고친다. 신청 때 보여 준 금액(quoted)은 그대로 둔다 — [신청·입금]의 금액 체크
+      // (신청 금액 ≠ 지금 계산 금액이면 경고)가 바뀐 금액을 그대로 짚어 주게.
+      await remote.patchRegistration(r.id, {
+        'people': [for (final p in r.people) p.toJson()],
+      });
+      n++;
+    }
+    return n;
+  }
+
+  /// 사람 하나([Attendee.personId])가 지금 방배정에서 오는 날·묵는 밤. 조각을 합친다.
+  /// 당일 참석자([Event.visitors])는 그 하루.
+  (List<DateTime>, List<DateTime>) _stayOf(String personId) {
+    final nights = <DateTime>{};
+    for (final a in event.attendees) {
+      if (a.personId != personId) continue;
+      nights.addAll(event.nights.where(a.staysOn));
+    }
+    if (nights.isEmpty) {
+      final v = event.visitors[personId];
+      return (v == null ? <DateTime>[] : [dateOnly(v.checkIn)], <DateTime>[]);
+    }
+    final days = {
+      for (final n in nights) ...[n, DateTime(n.year, n.month, n.day + 1)],
+    }.toList()..sort();
+    return (days, nights.toList()..sort());
   }
 
   /// [a] 의 일정을 [at] 날을 경계로 둘로 나눈다. 앞쪽은 지금 방에 그대로 두고,
@@ -1066,6 +1191,30 @@ List<String> parseRoomRange(String input) {
   return out;
 }
 
+/// 기간을 나눈 사람의 조각을 사람 하나로 줄인다 (처음 나온 조각을 남긴다). 순서는 그대로.
+/// 참석자 수·통계·내려받기는 사람 단위로 센다 — 조각째 세면 같은 사람이 두 번 잡힌다.
+List<Attendee> onePerPerson(Iterable<Attendee> xs) {
+  final seen = <String>{};
+  return [
+    for (final a in xs)
+      if (seen.add(a.personId)) a,
+  ];
+}
+
+/// 그 사람이 들어간 방 이름. 기간을 나눈 사람은 조각([parts], 같은 사람)의 방을 일정 순으로 잇는다
+/// ("101 → 205"). 하나도 없으면 null(미배정). 미숙박은 '미숙박'. [rooms] = 방 id → 이름.
+String? roomLabelOf(Map<String, String> rooms, List<Attendee> parts) {
+  final sorted = [...parts]..sort((x, y) => x.checkIn.compareTo(y.checkIn));
+  final names = <String>[];
+  for (final p in sorted) {
+    final l = p.noStay
+        ? '미숙박'
+        : rooms[p.roomId] ?? (sorted.length > 1 ? '미배정' : null);
+    if (l != null && (names.isEmpty || names.last != l)) names.add(l);
+  }
+  return names.isEmpty ? null : names.join(' → ');
+}
+
 // --- CSV 내려받기 ----------------------------------------------------------
 
 /// 참석자 목록 CSV (엑셀용, 줄바꿈 CRLF). 머리글은 붙여넣기 등록과 같은 이름이라
@@ -1095,7 +1244,17 @@ List<List<Object?>> attendeeRows(
   List<Attendee> people, {
   bool dates = true,
 }) {
+  // 기간을 나눈 사람은 한 줄로 — 방은 이어 적고, 일정은 첫 조각 들어오는 날 ~ 끝 조각 나가는 날.
   final rooms = {for (final r in e.rooms) r.id: r.label};
+  final parts = <String, List<Attendee>>{};
+  for (final a in e.attendees) {
+    parts.putIfAbsent(a.personId, () => []).add(a);
+  }
+  List<Attendee> of(Attendee a) => parts[a.personId] ?? [a];
+  DateTime first(Attendee a) =>
+      of(a).map((x) => x.checkIn).reduce((m, d) => d.isBefore(m) ? d : m);
+  DateTime last(Attendee a) =>
+      of(a).map((x) => x.checkOut).reduce((m, d) => d.isAfter(m) ? d : m);
   return [
     [
       for (final k in defaultColumns) builtinFieldLabels[k]!,
@@ -1104,7 +1263,7 @@ List<List<Object?>> attendeeRows(
       if (dates) ...['체크인', '체크아웃'],
       '입금',
     ],
-    for (final a in people)
+    for (final a in onePerPerson(people))
       [
         a.name,
         switch (a.gender) {
@@ -1118,8 +1277,8 @@ List<List<Object?>> attendeeRows(
         a.zone,
         a.note,
         for (final f in e.customFields) a.extra[f],
-        rooms[a.roomId],
-        if (dates) ...[ymd(a.checkIn), ymd(a.checkOut)],
+        roomLabelOf(rooms, of(a)),
+        if (dates) ...[ymd(first(a)), ymd(last(a))],
         switch (a.pay) {
           payPending => '입금대기',
           _ => a.registrationId == null ? '' : '입금확인', // 빈칸 = 붙여넣기·직접 추가
@@ -1280,4 +1439,82 @@ List<ParsedRow> parseAttendeeText(
     );
   }
   return rows;
+}
+
+/// 저장 충돌 때 문서 합치기. [base] = 내가 마지막으로 본 서버 문서, [mine] = 지금 내 문서,
+/// [server] = 그사이 다른 기기가 올린 문서. 서버 문서를 바탕으로 내가 바꾼 것만 얹는다.
+/// 방·참석자·담당구역·당일 참석자는 id 별로(내가 고친 것·추가한 것·지운 것), 지운 기록은 양쪽 것을 합치고,
+/// 나머지 칸은 통째로 본다. 합친 뒤 없는 방을 가리키는 배정은 미배정으로, 없는 사람은 담당구역에서 뺀다.
+/// ponytail: 같은 사람(방)을 양쪽이 다 고쳤으면 내 쪽이 이긴다 — 칸 단위로 합치진 않는다.
+/// 정원도 다시 따지지 않는다(양쪽이 같은 빈자리에 넣으면 초과가 되고 보드에 '초과'로 보인다).
+Map<String, dynamic> mergePlan(
+  Map<String, dynamic> base,
+  Map<String, dynamic> mine,
+  Map<String, dynamic> server,
+) {
+  bool same(Object? a, Object? b) => jsonEncode(a) == jsonEncode(b);
+  Map<String, Object?> byId(Object? xs) => {
+    for (final x in xs as List? ?? const []) '${(x as Map)['id']}': x,
+  };
+  // 서버 것을 바탕으로: 내가 지운 것은 빼고, 내가 고친 것은 내 것으로, 내가 추가한 것은 더한다.
+  Map<String, Object?> mergeMap(
+    Map<String, Object?> b,
+    Map<String, Object?> m,
+    Map<String, Object?> sv,
+  ) => {
+    for (final e in sv.entries)
+      if (!(b.containsKey(e.key) && !m.containsKey(e.key)))
+        e.key: m.containsKey(e.key) && !same(m[e.key], b[e.key])
+            ? m[e.key]
+            : e.value,
+    for (final e in m.entries)
+      if (!b.containsKey(e.key) && !sv.containsKey(e.key)) e.key: e.value,
+  };
+  List mergeList(String k) =>
+      mergeMap(byId(base[k]), byId(mine[k]), byId(server[k])).values.toList();
+  Map<String, Object?> asMap(Object? x) => {...?(x as Map?)?.cast()};
+  Set<String> asSet(Object? x) => {for (final e in x as List? ?? const []) '$e'};
+
+  final out = <String, dynamic>{
+    for (final k in {...server.keys, ...mine.keys})
+      k: switch (k) {
+        'rooms' || 'attendees' || 'duties' => mergeList(k),
+        'visitors' => mergeMap(asMap(base[k]), asMap(mine[k]), asMap(server[k])),
+        'deletedIds' => {
+          ...asSet(server[k]).difference(
+            asSet(base[k]).difference(asSet(mine[k])),
+          ),
+          ...asSet(mine[k]).difference(asSet(base[k])),
+        }.toList(),
+        _ => !same(mine[k], base[k]) ? mine[k] : server[k],
+      },
+  }..removeWhere((_, v) => v == null);
+
+  // 한쪽이 지운 방에 다른 쪽이 사람을 넣었으면 그 사람은 미배정으로 — 없는 방에 묶이면 아무 데도 안 보인다.
+  final rooms = {for (final r in out['rooms'] as List? ?? const []) '${(r as Map)['id']}'};
+  // 서버 문서([base] 로도 쓴다)의 칸을 고치지 않게 복사해서 바꾼다.
+  final people = <String>{};
+  out['attendees'] = [
+    for (final a in out['attendees'] as List? ?? const [])
+      <String, dynamic>{
+        ...(a as Map).cast<String, dynamic>(),
+        if (a['roomId'] case final String r
+            when r != noStayRoom && !rooms.contains(r))
+          'roomId': null,
+      },
+  ];
+  for (final a in out['attendees'] as List) {
+    people.add('${(a as Map)['splitOf'] ?? a['id']}');
+  }
+  out['duties'] = [
+    for (final d in out['duties'] as List? ?? const [])
+      <String, dynamic>{
+        ...(d as Map).cast<String, dynamic>(),
+        'personIds': [
+          for (final p in d['personIds'] as List? ?? const [])
+            if (people.contains('$p')) p,
+        ],
+      },
+  ];
+  return out;
 }

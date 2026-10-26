@@ -10,6 +10,7 @@ import '../responsive.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/room_board.dart';
+import 'attendees.dart' show pushStay;
 
 // 방 타일은 위젯으로 분리했지만, 이 화면을 쓰는 쪽(현황 화면·테스트)이
 // 계속 여기서 가져다 쓰고 있어 그대로 내보낸다.
@@ -463,7 +464,7 @@ class _AssignScreenState extends State<AssignScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            _RoomPill(room?.label),
+            _RoomPill(room?.label ?? (a.noStay ? '미숙박' : null)),
           ],
         ),
       ),
@@ -680,6 +681,20 @@ class _AssignScreenState extends State<AssignScreen> {
               onPressed: chosen.isEmpty ? null : () => _setStay(chosen),
               icon: const Icon(Icons.date_range, size: 18),
               label: const Text('체크인/아웃'),
+            ),
+          // 오지만 자지 않는 사람. 방 없이 "배정된" 것으로 쳐서 미배정·자동배정에서 빠진다.
+          // 홈스테이(아이는 다 묵는다)·날짜 없는 집회(방 = 그룹)에는 뜻이 없다.
+          if (current.value?.isHomestay != true &&
+              current.value?.dateless != true)
+            OutlinedButton.icon(
+              onPressed: chosen.isEmpty
+                  ? null
+                  : () {
+                      store.assignAll(chosen, noStayRoom);
+                      setState(selected.clear);
+                    },
+              icon: const Icon(Icons.bedtime_off_outlined, size: 18),
+              label: const Text('미숙박'),
             ),
           OutlinedButton.icon(
             onPressed: chosen.isEmpty
@@ -1258,6 +1273,7 @@ class _AssignScreenState extends State<AssignScreen> {
   );
 
   Future<void> _setStay(List<Attendee> chosen) async {
+    final messenger = ScaffoldMessenger.of(context);
     var ci = chosen.first.checkIn;
     var co = chosen.first.checkOut;
     final ok = await showDialog<bool>(
@@ -1310,6 +1326,7 @@ class _AssignScreenState extends State<AssignScreen> {
     if (!co.isAfter(ci)) co = ci.add(const Duration(days: 1));
     store.setStay(chosen, ci, co);
     if (mounted) setState(() {});
+    await pushStay(messenger, chosen);
   }
 }
 
@@ -1421,6 +1438,8 @@ Future<void> showRoomOccupants(BuildContext context, Room room) {
   return showDialog(
     context: context,
     builder: (context) => AlertDialog(
+      // 정원을 넘겨 넣은 방은 명단이 화면보다 길다 — 잘리지 않게 굴린다.
+      scrollable: true,
       title: Row(
         children: [
           Container(

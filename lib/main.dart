@@ -685,9 +685,8 @@ Future<void> _restoreBackup(BuildContext context) async {
     danger: true,
   );
   if (!ok) return;
-  store.event = e;
   final g = current.value;
+  store.replaceEvent(e);
   if (g != null) store.applyGathering(g); // 이름·날짜는 집회 설정을 따른다
-  store.commit();
   messenger.showSnackBar(const SnackBar(content: Text('백업 파일로 되살렸습니다.')));
 }

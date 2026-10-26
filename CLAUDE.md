@@ -45,7 +45,7 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 
 **방배정 저장 흐름** (`Store`)
 - 방배정을 바꾸는 코드는 `event` 를 고친 다음 반드시 `store.commit()` 을 부른다. commit 이 알림을 보내고 문서 전체를 저장한다. 저장은 한 번에 하나만 돌고, 저장 중에 또 바뀌면 끝난 뒤 최신 상태로 한 번 더 올린다.
-- 동시 편집은 버전으로 막는다. `save_room_plan(p_version)` 이 `CONFLICT` 를 던지면 덮어쓰지 않고 서버 문서를 다시 읽는다.
+- 동시 편집은 버전으로 막는다. `save_room_plan(p_version)` 이 `CONFLICT` 를 던지면 서버 문서를 다시 읽어 `mergePlan()` 으로 내 변경(방·참석자·담당구역은 id 별 추가·수정·삭제)만 얹어 다시 올린다. 지운 기록(`deletedIds`)은 양쪽 것을 합치고, 없어진 방을 가리키는 배정은 미배정으로 돌린다. 백업 되살리기(`replaceEvent`)는 합치지 않고 덮는다. 세 번 연달아 충돌하면 서버 문서로 되돌린다.
 - `gatheringId == null` 이면 저장하지 않는다(테스트가 이 상태로 돈다). `loadError` 가 있을 때도 저장하지 않는다. 빈 화면으로 서버 내용을 덮어쓰지 않기 위해서다.
 - `applyGathering()` 은 집회 설정(이름·날짜·사용자 항목)을 `Event` 에 반영한다. 방배정 쪽 코드는 `Gathering` 을 몰라도 된다.
 
@@ -60,6 +60,10 @@ psql -v ON_ERROR_STOP=1 -q -d <빈 DB> -f supabase/test.sql   # DB 스키마 검
 **기간을 나눈 참석자** (`Attendee.splitOf`): 한 사람이 기간별로 다른 방(홈스테이는 다른 집)에 묵으면 참석자 행이 조각으로 나뉜다. `Store.splitStay`(경계 날짜로 자르기)·`assignRange`(고른 기간만 배정, 나머지는 미배정 조각)가 만들고, 같은 사람은 `Attendee.personId` 로 묶어 화면에서 한 줄로 그린다. 조각도 제 일정을 가진 보통 참석자라 정원·보드·자동배정은 손댈 필요가 없다. 나뉜 조각은 `registrationId` 를 떼고 원본에 `editedByAdmin` 을 붙여 [신청에서 가져오기]가 되돌리지 않게 한다.
 
 **방 사용 기간** (`Room.hostFrom`·`hostTo`): 일반 집회 방도 쓰는 기간을 정할 수 있다(방 수정 창 [사용 기간], 2박 이상 집회만). 홈스테이 가정의 받는 기간과 같은 칸이라 자동배정·배정 경고가 그대로 지킨다. 기간을 줄이면 `Store.setRoomPeriod` 가 배정된 사람을 기간 안은 그 방에 두고 기간 밖은 미배정 조각(`splitStay`)으로 떼어내, 집회 중간에 다른 방으로 옮길 수 있게 한다. 요구사항은 `PLAN_GATHERING.md` §26.
+
+**미숙박** (`noStayRoom`): 오지만 자지 않는 사람은 `Attendee.roomId = noStayRoom` 으로 둔다. 실제 방이 아니라 정원·보드에 안 잡히고, roomId 가 있으니 미배정·자동배정에서 빠진다. [방배정] 도구 막대의 [미숙박] 버튼으로 정한다.
+
+**사람 단위 집계**: 기간을 나눈 사람은 조각이 여럿이라 참석자 수·통계·현황·엑셀은 `onePerPerson()` 으로 한 명으로 센다. 참석자 목록은 조각째 보여 준다(조각마다 따로 고친다). 엑셀의 방 칸은 `roomLabelOf()`("101 → 205")로 잇는다. 참석자 쪽에서 일정을 고치면 `Store.writeStayToRegistrations` 가 신청서의 날짜도 새 일정으로 고친다(`quoted` 는 그대로 — 금액 체크 경고가 바뀐 금액을 짚는다).
 
 **신청서 추가 항목 형식** (`FieldSpec`, `models.dart`): 텍스트·숫자·체크박스·셀렉트박스(보기 목록)·토글 버튼. 이름처럼 방배정 문서(`Event.fieldSpecs`)에 살다가 집회 설정 [저장] 때 `gatherings.field_specs` 로 복사된다. 키가 없으면 텍스트, 값은 형식과 상관없이 `extra` 의 문자열 하나(켜고 끄는 형식은 `fieldOn`='예'). 신청 웹·참석자 편집 창은 `widgets/custom_field_input.dart` 의 `CustomFieldInput` 하나로 그리고, 추가·고치기는 `attendees.dart` 의 `_customFieldDialog` 하나다. `field_specs` 는 칸이 있는 DB 에서 읽었거나 형식이 있을 때만 보낸다(schema.sql 전 DB 에서도 저장이 안 깨지게). 요구사항은 `PLAN_GATHERING.md` §21.
 

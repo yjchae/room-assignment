@@ -180,8 +180,8 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
                       ? null
                       : dateless
                       ? '범위 가능: 301-310 · 이름도 됩니다: 1조, 찬양팀'
-                      : '범위 가능: 301-310, 401',
-                  helperMaxLines: dateless ? 2 : null,
+                      : '범위 가능: 301-310, 401 · 글자도 됩니다: A101, 세미나실',
+                  helperMaxLines: 2,
                 ),
               ),
               TextField(
@@ -350,27 +350,29 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
   }
 
   final name = noCtl.text.trim();
-  if (dateless && name.isEmpty) return;
+  if (name.isEmpty) return;
   final (made, skipped) = store.addRoomRange(
     noCtl.text,
     capacity: cap,
     building: building,
     gender: gender,
     note: note,
-    names: dateless,
+    // 호수를 숫자로만 받지 않는다 — 'A101'·'세미나실'도 그대로 방 이름이 된다 (수정 창과 같게).
+    names: true,
     from: pFrom,
     to: pTo,
   );
-  // 날짜 없는 집회는 호수로 못 읽은 입력('1조')을 이름 방 하나로 만든다.
-  if (dateless && name.isNotEmpty && parseRoomRange(name).isEmpty) {
+  // 호수로 못 읽은 입력('1조', 'A101')은 이름 방 하나가 된다.
+  if (made == 0 && skipped == 0) {
+    // '310-301'·'301 302' 처럼 숫자뿐인데 못 읽은 입력 (오타).
+    messenger.showSnackBar(
+      const SnackBar(content: Text('호수를 인식하지 못했습니다. 예: 301 또는 301-310')),
+    );
+  } else if (!name.contains(',') && parseRoomRange(name).isEmpty) {
     messenger.showSnackBar(
       SnackBar(
         content: Text(made > 0 ? '$name 방을 추가했습니다.' : '$name 방이 이미 있습니다.'),
       ),
-    );
-  } else if (made == 0 && skipped == 0) {
-    messenger.showSnackBar(
-      const SnackBar(content: Text('호수를 인식하지 못했습니다. 예: 301 또는 301-310')),
     );
   } else {
     messenger.showSnackBar(
@@ -415,7 +417,9 @@ Widget _periodField(
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Row(
+      // 휴대폰 폭에서는 칩이 한 줄에 안 들어간다 — 넘치면 아래로 내린다.
+      Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           const Text('사용 기간  '),
           ...[(false, '집회 전체'), (true, '기간 지정')].map(

@@ -388,6 +388,9 @@ class Attendee {
   set zone(String? v) => _zone = v?.toUpperCase();
   String? _zone;
   String? roomId;
+
+  /// 방 대신 [noStayRoom] 으로 "미숙박"(오지만 자지 않는 사람)을 정했다.
+  bool get noStay => roomId == noStayRoom;
   DateTime checkIn;
   DateTime checkOut;
 
@@ -505,6 +508,10 @@ class Attendee {
 /// [Attendee.pay]·[Room.pay] 값. 신청 상태(`RegStatus`)를 그대로 옮긴 이름이다
 /// (이 파일은 웹 빌드에 들어가서 gathering.dart 를 끌어오지 않고 문자열로 둔다).
 const payPending = 'pending';
+
+/// [Attendee.roomId] 에 넣는 "미숙박" 표시 (오지만 자지 않는 사람). 실제 방이 아니라서
+/// 정원·보드에 안 잡히고, roomId 가 있으니 미배정·자동배정·[신청에서 가져오기]의 방 판정도 배정된 것으로 본다.
+const noStayRoom = 'nostay';
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 

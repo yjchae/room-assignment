@@ -2451,19 +2451,21 @@ void main() {
       expect(store.event.rooms, hasLength(4));
     });
 
-    testWidgets('방 관리: 날짜 있는 집회는 예전처럼 호수만 받는다', (tester) async {
+    testWidgets('방 관리: 날짜 있는 집회도 처음 만들 때 글자 호수를 받는다', (tester) async {
       current.value = sample();
       setView(tester, const Size(1400, 900));
       await pumpPage(tester, const Scaffold(body: RoomsScreen()));
       await tester.tap(find.widgetWithText(FilledButton, '방 추가'));
       await tester.pumpAndSettle();
-      expect(find.text('범위 가능: 301-310, 401'), findsOneWidget);
-      expect(find.widgetWithText(TextField, '방·그룹 이름'), findsNothing);
-      await tester.enterText(find.widgetWithText(TextField, '호수'), '1조');
+      expect(
+        find.text('범위 가능: 301-310, 401 · 글자도 됩니다: A101, 세미나실'),
+        findsOneWidget,
+      );
+      await tester.enterText(find.widgetWithText(TextField, '호수'), 'A101');
       await tester.tap(find.widgetWithText(FilledButton, '저장'));
       await tester.pumpAndSettle();
-      expect(store.event.rooms, isEmpty);
-      expect(find.text('호수를 인식하지 못했습니다. 예: 301 또는 301-310'), findsOneWidget);
+      expect(store.event.rooms.map((r) => r.roomNo), ['A101']);
+      expect(find.text('A101 방을 추가했습니다.'), findsOneWidget);
     });
 
     testWidgets('방 관리: 사용 기간을 줄이면 묻고, 배정된 사람의 남은 기간을 미배정으로 나눈다', (
