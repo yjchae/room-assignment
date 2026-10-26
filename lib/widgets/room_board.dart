@@ -33,9 +33,9 @@ final boardAsList = ValueNotifier<bool>(true);
 /// 목록 보기에서 타일이 이보다 좁아지지 않게 한 줄 개수를 줄인다.
 const _listTile = 88.0;
 
-/// 홈스테이 가정이 신청서에서 고른 "받는 날". 중간에 안 받는 밤이 있으면
-/// 기간 대신 날짜를 하나씩 적는다 (기간으로 적으면 빈 날이 감춰진다).
-/// 신청서에 기간이 없는 방(일반 집회)은 빈 문자열.
+/// 홈스테이 가정이 신청서에서 고른 "받는 날", 일반 방이면 운영자가 정한 사용 기간.
+/// 중간에 안 받는 밤이 있으면 기간 대신 날짜를 하나씩 적는다 (기간으로 적으면 빈 날이 감춰진다).
+/// 기간이 없는 방(집회 전체)은 빈 문자열.
 String hostWindowLabel(Room room) {
   final ns = room.hostNightList;
   if (ns.isEmpty) return '';
@@ -107,9 +107,11 @@ class RoomTile extends StatelessWidget {
     final note = room.note ?? '';
 
     final homestay = current.value?.isHomestay == true;
-    // 홈스테이는 "언제 받을 수 있는 집인지"가 배정의 첫 기준이라 툴팁에 같이 적는다.
-    final label = homestay ? hostWindowLabel(room) : '';
-    final window = label.isEmpty ? '' : '\n신청한 날 $label';
+    // 홈스테이는 "언제 받을 수 있는 집인지"가, 사용 기간을 정한 방은 그 기간이 배정의 기준이라 툴팁에 같이 적는다.
+    final label = hostWindowLabel(room);
+    final window = label.isEmpty
+        ? ''
+        : '\n${homestay ? '신청한 날' : '사용 기간'} $label';
     // 입금 전인 사람도 정원에 들어간다. 몇 명이 아직 입금 전인지는 따로 적는다.
     final unpaid = store.unpaidIn(room);
     final flag = [

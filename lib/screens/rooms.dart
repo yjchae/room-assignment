@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../gathering.dart' show mdw;
 import '../main.dart';
 import '../models.dart';
 import '../store.dart' show parseRoomRange;
@@ -127,6 +128,14 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
   final homestay = current.value?.isHomestay == true;
   // 날짜 없는 집회는 방(그룹)을 이름으로도 만든다 ('1조', '찬양팀').
   final dateless = current.value?.dateless == true;
+  // 일반 집회 방은 쓰는 기간을 정할 수 있다 (PLAN_GATHERING §26). 홈스테이는 신청서의 받는 기간이
+  // 기준이고, 날짜 없는 집회와 1박 집회는 나눌 밤이 없다.
+  final start = dateOnly(store.event.startDate);
+  final end = dateOnly(store.event.endDate);
+  final periodable = !homestay && !dateless && store.event.nights.length > 1;
+  var limited = periodable && room?.hostFrom != null && room?.hostTo != null;
+  var from = limited ? room!.hostFrom! : start;
+  var to = limited ? room!.hostTo! : end;
 
   final action = await showDialog<String>(
     context: context,
@@ -199,6 +208,20 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
                 controller: noteCtl,
                 decoration: const InputDecoration(labelText: '기타'),
               ),
+              if (periodable)
+                _periodField(
+                  context,
+                  limited: limited,
+                  from: from,
+                  to: to,
+                  start: start,
+                  end: end,
+                  onChanged: (l, f, t) => setLocal(() {
+                    limited = l;
+                    from = f;
+                    to = t;
+                  }),
+                ),
             ],
           ),
         ),
@@ -266,9 +289,23 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
       ? null
       : buildingCtl.text.trim();
 
+  // 집회 전체와 같은 기간은 기간을 안 정한 것과 같다.
+  if (limited && from == start && to == end) limited = false;
+  final pFrom = limited ? from : null, pTo = limited ? to : null;
+
   if (room != null) {
     final no = noCtl.text.trim();
     if (no.isEmpty) return;
+    final periodChanged =
+        periodable && (pFrom != room.hostFrom || pTo != room.hostTo);
+    // 이미 배정된 사람의 기간 밖 일정은 떼어 미배정으로 돌린다 — 저장 전에 몇 명인지 묻는다.
+    if (periodChanged) {
+      final out = store.outsidePeriod(room, pFrom, pTo);
+      if (out.isNotEmpty) {
+        if (!context.mounted) return;
+        if (!await _confirmSplit(context, room, out, from, to)) return;
+      }
+    }
     room
       ..roomNo = no
       ..building = building
@@ -276,6 +313,19 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
       ..gender = gender
       ..note = note;
     store.commit();
+    if (periodChanged) {
+      final n = store.setRoomPeriod(room, pFrom, pTo);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            pFrom == null
+                ? '${room.label}호를 집회 전체 기간 쓰도록 바꿨습니다.'
+                : '${room.label}호 사용 기간: ${mdw(from)} ~ ${mdw(to)}'
+                      '${n == 0 ? '' : ' · $n명의 남은 기간은 미배정입니다 — [방배정]에서 다른 방에 넣어 주세요.'}',
+          ),
+        ),
+      );
+    }
     return;
   }
 
@@ -308,6 +358,8 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
     gender: gender,
     note: note,
     names: dateless,
+    from: pFrom,
+    to: pTo,
   );
   // 날짜 없는 집회는 호수로 못 읽은 입력('1조')을 이름 방 하나로 만든다.
   if (dateless && name.isNotEmpty && parseRoomRange(name).isEmpty) {
@@ -327,4 +379,148 @@ Future<void> _roomDialog(BuildContext context, [Room? room]) async {
       ),
     );
   }
+}
+
+/// 방 수정 창의 [사용 기간] 칸: [집회 전체 | 기간 지정] + 들어오는 날·비우는 날.
+/// 날짜는 집회 기간([start]~[end]) 안에서만 고른다. 비우는 날은 그날 아침에 나간다(그 밤은 안 쓴다).
+Widget _periodField(
+  BuildContext context, {
+  required bool limited,
+  required DateTime from,
+  required DateTime to,
+  required DateTime start,
+  required DateTime end,
+  required void Function(bool limited, DateTime from, DateTime to) onChanged,
+}) {
+  Future<DateTime?> pick(
+    DateTime initial,
+    DateTime first,
+    DateTime last,
+  ) async {
+    final d = await showDatePicker(
+      context: context,
+      // 집회 날짜를 나중에 옮기면 저장된 기간이 범위 밖일 수 있다 — 범위 안으로 당긴다.
+      initialDate: initial.isBefore(first)
+          ? first
+          : initial.isAfter(last)
+          ? last
+          : initial,
+      firstDate: first,
+      lastDate: last,
+    );
+    return d == null ? null : dateOnly(d);
+  }
+
+  final lastIn = end.subtract(const Duration(days: 1));
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          const Text('사용 기간  '),
+          ...[(false, '집회 전체'), (true, '기간 지정')].map(
+            (x) => Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: ChoiceChip(
+                label: Text(x.$2),
+                selected: limited == x.$1,
+                onSelected: (_) => onChanged(x.$1, from, to),
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (limited) ...[
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('들어오는 날'),
+          trailing: Text(mdw(from)),
+          onTap: () async {
+            final d = await pick(from, start, lastIn);
+            if (d == null) return;
+            onChanged(
+              true,
+              d,
+              to.isAfter(d) ? to : d.add(const Duration(days: 1)),
+            );
+          },
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('비우는 날'),
+          subtitle: Text(
+            '${to.difference(from).inDays}박',
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: Text(mdw(to)),
+          onTap: () async {
+            final d = await pick(to, from.add(const Duration(days: 1)), end);
+            if (d != null) onChanged(true, from, d);
+          },
+        ),
+        const Text(
+          '이 기간에만 사람을 넣습니다. 이미 배정된 사람은 기간 안은 이 방에 그대로 두고, '
+          '나머지 기간은 미배정으로 나눠 다른 방에 넣을 수 있게 합니다.',
+          style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+        ),
+      ],
+    ],
+  );
+}
+
+/// 사용 기간을 줄이면 기간 밖에도 묵는 [out] 사람들이 나뉜다는 걸 알리고 묻는다.
+Future<bool> _confirmSplit(
+  BuildContext context,
+  Room room,
+  List<Attendee> out,
+  DateTime from,
+  DateTime to,
+) async {
+  // 기간을 나눈 사람은 조각이 여럿이라도 한 명으로 적는다.
+  final names = {for (final a in out) a.personId: a.name}.values.toList();
+  return await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('기간 밖에도 묵는 사람이 있습니다'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${room.label}호에 배정된 ${names.length}명이 '
+                  '${mdw(from)} ~ ${mdw(to)} 밖에도 묵습니다.',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  names.length > 8
+                      ? '${names.take(8).join(', ')} 외 ${names.length - 8}명'
+                      : names.join(', '),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '기간 안은 이 방에 그대로 두고, 나머지 기간은 미배정으로 나눕니다. '
+                  '[방배정]이나 [자동배정]에서 다른 방에 넣어 주세요.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('나누고 저장'),
+            ),
+          ],
+        ),
+      ) ==
+      true;
 }

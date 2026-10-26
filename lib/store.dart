@@ -761,6 +761,8 @@ class Store extends ChangeNotifier {
     String? gender,
     String? note,
     bool names = false,
+    DateTime? from,
+    DateTime? to,
   }) {
     final b = (building ?? '').trim().isEmpty ? null : building!.trim();
     final existing = event.rooms.map((r) => r.label).toSet();
@@ -775,6 +777,8 @@ class Store extends ChangeNotifier {
         capacity: capacity,
         gender: gender,
         note: note,
+        hostFrom: from,
+        hostTo: to,
       );
       if (!existing.add(room.label)) {
         skipped++;
@@ -905,6 +909,52 @@ class Store extends ChangeNotifier {
     }
     if (out.isNotEmpty) commit();
     return out;
+  }
+
+  /// 방을 쓰는 기간을 [from]~[to] 로 정했을 때 기간 밖에도 묵는 이 방 사람들.
+  /// 둘 다 null(= 집회 전체)이면 빈 목록. 저장 전에 몇 명이 나뉠지 보여 주는 데 쓴다.
+  List<Attendee> outsidePeriod(Room room, DateTime? from, DateTime? to) {
+    if (from == null || to == null) return const [];
+    final f = dateOnly(from), t = dateOnly(to);
+    bool inside(DateTime n) => !n.isBefore(f) && n.isBefore(t);
+    return [
+      for (final a in occupantsOf(room))
+        if (event.nights.any((n) => a.staysOn(n) && !inside(n))) a,
+    ];
+  }
+
+  /// 일반 방을 [from]~[to](나오는 날 아침까지)만 쓰게 한다. null 둘 = 집회 전체.
+  /// 이미 배정된 사람은 **기간 안은 이 방에 그대로** 두고, 기간 밖은 [splitStay] 로
+  /// 미배정 조각을 떼어낸다 — 그 기간만 다른 방에 넣으면 된다. 기간 안에 하룻밤도 없는
+  /// 사람은 통째로 미배정이 된다. 나뉜(또는 빠진) 사람 수를 돌려준다.
+  ///
+  /// 기간은 홈스테이 가정의 "받는 기간"과 같은 칸([Room.hostFrom]·[Room.hostTo])을 쓴다.
+  /// 그래서 자동배정([Room.hostsOn])·배정 경고가 그대로 이 기간을 지킨다.
+  /// ponytail: 기간은 이어진 한 구간뿐이다(중간에 비는 밤은 못 정한다).
+  /// 필요하면 홈스테이처럼 [Room.hostNights] 를 화면에서 고르게 한다.
+  int setRoomPeriod(Room room, DateTime? from, DateTime? to) {
+    final out = outsidePeriod(room, from, to);
+    room
+      ..hostFrom = from == null || to == null ? null : dateOnly(from)
+      ..hostTo = from == null || to == null ? null : dateOnly(to)
+      ..hostNights = null;
+    final nights = event.nights;
+    for (final a in out) {
+      var inside = a;
+      // 앞쪽이 기간 밖이면: 뒤 조각이 이 방에 남고 앞(원래 참석자)이 미배정이 된다.
+      if (splitStay(a, room.hostFrom!) case final later?) {
+        later.roomId = room.id;
+        a.roomId = null;
+        inside = later;
+      }
+      // 뒤쪽이 기간 밖이면: 떼어낸 뒤 조각은 이미 미배정이다.
+      splitStay(inside, room.hostTo!);
+      if (!nights.any((n) => inside.staysOn(n) && room.hostsOn(n))) {
+        inside.roomId = null; // 기간과 하나도 안 겹친다
+      }
+    }
+    commit();
+    return out.map((a) => a.personId).toSet().length;
   }
 
   /// 같은 사람의 조각들 (나누지 않았으면 자기 자신 하나).

@@ -891,9 +891,10 @@ class _AssignScreenState extends State<AssignScreen> {
     bool confirm = true,
   }) async {
     if (rooms.isEmpty) return;
-    // 홈스테이는 가정 한 곳에 "며칠을" 넣을지부터 고른다.
-    if (current.value?.isHomestay == true && rooms.length == 1) {
-      return _assignHomestay(chosen, rooms.single);
+    // 홈스테이 가정, 사용 기간을 정한 방은 "며칠을" 넣을지부터 고른다.
+    if (rooms.length == 1 &&
+        (current.value?.isHomestay == true || rooms.single.hostFrom != null)) {
+      return _assignPeriod(chosen, rooms.single);
     }
 
     var plan = distribute(store.event, chosen, rooms);
@@ -977,7 +978,7 @@ class _AssignScreenState extends State<AssignScreen> {
             ) ==
             true;
     if (!ok) return;
-    // 홈스테이 가정이 섞여 있으면 신청하지 않은 밤을 여기서도 잡는다.
+    // 홈스테이 가정·사용 기간을 정한 방이 섞여 있으면 받지 않는 밤을 여기서도 잡는다.
     if (!await _confirmOutside([
       for (final x in plan.assignments) (x.room, x.attendee),
     ])) {
@@ -1012,11 +1013,14 @@ class _AssignScreenState extends State<AssignScreen> {
     }
   }
 
-  /// 홈스테이 배정: 그 가정이 신청한 기간을 보여 주고 며칠을 넣을지 고른다.
-  /// [전체 기간 배정] 은 고른 아이들의 일정을 그대로(나누지 않고) 이 집에 넣는다.
-  Future<void> _assignHomestay(List<Attendee> chosen, Room room) async {
+  /// 기간이 있는 곳에 배정: 홈스테이 가정이 신청한 기간이나 일반 방의 사용 기간을 보여 주고
+  /// 며칠을 넣을지 고른다. [전체 기간 배정] 은 고른 사람의 일정을 그대로(나누지 않고) 넣는다.
+  Future<void> _assignPeriod(List<Attendee> chosen, Room room) async {
     if (chosen.isEmpty) return;
     final e = store.event;
+    final homestay = current.value?.isHomestay == true;
+    final place = homestay ? '가정' : '방';
+    final who = homestay ? '아이' : '사람';
     final openFrom = room.hostFrom ?? dateOnly(e.startDate);
     final openTo = room.hostTo ?? dateOnly(e.endDate);
     // 기본값 = 가정이 받을 수 있는 기간과 아이들 일정이 겹치는 만큼.
@@ -1036,7 +1040,7 @@ class _AssignScreenState extends State<AssignScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
-          title: Text('${room.label} 가정에 배정'),
+          title: Text('${room.label}${homestay ? ' 가정' : '호'}에 배정'),
           content: SizedBox(
             width: 400,
             child: Column(
@@ -1044,7 +1048,7 @@ class _AssignScreenState extends State<AssignScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _line(
-                  '신청한 날',
+                  homestay ? '신청한 날' : '사용 기간',
                   hostWindowLabel(room).isEmpty
                       ? _noWindow
                       : hostWindowLabel(room),
@@ -1054,11 +1058,11 @@ class _AssignScreenState extends State<AssignScreen> {
                   '$used / ${room.capacity}명'
                       '${room.gender == null ? '' : ' · ${genderLabel(room.gender!)}'}',
                 ),
-                _line('배정할 아이', '${chosen.length}명'),
+                _line('배정할 $who', '${chosen.length}명'),
                 const Divider(height: 24),
-                const Text(
-                  '며칠을 이 집에서 묵나요?',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                Text(
+                  '며칠을 이 $place에서 묵나요?',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1093,13 +1097,16 @@ class _AssignScreenState extends State<AssignScreen> {
                     from = openFrom;
                     to = openTo;
                   }),
-                  child: const Text('이 가정이 신청한 기간 그대로'),
+                  child: Text(homestay ? '이 가정이 신청한 기간 그대로' : '이 방의 사용 기간 그대로'),
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  '고른 기간만 이 집에 넣습니다. 아이의 남는 기간은 미배정으로 남아 '
-                  '다른 집에 넣을 수 있습니다.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                Text(
+                  '고른 기간만 이 $place에 넣습니다. $who의 남는 기간은 미배정으로 남아 '
+                  '다른 $place에 넣을 수 있습니다.',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
                 ),
               ],
             ),
@@ -1123,7 +1130,7 @@ class _AssignScreenState extends State<AssignScreen> {
     );
     if (choice == null || choice == 'cancel') return;
 
-    // 신청하지 않은 밤이 들어가면 먼저 알린다 (중간에 비워 둔 날은 기간만 보면 안 보인다).
+    // 받지 않는 밤이 들어가면 먼저 알린다 (중간에 비워 둔 날은 기간만 보면 안 보인다).
     final ok = await _confirmOutside([
       for (final a in chosen) (room, a),
     ], only: choice == 'all' ? null : (from, to));
@@ -1131,14 +1138,14 @@ class _AssignScreenState extends State<AssignScreen> {
 
     final String done;
     if (choice == 'all') {
-      // 아이 일정을 그대로 — 나누지 않는다.
+      // 일정을 그대로 — 나누지 않는다.
       store.assignAll(chosen, room.id);
-      done = '${chosen.length}명을 ${room.label} 가정에 전체 기간으로 배정했습니다.';
+      done = '${chosen.length}명을 ${room.label} $place에 전체 기간으로 배정했습니다.';
     } else {
       final placed = store.assignRange(chosen, room.id, from, to);
       done = placed.isEmpty
-          ? '고른 기간에 묵는 아이가 없습니다. 아이 일정을 확인하세요.'
-          : '${placed.length}명을 ${room.label} 가정에 '
+          ? '고른 기간에 묵는 ${homestay ? '아이가' : '사람이'} 없습니다. $who 일정을 확인하세요.'
+          : '${placed.length}명을 ${room.label} $place에 '
                 '${mdw(from)}~${mdw(to)} (${to.difference(from).inDays}박) 배정했습니다.';
     }
     if (!mounted) return;
@@ -1146,12 +1153,13 @@ class _AssignScreenState extends State<AssignScreen> {
     setState(() => selected.removeAll(chosen.map((a) => a.id)));
   }
 
-  /// 배정하려는 (가정, 그 집에서 묵게 될 사람) 짝을 받아, 그 가정이 신청하지 않은 밤이
-  /// 끼어 있으면 가정마다 짚어 주고 물어본다. 전부 신청한 날이면 묻지 않고 true.
+  /// 배정하려는 (방·가정, 거기서 묵게 될 사람) 짝을 받아, 그 곳이 받지 않는 밤
+  /// (가정이 신청하지 않은 날, 방의 사용 기간 밖)이 끼어 있으면 곳마다 짚어 주고 물어본다.
+  /// 전부 받는 날이면 묻지 않고 true.
   ///
-  /// 배정으로 사람이 방에 들어가는 길은 전부 이 함수를 지난다 — 가정 한 곳([_assignHomestay])도,
-  /// 여러 곳을 골라 한 번에 채우는 길([_assignToRooms])도. 일반 집회 방은 [Room.hostsOn] 이
-  /// 늘 참이라 걸리지 않는다.
+  /// 배정으로 사람이 방에 들어가는 길은 전부 이 함수를 지난다 — 한 곳([_assignPeriod])도,
+  /// 여러 곳을 골라 한 번에 채우는 길([_assignToRooms])도. 사용 기간을 안 정한 방은
+  /// [Room.hostsOn] 이 늘 참이라 걸리지 않는다.
   ///
   /// [only] 가 있으면 그 기간의 밤만 본다 ([이 기간만 배정]).
   Future<bool> _confirmOutside(
@@ -1182,10 +1190,11 @@ class _AssignScreenState extends State<AssignScreen> {
         ),
     ]..sort((x, y) => byRoomNo(x.$1, y.$1));
     final total = bad.values.fold(0, (n, v) => n + v.length);
+    final homestay = current.value?.isHomestay == true;
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('신청하지 않은 날입니다'),
+            title: Text(homestay ? '신청하지 않은 날입니다' : '방을 쓰지 않는 날입니다'),
             content: SizedBox(
               width: 420,
               child: Column(
@@ -1193,13 +1202,18 @@ class _AssignScreenState extends State<AssignScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '가정 ${bad.length}곳에 신청하지 않은 밤 $total박이 들어갑니다.',
+                    homestay
+                        ? '가정 ${bad.length}곳에 신청하지 않은 밤 $total박이 들어갑니다.'
+                        : '방 ${bad.length}곳에 사용 기간 밖의 밤 $total박이 들어갑니다.',
                     style: const TextStyle(color: AppColors.danger),
                   ),
                   const SizedBox(height: 12),
                   for (final (room, outside, applied) in rows.take(10)) ...[
                     _line('${room.label} · 안 받는 날', outside),
-                    _line('  신청한 날', applied.isEmpty ? _noWindow : applied),
+                    _line(
+                      homestay ? '  신청한 날' : '  사용 기간',
+                      applied.isEmpty ? _noWindow : applied,
+                    ),
                     const SizedBox(height: 6),
                   ],
                   if (rows.length > 10) Text('… 외 ${rows.length - 10}곳'),
