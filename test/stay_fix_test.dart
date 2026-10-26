@@ -1,5 +1,8 @@
 // 기간 나눈 사람 집계 · 미숙박 · 참석자 일정 → 신청서 반영.
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:room_assignment/main.dart' show store;
+import 'package:room_assignment/screens/attendees.dart';
 import 'package:room_assignment/gathering.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/remote.dart';
@@ -188,5 +191,39 @@ void main() {
       Person.fromJson((sent['people'] as List).single as Map).daysIn(d1, d4),
       [day(2), day(3), day(4)],
     );
+  });
+
+  testWidgets('참석자 화면 날짜별 인원: 기간을 나눈 사람은 날마다 한 명', (tester) async {
+    tester.view.physicalSize = const Size(2800, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+    store.event = Event(name: 'x', startDate: d1, endDate: d4)
+      ..rooms.addAll([
+        Room(id: 'A', roomNo: '101', capacity: 2),
+        Room(id: 'B', roomNo: '102', capacity: 2),
+      ]);
+    final a = Attendee(
+      id: 'p1',
+      name: '홍',
+      gender: 'M',
+      age: 30,
+      checkIn: d1,
+      checkOut: d4,
+      roomId: 'A',
+    );
+    store.event.attendees.add(a);
+    store.splitStay(a, DateTime(2026, 10, 2))!.roomId = 'B';
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: AttendeesScreen())),
+    );
+    expect(find.text('합계 1명'), findsOneWidget);
+    expect(find.text('전참 1명'), findsOneWidget);
+    // 10/2 는 앞 조각이 떠나고 뒤 조각이 들어오는 날 — 둘 다 오지만 한 명이다.
+    Finder seg(String t) => find.descendant(
+      of: find.byType(SegmentedButton<String>),
+      matching: find.textContaining(t),
+    );
+    expect(seg('1명'), findsNWidgets(6)); // 합계·전참·10/1~10/4
+    expect(seg('2명'), findsNothing);
   });
 }

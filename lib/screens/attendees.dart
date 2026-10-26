@@ -142,7 +142,16 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
       for (final a in everyone)
         if (!e.attendees.any((x) => x.id == a.id)) a.id,
     };
-    bool full(Attendee a) => days.every((d) => comes(a, d));
+    // 기간을 나눈 사람은 조각마다 오는 날이 다르다 — "모든 날 온다"는 조각을 합쳐서 본다.
+    final parts = <String, List<Attendee>>{};
+    for (final a in everyone) {
+      parts.putIfAbsent(a.personId, () => []).add(a);
+    }
+    bool full(Attendee a) =>
+        days.every((d) => parts[a.personId]!.any((x) => comes(x, d)));
+    // 날짜 칸의 인원: 같은 사람의 조각은 한 명으로 센다.
+    int count(bool Function(Attendee) test) =>
+        onePerPerson(everyone.where(test)).length;
     final people = [
       for (final a in everyone)
         if (switch (sel) {
@@ -354,19 +363,19 @@ class _AttendeesScreenState extends State<AttendeesScreen> {
                     segments: [
                       ButtonSegment(
                         value: 'total',
-                        label: Text('합계 ${everyone.length}명'),
+                        label: Text('합계 ${count((_) => true)}명'),
                         tooltip: '집회 기간 중 하루라도 오는 사람 전부 (당일 참석 포함)',
                       ),
                       ButtonSegment(
                         value: 'full',
-                        label: Text('전참 ${everyone.where(full).length}명'),
+                        label: Text('전참 ${count(full)}명'),
                         tooltip: '모든 날 참석하는 사람만',
                       ),
                       for (final d in days)
                         ButtonSegment(
                           value: ymd(d),
                           label: Text(
-                            '${mdw(d)} ${everyone.where((a) => comes(a, d)).length}명',
+                            '${mdw(d)} ${count((a) => comes(a, d))}명',
                           ),
                         ),
                     ],
