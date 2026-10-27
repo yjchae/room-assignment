@@ -37,8 +37,8 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   /// 사역자가 한 명이라도 있는 신청만.
   bool ministerOnly = false;
 
-  /// 낼 금액이 0원인 신청만 (영유아만 오는 신청·무료 날 당일·지정 할인으로 0원 …).
-  bool freeOnly = false;
+  /// 무료 날만 당일로 오는 사람(`QuoteLine.freeDay`)이 있는 신청만. 할인으로 0원이 된 사람은 아니다.
+  bool freeDayOnly = false;
   String query = '';
   String? selectedId;
 
@@ -182,7 +182,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       for (final r in all)
         if ((filter == null || r.status == filter) &&
             (!ministerOnly || _hasMinister(r)) &&
-            (!freeOnly || quotes[r.id]!.total == 0) &&
+            (!freeDayOnly || quotes[r.id]!.lines.any((l) => l.freeDay)) &&
             _matches(r))
           r,
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -227,7 +227,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       );
     }
 
-    final freeCount = all.where((r) => quotes[r.id]!.total == 0).length;
+    // 신청이 아니라 사람 수로 센다 — 가족 중 한 명만 무료 날 당일로 올 수 있다.
+    final freeDayPeople = all.fold(
+      0,
+      (n, r) => n + quotes[r.id]!.lines.where((l) => l.freeDay).length,
+    );
     final chips = <Widget>[
       for (final f in [null, ...RegStatus.values])
         ChoiceChip(
@@ -243,13 +247,13 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           selected: ministerOnly,
           onSelected: (v) => setState(() => ministerOnly = v),
         ),
-      // 무료 집회는 모두 0원이라 가를 게 없다.
-      if (!g.fee.isFree && (freeOnly || freeCount > 0))
+      // 집회 설정에 무료 날이 있을 때만.
+      if (g.fee.freeDays.isNotEmpty)
         FilterChip(
-          label: Text('무료 $freeCount'),
-          tooltip: '낼 금액이 0원인 신청 (영유아만·무료 날 당일·할인으로 0원)',
-          selected: freeOnly,
-          onSelected: (v) => setState(() => freeOnly = v),
+          label: Text('무료 날 당일 $freeDayPeople명'),
+          tooltip: '무료 날 하루만 당일로 오는 사람이 있는 신청 (할인으로 0원인 신청은 빠집니다)',
+          selected: freeDayOnly,
+          onSelected: (v) => setState(() => freeDayOnly = v),
         ),
     ];
     final Widget table = shown.isEmpty

@@ -2123,30 +2123,51 @@ void main() {
       expect(find.text('김목사'), findsWidgets); // 신청자·입금자명 칸
     });
 
-    testWidgets('신청·입금: [무료] 칩으로 낼 금액이 0원인 신청만 본다', (tester) async {
+    testWidgets('신청·입금: [무료 날 당일] 칩은 무료 날만 오는 사람의 신청만 — 할인 0원은 빠진다', (
+      tester,
+    ) async {
+      Registration one(String id, String name, String phone, Person p) =>
+          Registration(
+            id: id,
+            gatheringId: 'g1',
+            phone: phone,
+            people: [p],
+            createdAt: DateTime(2026, 9, 11),
+          );
       fake.regs
         ..add(pendingReg())
         ..add(
-          Registration(
-            id: 'r2',
-            gatheringId: 'g1',
-            phone: '01099998888',
-            people: [
-              Person(id: 'c', name: '김무료', gender: 'M', birthYear: 1970),
-            ],
-            discount: const Discount(pct: 100),
-            createdAt: DateTime(2026, 9, 11),
+          one(
+            'r2',
+            '김당일',
+            '01099998888',
+            Person(
+              id: 'c',
+              name: '김당일',
+              gender: 'M',
+              birthYear: 1970,
+              days: [DateTime(2026, 10, 10)],
+            ),
           ),
+        )
+        ..add(
+          one(
+            'r3',
+            '박할인',
+            '01077776666',
+            Person(id: 'd', name: '박할인', gender: 'M', birthYear: 1970),
+          )..discount = const Discount(pct: 100),
         );
-      current.value = sample();
+      current.value = sample()..fee.freeDays = [DateTime(2026, 10, 10)];
       setView(tester, const Size(1400, 900));
       await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
-      expect(find.byType(Checkbox), findsNWidgets(2));
+      expect(find.byType(Checkbox), findsNWidgets(3));
 
-      await tester.tap(find.widgetWithText(FilterChip, '무료 1'));
+      await tester.tap(find.widgetWithText(FilterChip, '무료 날 당일 1명'));
       await tester.pumpAndSettle();
       expect(find.byType(Checkbox), findsOneWidget);
-      expect(find.text('김무료'), findsWidgets);
+      expect(find.text('김당일'), findsWidgets);
+      expect(find.text('박할인'), findsNothing);
     });
 
     testWidgets('신청 삭제: 확인하면 서버에서 지우고 그 신청의 참석자도 뺀다', (tester) async {
