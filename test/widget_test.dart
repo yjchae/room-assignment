@@ -152,6 +152,40 @@ void main() {
     expect(find.textContaining('개 방 배정'), findsOneWidget);
   });
 
+  testWidgets('방배정: 숙박 날짜를 고르면 그 밤 묵는 사람만 남는다', (tester) async {
+    store.event.attendees.addAll([
+      Attendee(
+        id: 'p1',
+        name: '김첫날',
+        gender: 'M',
+        age: 30,
+        checkIn: DateTime(2026, 1, 1),
+        checkOut: DateTime(2026, 1, 2),
+      ),
+      Attendee(
+        id: 'p2',
+        name: '이끝날',
+        gender: 'F',
+        age: 30,
+        checkIn: DateTime(2026, 1, 3),
+        checkOut: DateTime(2026, 1, 4),
+      ),
+    ]);
+    await pump(tester, const AssignScreen());
+    await tester.pumpAndSettle();
+    expect(find.text('검색 2명'), findsOneWidget);
+
+    await tester.tap(find.text('전체 날짜'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('01-03(토) 밤').last);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('검색 1명'), findsOneWidget);
+    expect(find.text('이끝날'), findsOneWidget);
+    expect(find.text('김첫날'), findsNothing);
+  });
+
   testWidgets('홈스테이 배정: 가정이 신청한 기간을 보여주고 며칠만 넣는다', (tester) async {
     current.value = Gathering(
       id: 'h1',

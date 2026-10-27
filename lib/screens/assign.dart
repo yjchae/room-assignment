@@ -49,6 +49,10 @@ class _AssignScreenState extends State<AssignScreen> {
   /// 입금 전인 사람만 — 방을 미리 잡아 둔 사람 중 누가 아직 안 냈는지 볼 때.
   bool unpaidOnly = false;
 
+  /// 이 날 밤 묵는 사람만 — 부분 참석자가 있을 때 하룻밤씩 나눠 배정할 때. null = 모든 날.
+  /// 방배정은 밤 단위(정원도 밤 기준)라 낮에만 오는 날이 아니라 묵는 밤으로 거른다.
+  DateTime? night;
+
   /// 사용자 정의 항목(교회 등) 값으로 거르는 칸. 어느 항목이든 값이 걸리면 통과.
   final extraQuery = TextEditingController();
   final selected = <String>{};
@@ -106,6 +110,7 @@ class _AssignScreenState extends State<AssignScreen> {
     }
     if (unassignedOnly && a.roomId != null) return false;
     if (unpaidOnly && !a.unpaid) return false;
+    if (night != null && !a.staysOn(night!)) return false;
     final lo = int.tryParse(ageMin.text.trim());
     final hi = int.tryParse(ageMax.text.trim());
     if (lo != null && a.age < lo) return false;
@@ -115,6 +120,8 @@ class _AssignScreenState extends State<AssignScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 집회 날짜가 바뀌어 고른 밤이 기간 밖이 되면 거르지 않는다(빈 결과로 헷갈리지 않게).
+    if (night != null && !store.event.nights.contains(night)) night = null;
     final filtered = store.event.attendees.where(_match).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
     final chosen = store.event.attendees
@@ -221,6 +228,7 @@ class _AssignScreenState extends State<AssignScreen> {
   Widget _left(List<Attendee> filtered, List<Attendee> chosen) {
     final allSelected =
         filtered.isNotEmpty && filtered.every((a) => selected.contains(a.id));
+    final nights = store.event.nights;
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -261,6 +269,29 @@ class _AssignScreenState extends State<AssignScreen> {
                     Expanded(child: _field(ageMax, '나이 ≤')),
                   ],
                 ),
+                // 1박짜리(날짜 없는 집회 포함)는 고를 날이 하나뿐이라 뜻이 없다.
+                if (nights.length > 1) ...[
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<DateTime?>(
+                    // 집회 날짜를 바꾸면 고른 밤이 목록에서 사라질 수 있어 키로 다시 그린다.
+                    key: ValueKey(night),
+                    initialValue: night,
+                    isDense: true,
+                    isExpanded: true,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.text,
+                      fontFamily: appFont,
+                    ),
+                    decoration: const InputDecoration(labelText: '숙박 날짜'),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('전체 날짜')),
+                      for (final d in nights)
+                        DropdownMenuItem(value: d, child: Text('${mdw(d)} 밤')),
+                    ],
+                    onChanged: (v) => setState(() => night = v),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 // 나이 칸과 한 줄에 두면 좁은 카드에서 나이 칸 글자가 사라진다. 따로 한 줄.
                 SegmentedButton<String?>(
