@@ -36,6 +36,9 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
 
   /// 사역자가 한 명이라도 있는 신청만.
   bool ministerOnly = false;
+
+  /// 낼 금액이 0원인 신청만 (영유아만 오는 신청·무료 날 당일·지정 할인으로 0원 …).
+  bool freeOnly = false;
   String query = '';
   String? selectedId;
 
@@ -179,6 +182,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       for (final r in all)
         if ((filter == null || r.status == filter) &&
             (!ministerOnly || _hasMinister(r)) &&
+            (!freeOnly || quotes[r.id]!.total == 0) &&
             _matches(r))
           r,
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -223,6 +227,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       );
     }
 
+    final freeCount = all.where((r) => quotes[r.id]!.total == 0).length;
     final chips = <Widget>[
       for (final f in [null, ...RegStatus.values])
         ChoiceChip(
@@ -237,6 +242,14 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           label: Text('사역자 ${all.where(_hasMinister).length}'),
           selected: ministerOnly,
           onSelected: (v) => setState(() => ministerOnly = v),
+        ),
+      // 무료 집회는 모두 0원이라 가를 게 없다.
+      if (!g.fee.isFree && (freeOnly || freeCount > 0))
+        FilterChip(
+          label: Text('무료 $freeCount'),
+          tooltip: '낼 금액이 0원인 신청 (영유아만·무료 날 당일·할인으로 0원)',
+          selected: freeOnly,
+          onSelected: (v) => setState(() => freeOnly = v),
         ),
     ];
     final Widget table = shown.isEmpty

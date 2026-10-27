@@ -2123,6 +2123,32 @@ void main() {
       expect(find.text('김목사'), findsWidgets); // 신청자·입금자명 칸
     });
 
+    testWidgets('신청·입금: [무료] 칩으로 낼 금액이 0원인 신청만 본다', (tester) async {
+      fake.regs
+        ..add(pendingReg())
+        ..add(
+          Registration(
+            id: 'r2',
+            gatheringId: 'g1',
+            phone: '01099998888',
+            people: [
+              Person(id: 'c', name: '김무료', gender: 'M', birthYear: 1970),
+            ],
+            discount: const Discount(pct: 100),
+            createdAt: DateTime(2026, 9, 11),
+          ),
+        );
+      current.value = sample();
+      setView(tester, const Size(1400, 900));
+      await pumpPage(tester, const Scaffold(body: RegistrationsScreen()));
+      expect(find.byType(Checkbox), findsNWidgets(2));
+
+      await tester.tap(find.widgetWithText(FilterChip, '무료 1'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Checkbox), findsOneWidget);
+      expect(find.text('김무료'), findsWidgets);
+    });
+
     testWidgets('신청 삭제: 확인하면 서버에서 지우고 그 신청의 참석자도 뺀다', (tester) async {
       fake.regs.add(pendingReg());
       current.value = sample();
