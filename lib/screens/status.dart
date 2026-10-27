@@ -385,6 +385,15 @@ class _NightRosterState extends State<_NightRoster> {
               onSelected: (v) => setState(() => occupiedOnly = v),
             ),
             OutlinedButton.icon(
+              onPressed: groups.isEmpty
+                  ? null
+                  : () => showRosterList(context, title, [
+                      for (final g in groups) ...g.$2,
+                    ]),
+              icon: const Icon(Icons.view_list_outlined, size: 18),
+              label: const Text('목록 보기'),
+            ),
+            OutlinedButton.icon(
               onPressed: groups.isEmpty || printing
                   ? null
                   : () => _print(title, groups),
@@ -500,43 +509,82 @@ class _NightRosterState extends State<_NightRoster> {
     );
   }
 
-  /// 지금 보이는 방·인원을 인쇄용 HTML 로 저장하고 브라우저로 연다 — 열리면 인쇄 창이 바로 뜬다.
-  /// ponytail: 새 패키지(printing·pdf) 없이 브라우저 인쇄를 빌린다. 웹 앱에서는 파일을 내려받기만
-  /// 하므로(저장 위치를 모른다) 그 파일을 열어 인쇄한다. 바로 인쇄 창을 띄우려면 `printing` 을 넣는다.
   Future<void> _print(
     String title,
     List<(FloorGroup, List<(Room, List<Attendee>)>)> groups,
   ) async {
-    final messenger = ScaffoldMessenger.of(context);
     setState(() => printing = true);
-    try {
-      final saved = await FilePicker.saveFile(
-        fileName: '${title.replaceAll(RegExp(r'[\\/:*?"<>|·]'), '_')}.html',
-        bytes: utf8.encode(rosterHtml(title, groups)),
-        type: FileType.custom,
-        allowedExtensions: ['html'],
-      );
-      if (saved != null) {
-        if (!await launchUrl(saved)) {
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text('저장했습니다. ${saved.toFilePath()} 를 열어 인쇄하세요.'),
-            ),
-          );
-        }
-      } else if (kIsWeb) {
+    await printHtml(context, title, rosterHtml(title, groups));
+    if (mounted) setState(() => printing = false);
+  }
+}
+
+/// 인쇄용 HTML 을 저장하고 브라우저로 연다 — 열리면 인쇄 창이 바로 뜬다(HTML 의 onload).
+/// ponytail: 새 패키지(printing·pdf) 없이 브라우저 인쇄를 빌린다. 웹 앱에서는 파일을 내려받기만
+/// 하므로(저장 위치를 모른다) 그 파일을 열어 인쇄한다. 바로 인쇄 창을 띄우려면 `printing` 을 넣는다.
+Future<void> printHtml(BuildContext context, String title, String html) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final saved = await FilePicker.saveFile(
+      fileName: '${title.replaceAll(RegExp(r'[\\/:*?"<>|·]'), '_')}.html',
+      bytes: utf8.encode(html),
+      type: FileType.custom,
+      allowedExtensions: ['html'],
+    );
+    if (saved != null) {
+      if (!await launchUrl(saved)) {
         messenger.showSnackBar(
-          const SnackBar(content: Text('인쇄용 파일을 내려받았습니다. 열면 인쇄 창이 뜹니다.')),
+          SnackBar(content: Text('저장했습니다. ${saved.toFilePath()} 를 열어 인쇄하세요.')),
         );
       }
-    } catch (err) {
+    } else if (kIsWeb) {
       messenger.showSnackBar(
-        SnackBar(content: Text('인쇄용 파일을 만들지 못했습니다. $err')),
+        const SnackBar(content: Text('인쇄용 파일을 내려받았습니다. 열면 인쇄 창이 뜹니다.')),
       );
-    } finally {
-      if (mounted) setState(() => printing = false);
     }
+  } catch (err) {
+    messenger.showSnackBar(SnackBar(content: Text('인쇄용 파일을 만들지 못했습니다. $err')));
   }
+}
+
+/// 방에 든 사람들을 한 줄로: 같은 신청(가족)끼리는 띄어 쓰고 가족 사이는 " / ".
+/// 가족 안은 나이 많은 순(보통 부모가 앞), 20세 미만은 이름 뒤에 나이를 괄호로 — "조현호 나윤영 / 드보라(5)".
+String rosterNames(List<Attendee> people) {
+  final fams = <String, List<Attendee>>{};
+  for (final a in people) {
+    fams.putIfAbsent(a.registrationId ?? a.personId, () => []).add(a);
+  }
+  String one(Attendee a) =>
+      a.age > 0 && a.age < 20 ? '${a.name}(${a.age})' : a.name;
+  return [
+    for (final f in fams.values)
+      ([...f]..sort((x, y) => y.age.compareTo(x.age))).map(one).join(' '),
+  ].join(' / ');
+}
+
+/// 방의 구분: 사람들의 존(없으면 셀)을 많은 순으로 '+' 로 잇고 성별을 붙인다 — "B존 여", "A존+C존".
+/// 성별은 방 성별, 없으면 모두 같은 성별일 때만.
+String rosterGroup(Room room, List<Attendee> people) {
+  final counts = <String, int>{};
+  for (final a in people) {
+    final z = (a.zone ?? '').trim();
+    final k = z.isNotEmpty ? z : (a.cell ?? '').trim();
+    if (k.isNotEmpty) counts.update(k, (n) => n + 1, ifAbsent: () => 1);
+  }
+  final keys = counts.keys.toList()
+    ..sort((x, y) => counts[y]!.compareTo(counts[x]!));
+  final genders = {for (final a in people) a.gender};
+  final g = room.gender ?? (genders.length == 1 ? genders.first : null);
+  return [
+    if (keys.isNotEmpty) keys.join('+'),
+    if (g != null && g.isNotEmpty) genderLabel(g),
+  ].join(' ');
+}
+
+/// 방 칸의 둘째 줄: "(온돌 12인실)" — 방 [기타] 가 있으면 앞에 붙인다.
+String roomSizeLabel(Room r) {
+  final note = (r.note ?? '').trim();
+  return '(${note.isEmpty ? '' : '$note '}${r.capacity}인실)';
 }
 
 /// 일자별 방 인원 인쇄용 HTML. 층마다 제목 + 방 카드 격자(방 이름·인원/정원 · 사람 목록).
@@ -545,7 +593,7 @@ String rosterHtml(
   String title,
   List<(FloorGroup, List<(Room, List<Attendee>)>)> groups,
 ) {
-  final h = const HtmlEscape();
+  const h = HtmlEscape(HtmlEscapeMode.element);
   final total = groups.fold(
     0,
     (s, g) => s + g.$2.fold(0, (t, r) => t + r.$2.length),
@@ -745,4 +793,183 @@ class _RosterCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 일자별 방 인원을 표 한 장으로: [번호 | 방(크기) | 구분 | 사람들]. 방 하나가 한 줄이라
+/// 한 화면(한 페이지)에서 훑어볼 수 있다. 엑셀로 짜던 방배정표와 같은 모양이다.
+Future<void> showRosterList(
+  BuildContext context,
+  String title,
+  List<(Room, List<Attendee>)> rows,
+) {
+  final people = rows.fold(0, (n, r) => n + r.$2.length);
+  return showDialog<void>(
+    context: context,
+    builder: (context) => WideDialog(
+      title: '$title · ${rows.length}개 방 $people명',
+      width: 1000,
+      height: 640,
+      actions: [
+        TextButton.icon(
+          onPressed: () =>
+              printHtml(context, title, rosterListHtml(title, rows)),
+          icon: const Icon(Icons.print_outlined, size: 18),
+          label: const Text('인쇄'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('닫기'),
+        ),
+      ],
+      child: SingleChildScrollView(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            // 휴대폰에서도 사람 칸이 너무 좁아지지 않게 — 모자라면 옆으로 민다.
+            constraints: const BoxConstraints(minWidth: 640, maxWidth: 1000),
+            child: _RosterTable(rows),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _RosterTable extends StatelessWidget {
+  const _RosterTable(this.rows);
+  final List<(Room, List<Attendee>)> rows;
+
+  static const _head = TextStyle(
+    fontSize: 12.5,
+    fontWeight: FontWeight.w700,
+    color: AppColors.textMuted,
+  );
+
+  Widget _cell(Widget child, {bool center = true}) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+    child: center ? Center(child: child) : child,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final place = current.value?.isHomestay == true ? '' : '호';
+    return Table(
+      border: TableBorder.all(color: AppColors.border),
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      columnWidths: const {
+        0: FixedColumnWidth(48),
+        1: FixedColumnWidth(170),
+        2: FixedColumnWidth(120),
+        3: FlexColumnWidth(),
+      },
+      children: [
+        TableRow(
+          decoration: const BoxDecoration(color: AppColors.surfaceAlt),
+          children: [
+            for (final h in ['번호', '방', '구분', '인원'])
+              _cell(Text(h, style: _head)),
+          ],
+        ),
+        for (final (i, (r, people)) in rows.indexed)
+          TableRow(
+            decoration: BoxDecoration(
+              color: i.isOdd
+                  ? AppColors.surfaceAlt.withValues(alpha: 0.5)
+                  : null,
+            ),
+            children: [
+              _cell(
+                Text(
+                  '${i + 1}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: tabular,
+                  ),
+                ),
+              ),
+              _cell(
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${r.label}$place',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      '${roomSizeLabel(r)} · ${people.length}명',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontFeatures: tabular,
+                        color: people.length > r.capacity
+                            ? AppColors.danger
+                            : AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _cell(
+                Text(
+                  rosterGroup(r, people),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              _cell(
+                Text(
+                  people.isEmpty ? '비어 있음' : rosterNames(people),
+                  style: TextStyle(
+                    height: 1.5,
+                    color: people.isEmpty ? AppColors.textFaint : null,
+                  ),
+                ),
+                center: false,
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+/// [showRosterList] 표의 인쇄용 HTML. A4 세로, 방 한 줄이 페이지에 걸쳐 잘리지 않게 한다.
+String rosterListHtml(String title, List<(Room, List<Attendee>)> rows) {
+  const h = HtmlEscape(HtmlEscapeMode.element);
+  final place = current.value?.isHomestay == true ? '' : '호';
+  final people = rows.fold(0, (n, r) => n + r.$2.length);
+  final b = StringBuffer()
+    ..write('<!doctype html><html lang="ko"><head><meta charset="utf-8">')
+    ..write(
+      '<title>${h.convert(title)}</title><style>'
+      '@page{size:A4;margin:10mm}'
+      'body{font-family:Pretendard,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;'
+      'color:#191f28;margin:0;font-size:10.5pt}'
+      'h1{font-size:15pt;margin:0 0 3mm}'
+      'table{width:100%;border-collapse:collapse}'
+      'th,td{border:1px solid #8b95a1;padding:2mm 2.5mm;vertical-align:middle}'
+      'th{background:#e5e8eb;font-size:10pt}'
+      'tr{break-inside:avoid}'
+      'tbody tr:nth-child(even){background:#f5f6f8}'
+      '.c{text-align:center}.n{width:9mm}.r{width:38mm}.g{width:26mm}'
+      '.sub{color:#6b7684;font-size:9pt}.names{line-height:1.6}'
+      '</style></head><body onload="print()">',
+    )
+    ..write('<h1>${h.convert(title)} · ${rows.length}개 방 $people명</h1>')
+    ..write(
+      '<table><thead><tr><th class="n">번호</th><th class="r">방</th>'
+      '<th class="g">구분</th><th>인원</th></tr></thead><tbody>',
+    );
+  for (final (i, (r, ps)) in rows.indexed) {
+    b.write(
+      '<tr><td class="c">${i + 1}</td>'
+      '<td class="c"><b>${h.convert('${r.label}$place')}</b><br>'
+      '<span class="sub">${h.convert(roomSizeLabel(r))} · ${ps.length}명</span></td>'
+      '<td class="c">${h.convert(rosterGroup(r, ps))}</td>'
+      '<td class="names">${ps.isEmpty ? '<span class="sub">비어 있음</span>' : h.convert(rosterNames(ps))}</td></tr>',
+    );
+  }
+  b.write('</tbody></table></body></html>');
+  return '$b';
 }

@@ -306,4 +306,64 @@ void main() {
     expect(html, contains('onload="print()"'));
     expect(html, contains('1개 방 · 1명'));
   });
+
+  test('목록 표 한 줄: 가족끼리 띄어 쓰고 가족 사이는 /, 20세 미만은 (나이), 구분은 존+성별', () {
+    Attendee p(
+      String name,
+      int age,
+      String reg, {
+      String gender = 'F',
+      String? zone,
+    }) => Attendee(
+      id: name,
+      name: name,
+      gender: gender,
+      age: age,
+      zone: zone,
+      checkIn: d1,
+      checkOut: d4,
+    )..registrationId = reg;
+    final people = [
+      p('드보라', 5, 'r1', zone: 'B존'),
+      p('조현호', 40, 'r1', zone: 'B존'),
+      p('박지현', 35, 'r2', zone: 'C존'),
+    ];
+    expect(rosterNames(people), '조현호 드보라(5) / 박지현');
+    final room = Room(id: 'A', roomNo: '201', capacity: 12, note: '온돌');
+    expect(rosterGroup(room, people), 'B존+C존 여');
+    expect(roomSizeLabel(room), '(온돌 12인실)');
+    final html = rosterListHtml('수양회', [(room, people)]);
+    expect(html, contains('조현호 드보라(5) / 박지현'));
+    expect(html, contains('1개 방 3명'));
+  });
+
+  testWidgets('현황 [목록 보기]: 방마다 한 줄로 사람들이 나오는 팝업', (tester) async {
+    tester.view.physicalSize = const Size(2800, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+    store.event = Event(name: 'x', startDate: d1, endDate: d4)
+      ..rooms.add(Room(id: 'A', roomNo: '201', capacity: 4))
+      ..attendees.add(
+        Attendee(
+          id: 'p1',
+          name: '홍길동',
+          gender: 'M',
+          age: 30,
+          checkIn: d1,
+          checkOut: d4,
+          roomId: 'A',
+        ),
+      );
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: StatusScreen())),
+    );
+    await tester.tap(find.text('목록 보기'));
+    await tester.pumpAndSettle();
+    Finder inTable(String t) =>
+        find.descendant(of: find.byType(Table), matching: find.text(t));
+    expect(inTable('201호'), findsOneWidget);
+    expect(inTable('(4인실) · 1명'), findsOneWidget);
+    expect(inTable('홍길동'), findsOneWidget);
+    expect(inTable('남'), findsOneWidget); // 구분 칸
+  });
 }
