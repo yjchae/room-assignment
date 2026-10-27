@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:room_assignment/main.dart' show store;
 import 'package:room_assignment/screens/attendees.dart';
+import 'package:room_assignment/screens/status.dart';
 import 'package:room_assignment/gathering.dart';
 import 'package:room_assignment/models.dart';
 import 'package:room_assignment/remote.dart';
@@ -225,5 +226,47 @@ void main() {
     );
     expect(seg('1명'), findsNWidgets(6)); // 합계·전참·10/1~10/4
     expect(seg('2명'), findsNothing);
+  });
+
+  testWidgets('현황 일자별 방 인원: 밤을 고르면 그 밤에 묵는 사람이 방 아래에 나온다', (tester) async {
+    tester.view.physicalSize = const Size(2800, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+    store.event = Event(name: 'x', startDate: d1, endDate: d4)
+      ..rooms.addAll([
+        Room(id: 'A', roomNo: '101', capacity: 2),
+        Room(id: 'B', roomNo: '102', capacity: 2),
+      ]);
+    final hong = Attendee(
+      id: 'p1',
+      name: '홍길동',
+      gender: 'M',
+      age: 30,
+      checkIn: d1,
+      checkOut: d4,
+      roomId: 'A',
+    );
+    store.event.attendees.add(hong);
+    store.splitStay(hong, DateTime(2026, 10, 3))!.roomId =
+        'B'; // 1·2일 밤 101, 3일 밤 102
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: StatusScreen())),
+    );
+    Finder card(String no) => find
+        .ancestor(of: find.text(no).last, matching: find.byType(InkWell))
+        .first;
+    Finder nameIn(String no) =>
+        find.descendant(of: card(no), matching: find.text('홍길동'));
+
+    expect(nameIn('101'), findsOneWidget);
+    expect(nameIn('102'), findsNothing);
+    await tester.tap(find.text('10-03(토) 밤'));
+    await tester.pumpAndSettle();
+    expect(nameIn('101'), findsNothing);
+    expect(nameIn('102'), findsOneWidget);
+    // 빈 방 숨기기: 그 밤에 빈 101 카드가 사라진다.
+    await tester.tap(find.text('빈 방 숨기기'));
+    await tester.pumpAndSettle();
+    expect(find.text('비어 있음'), findsNothing);
   });
 }
