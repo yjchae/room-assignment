@@ -1,4 +1,9 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../gathering.dart' show mdw;
 import '../main.dart';
@@ -300,7 +305,13 @@ class _NightRoster extends StatefulWidget {
 class _NightRosterState extends State<_NightRoster> {
   /// 고른 밤 (그 밤이 시작되는 날짜). 일정이 바뀌어 없는 밤이면 첫 밤으로.
   DateTime? night;
-  bool hideEmpty = false;
+
+  /// 그 밤에 묵는 사람이 있는 방만.
+  bool occupiedOnly = false;
+
+  /// 운영자가 뺀 방 (보기·인쇄에서). 밤을 바꿔도 그대로다. 저장하지 않는다 — 인쇄용 보기일 뿐이다.
+  final excluded = <String>{};
+  bool printing = false;
 
   static const _cardWidth = 200.0;
   static const _gap = 12.0;
@@ -311,6 +322,7 @@ class _NightRosterState extends State<_NightRoster> {
     final nights = e.nights;
     final n = nights.indexOf(night ?? nights.first).clamp(0, nights.length - 1);
     final homestay = current.value?.isHomestay == true;
+    final place = homestay ? '가정' : '방';
     // 날짜 없는 집회는 밤이 하나뿐이라 고를 게 없다.
     final oneNight = nights.length == 1 || current.value?.dateless == true;
 
@@ -322,7 +334,28 @@ class _NightRosterState extends State<_NightRoster> {
       e.attendees.where((a) => a.roomId == null && stayMask(a, nights)[n]),
     ).length;
 
-    final floors = byFloorDesc(e.rooms);
+    // 화면과 인쇄가 같은 목록을 쓴다.
+    final groups = [
+      for (final f in byFloorDesc(e.rooms).entries)
+        (
+          f.key,
+          [
+            for (final r in f.value)
+              if (!excluded.contains(r.id))
+                if (inRoom(r) case final people
+                    when !occupiedOnly || people.isNotEmpty)
+                  (r, people),
+          ],
+        ),
+    ].where((g) => g.$2.isNotEmpty).toList();
+    final gone = [
+      for (final r in [...e.rooms]..sort(byRoomNo))
+        if (excluded.contains(r.id)) r,
+    ];
+    final title = oneNight
+        ? '${e.name} · $place 인원'
+        : '${e.name} · ${mdw(nights[n])} 밤 $place 인원';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -334,8 +367,8 @@ class _NightRosterState extends State<_NightRoster> {
             SectionTitle(
               homestay ? '일자별 가정 인원' : '일자별 방 인원',
               subtitle: oneNight
-                  ? '방마다 배정된 사람이 나옵니다'
-                  : '밤을 고르면 그날 밤 방마다 묵는 사람이 나옵니다',
+                  ? '$place마다 배정된 사람이 나옵니다. 카드의 ×로 인쇄에서 뺄 수 있습니다'
+                  : '밤을 고르면 그날 밤 $place마다 묵는 사람이 나옵니다. 카드의 ×로 인쇄에서 뺄 수 있습니다',
             ),
             if (unplaced > 0)
               Text(
@@ -347,9 +380,16 @@ class _NightRosterState extends State<_NightRoster> {
                 ),
               ),
             FilterChip(
-              label: Text(homestay ? '빈 가정 숨기기' : '빈 방 숨기기'),
-              selected: hideEmpty,
-              onSelected: (v) => setState(() => hideEmpty = v),
+              label: Text('인원 있는 $place만'),
+              selected: occupiedOnly,
+              onSelected: (v) => setState(() => occupiedOnly = v),
+            ),
+            OutlinedButton.icon(
+              onPressed: groups.isEmpty || printing
+                  ? null
+                  : () => _print(title, groups),
+              icon: const Icon(Icons.print_outlined, size: 18),
+              label: Text(printing ? '만드는 중…' : '인쇄'),
             ),
           ],
         ),
@@ -372,78 +412,208 @@ class _NightRosterState extends State<_NightRoster> {
             ),
           ),
         ],
+        // 뺀 방: 누르면 되돌린다.
+        if (gone.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '뺀 $place ${gone.length}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              for (final r in gone)
+                InputChip(
+                  label: Text(r.label),
+                  tooltip: '다시 넣기',
+                  onDeleted: () => setState(() => excluded.remove(r.id)),
+                ),
+              TextButton(
+                onPressed: () => setState(excluded.clear),
+                child: const Text('모두 되돌리기'),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, box) {
-            final cols = ((box.maxWidth + _gap) / (_cardWidth + _gap))
-                .floor()
-                .clamp(1, 99);
-            final w = (box.maxWidth - _gap * (cols - 1)) / cols;
-            final groups = [
-              for (final f in floors.entries)
-                (
-                  f.key,
-                  [
-                    for (final r in f.value)
-                      if (inRoom(r) case final people
-                          when !hideEmpty || people.isNotEmpty)
-                        (r, people),
-                  ],
-                ),
-            ].where((g) => g.$2.isNotEmpty).toList();
-            if (groups.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(
-                  child: Text(
-                    '이 밤에 묵는 사람이 있는 방이 없습니다.',
-                    style: TextStyle(color: AppColors.textMuted),
-                  ),
-                ),
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final (g, rooms) in groups) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, bottom: 8),
-                    child: Text(
-                      floorLabel(g),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textMuted,
+        if (groups.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                '이 밤에 보여 줄 $place이 없습니다.',
+                style: const TextStyle(color: AppColors.textMuted),
+              ),
+            ),
+          )
+        else
+          LayoutBuilder(
+            builder: (context, box) {
+              final cols = ((box.maxWidth + _gap) / (_cardWidth + _gap))
+                  .floor()
+                  .clamp(1, 99);
+              final w = (box.maxWidth - _gap * (cols - 1)) / cols;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final (g, rooms) in groups) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4, bottom: 8),
+                      child: Text(
+                        floorLabel(g),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textMuted,
+                        ),
                       ),
                     ),
-                  ),
-                  Wrap(
-                    spacing: _gap,
-                    runSpacing: _gap,
-                    children: [
-                      for (final (r, people) in rooms)
-                        SizedBox(
-                          width: w,
-                          child: _RosterCard(room: r, people: people),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
+                    Wrap(
+                      spacing: _gap,
+                      runSpacing: _gap,
+                      children: [
+                        for (final (r, people) in rooms)
+                          SizedBox(
+                            width: w,
+                            child: _RosterCard(
+                              room: r,
+                              people: people,
+                              onExclude: () =>
+                                  setState(() => excluded.add(r.id)),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                 ],
-              ],
-            );
-          },
-        ),
+              );
+            },
+          ),
       ],
     );
   }
+
+  /// 지금 보이는 방·인원을 인쇄용 HTML 로 저장하고 브라우저로 연다 — 열리면 인쇄 창이 바로 뜬다.
+  /// ponytail: 새 패키지(printing·pdf) 없이 브라우저 인쇄를 빌린다. 웹 앱에서는 파일을 내려받기만
+  /// 하므로(저장 위치를 모른다) 그 파일을 열어 인쇄한다. 바로 인쇄 창을 띄우려면 `printing` 을 넣는다.
+  Future<void> _print(
+    String title,
+    List<(FloorGroup, List<(Room, List<Attendee>)>)> groups,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => printing = true);
+    try {
+      final saved = await FilePicker.saveFile(
+        fileName: '${title.replaceAll(RegExp(r'[\\/:*?"<>|·]'), '_')}.html',
+        bytes: utf8.encode(rosterHtml(title, groups)),
+        type: FileType.custom,
+        allowedExtensions: ['html'],
+      );
+      if (saved != null) {
+        if (!await launchUrl(saved)) {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text('저장했습니다. ${saved.toFilePath()} 를 열어 인쇄하세요.'),
+            ),
+          );
+        }
+      } else if (kIsWeb) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('인쇄용 파일을 내려받았습니다. 열면 인쇄 창이 뜹니다.')),
+        );
+      }
+    } catch (err) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('인쇄용 파일을 만들지 못했습니다. $err')),
+      );
+    } finally {
+      if (mounted) setState(() => printing = false);
+    }
+  }
+}
+
+/// 일자별 방 인원 인쇄용 HTML. 층마다 제목 + 방 카드 격자(방 이름·인원/정원 · 사람 목록).
+/// A4 세로에 4칸, 카드가 페이지에 걸쳐 잘리지 않게 한다. 열리면 바로 인쇄 창을 띄운다.
+String rosterHtml(
+  String title,
+  List<(FloorGroup, List<(Room, List<Attendee>)>)> groups,
+) {
+  final h = const HtmlEscape();
+  final total = groups.fold(
+    0,
+    (s, g) => s + g.$2.fold(0, (t, r) => t + r.$2.length),
+  );
+  final b = StringBuffer()
+    ..write('<!doctype html><html lang="ko"><head><meta charset="utf-8">')
+    ..write(
+      '<title>${h.convert(title)}</title><style>'
+      '@page{size:A4;margin:12mm}'
+      'body{font-family:Pretendard,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;'
+      'color:#191f28;margin:0;font-size:11pt}'
+      'h1{font-size:16pt;margin:0 0 2mm}'
+      '.sum{color:#6b7684;font-size:10pt;margin-bottom:4mm}'
+      'h2{font-size:12pt;color:#4e5968;margin:5mm 0 2mm;break-after:avoid}'
+      '.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3mm}'
+      '.room{border:1px solid #c9cfd6;border-radius:2mm;break-inside:avoid}'
+      '.head{display:flex;justify-content:space-between;padding:1.5mm 2.5mm;'
+      'background:#f2f4f6;border-bottom:1px solid #c9cfd6;font-weight:700}'
+      '.room ol{margin:1.5mm 0;padding:0 2.5mm 0 7mm}'
+      '.room li{line-height:1.5}'
+      '.meta{color:#6b7684;font-size:9pt}'
+      '.empty{color:#8b95a1;padding:1.5mm 2.5mm;font-size:9pt}'
+      '</style></head><body onload="print()">',
+    )
+    ..write('<h1>${h.convert(title)}</h1>')
+    ..write(
+      '<div class="sum">${groups.fold(0, (s, g) => s + g.$2.length)}개 방 · $total명</div>',
+    );
+  for (final (g, rooms) in groups) {
+    b.write('<h2>${h.convert(floorLabel(g))}</h2><div class="grid">');
+    for (final (r, people) in rooms) {
+      b.write(
+        '<div class="room"><div class="head"><span>${h.convert(r.roomNo)}'
+        '${r.gender == null ? '' : ' <span class="meta">${genderLabel(r.gender!)}</span>'}'
+        '</span><span>${people.length}/${r.capacity}</span></div>',
+      );
+      if (people.isEmpty) {
+        b.write('<div class="empty">비어 있음</div>');
+      } else {
+        b.write('<ol>');
+        for (final a in people) {
+          b.write(
+            '<li>${h.convert(a.name)} <span class="meta">'
+            '${genderLabel(a.gender)}${a.age == 0 ? '' : ' ${a.age}'}</span></li>',
+          );
+        }
+        b.write('</ol>');
+      }
+      b.write('</div>');
+    }
+    b.write('</div>');
+  }
+  b.write('</body></html>');
+  return '$b';
 }
 
 /// 방 하나: 위에 방 이름·인원/정원·상태, 아래에 그 밤에 묵는 사람.
 class _RosterCard extends StatelessWidget {
-  const _RosterCard({required this.room, required this.people});
+  const _RosterCard({
+    required this.room,
+    required this.people,
+    required this.onExclude,
+  });
   final Room room;
   final List<Attendee> people;
+
+  /// 이 방을 보기·인쇄에서 뺀다.
+  final VoidCallback onExclude;
 
   @override
   Widget build(BuildContext context) {
@@ -503,6 +673,20 @@ class _RosterCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: st.ink,
                     ),
+                  ),
+                  const SizedBox(width: 2),
+                  IconButton(
+                    tooltip: '이 방 빼기 (보기·인쇄)',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    iconSize: 16,
+                    color: AppColors.textMuted,
+                    icon: const Icon(Icons.close),
+                    onPressed: onExclude,
                   ),
                 ],
               ),

@@ -264,9 +264,46 @@ void main() {
     await tester.pumpAndSettle();
     expect(nameIn('101'), findsNothing);
     expect(nameIn('102'), findsOneWidget);
-    // 빈 방 숨기기: 그 밤에 빈 101 카드가 사라진다.
-    await tester.tap(find.text('빈 방 숨기기'));
+    // 인원 있는 방만: 그 밤에 빈 101 카드가 사라진다.
+    await tester.tap(find.text('인원 있는 방만'));
     await tester.pumpAndSettle();
     expect(find.text('비어 있음'), findsNothing);
+    // 102 를 빼면 보여 줄 방이 없고, 뺀 방 칩으로 되돌린다.
+    await tester.tap(find.byTooltip('이 방 빼기 (보기·인쇄)'));
+    await tester.pumpAndSettle();
+    expect(nameIn('102'), findsNothing);
+    expect(find.text('이 밤에 보여 줄 방이 없습니다.'), findsOneWidget);
+    await tester.tap(find.text('모두 되돌리기'));
+    await tester.pumpAndSettle();
+    expect(nameIn('102'), findsOneWidget);
+  });
+
+  test('인쇄용 HTML: 제목·방·사람이 들어가고 이름은 이스케이프된다', () {
+    final html = rosterHtml('수양회 · 10-03(토) 밤 방 인원', [
+      (
+        (building: '본관', floor: 1),
+        [
+          (
+            Room(id: 'A', roomNo: '101', capacity: 4),
+            [
+              Attendee(
+                id: 'p',
+                name: '<홍>',
+                gender: 'M',
+                age: 30,
+                checkIn: d1,
+                checkOut: d4,
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]);
+    expect(html, contains('<title>수양회 · 10-03(토) 밤 방 인원</title>'));
+    expect(html, contains('본관 1층'));
+    expect(html, contains('1/4'));
+    expect(html, contains('&lt;홍&gt;'));
+    expect(html, contains('onload="print()"'));
+    expect(html, contains('1개 방 · 1명'));
   });
 }
