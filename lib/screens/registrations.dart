@@ -40,7 +40,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   /// 무료 날만 당일로 오는 사람(`QuoteLine.freeDay`)이 있는 신청만. 할인으로 0원이 된 사람은 아니다.
   bool freeDayOnly = false;
 
-  /// 고른 날짜 중 하루라도 오는 사람이 있는 신청만. 비면 날짜로 거르지 않는다.
+  /// 고른 밤 중 하루라도 숙박하는 사람이 있는 신청만. 비면 날짜로 거르지 않는다.
   final dayFilter = <DateTime>{};
   String query = '';
   String? selectedId;
@@ -181,10 +181,13 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       for (final r in all)
         r.id: g.quoteFor(r.people, r.createdAt, discount: r.discount),
     };
-    // 다른 집회의 날짜가 남아 있어도 칩으로 못 끄는 필터가 되지 않게 이 집회 날짜로 좁힌다.
-    final picked = g.days.where(dayFilter.contains).toSet();
-    bool comes(Person p) =>
-        picked.isEmpty || p.daysIn(g.start, g.end).any(picked.contains);
+    // 마지막 날 밤은 집회 밖이라 칩이 없다.
+    final nights = g.days.take(g.nights).toList();
+    List<DateTime> staysOf(Person p) =>
+        p.nightsIn(g.start, g.end, separate: g.fee.lodgingSeparate);
+    // 다른 집회의 날짜가 남아 있어도 칩으로 못 끄는 필터가 되지 않게 이 집회 밤으로 좁힌다.
+    final picked = nights.where(dayFilter.contains).toSet();
+    bool comes(Person p) => picked.isEmpty || staysOf(p).any(picked.contains);
     final dated = picked.isEmpty
         ? all
         : all.where((r) => r.people.any(comes)).toList();
@@ -242,11 +245,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       0,
       (n, r) => n + quotes[r.id]!.lines.where((l) => l.freeDay).length,
     );
-    // 날짜 칩의 인원은 다른 날짜 선택과 상관없이 그 날 전체.
-    int peopleOn(DateTime d) => all
+    // 날짜 칩의 인원은 다른 날짜 선택과 상관없이 그 밤 숙박 전체.
+    int staysOn(DateTime d) => all
         .where((r) => r.status != RegStatus.cancelled)
         .expand((r) => r.people)
-        .where((p) => p.daysIn(g.start, g.end).contains(d))
+        .where((p) => staysOf(p).contains(d))
         .length;
     final chips = <Widget>[
       for (final f in [null, ...RegStatus.values])
@@ -271,15 +274,14 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           selected: freeDayOnly,
           onSelected: (v) => setState(() => freeDayOnly = v),
         ),
-      // 하루짜리·날짜 없는 집회는 고를 날짜가 없다.
-      if (g.days.length > 1)
-        for (final d in g.days)
-          FilterChip(
-            label: Text('${mdw(d)} ${peopleOn(d)}명'),
-            selected: picked.contains(d),
-            onSelected: (v) =>
-                setState(() => v ? dayFilter.add(d) : dayFilter.remove(d)),
-          ),
+      // 하루짜리·날짜 없는 집회는 밤이 없어 칩도 없다.
+      for (final d in nights)
+        FilterChip(
+          label: Text('${mdw(d)} 숙박 ${staysOn(d)}명'),
+          selected: picked.contains(d),
+          onSelected: (v) =>
+              setState(() => v ? dayFilter.add(d) : dayFilter.remove(d)),
+        ),
     ];
     final Widget table = shown.isEmpty
         ? EmptyNotice(
@@ -370,7 +372,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           Padding(
             padding: EdgeInsets.fromLTRB(size.isCompact ? 12 : 16, 0, 16, 4),
             child: const Text(
-              '인원은 고른 날짜에 오는 사람만 세고, 금액은 그 사람이 든 신청의 전체 금액입니다.',
+              '인원은 고른 밤에 숙박하는 사람만 세고, 금액은 그 사람이 든 신청의 전체 금액입니다.',
               style: TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ),
