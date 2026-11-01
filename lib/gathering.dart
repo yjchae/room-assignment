@@ -350,7 +350,8 @@ enum GatheringKind {
   const GatheringKind(this.label);
   final String label;
 
-  static GatheringKind parse(Object? s) => values.asNameMap()['$s'] ?? gathering;
+  static GatheringKind parse(Object? s) =>
+      values.asNameMap()['$s'] ?? gathering;
 }
 
 /// 홈스테이 신청서에서 수용 인원을 받는 사용자 정의 항목 이름.
@@ -511,11 +512,10 @@ class Gathering {
           .toList();
 
   /// [d] 날의 일정 (시간 순). 운영자 편집 화면과 신청 웹이 같은 순서를 본다.
-  List<ScheduleItem> scheduleOn(DateTime d) =>
-      [
-        for (final s in schedule)
-          if (_day(s.date) == _day(d)) s,
-      ]..sort((a, b) => a.time.compareTo(b.time));
+  List<ScheduleItem> scheduleOn(DateTime d) => [
+    for (final s in schedule)
+      if (_day(s.date) == _day(d)) s,
+  ]..sort((a, b) => a.time.compareTo(b.time));
 
   /// 집회 기간 안에 적어 둔 일정이 하나라도 있는가.
   bool get hasSchedule => days.any((d) => scheduleOn(d).isNotEmpty);
@@ -755,6 +755,20 @@ class QuoteLine {
   /// 날짜 없는 집회의 줄 ([Gathering.dateless]). [stay] 가 '참가' / '미참가' 가 된다.
   final bool dateless;
 
+  /// 고른 날([picked])에 내는 금액 = 회비표 요금으로 센다. 그 밤을 묵으면 1박 요금, 당일로 오면 당일 요금
+  /// (숙박비 별도면 참가일마다 하루 참가 + 묵는 밤마다 숙박 1박). 무료 날은 0원이고 전체 참석자도 같다 —
+  /// 마지막 날처럼 묵지 않고 떠나는 날은 앞 밤 요금에 들어 있어 0원이다. 이 사람 금액([amount])을 넘지 않는다.
+  /// ponytail: 1박당 금액을 비워 둔 집회는 0원으로 나온다. 정액만 쓰는 집회가 생기면 정액 ÷ 박수로 보탠다.
+  int amountOn(Set<DateTime> picked, FeeRule fee) {
+    final nightly = (separate ? fee.lodging : fee.perNight)[group] ?? 0;
+    final visits = separate ? days : dayVisitDays(days);
+    final sum =
+        nightly * (stayNights ?? nightsOf(days)).where(picked.contains).length +
+        (fee.dayOnly[group] ?? 0) *
+            visits.where((d) => picked.contains(d) && !fee.isFreeDay(d)).length;
+    return math.min(sum, amount);
+  }
+
   /// 이 사람이 묵는 박수. 0 = 당일만.
   int get nights => stayNights?.length ?? nightsOf(days).length;
 
@@ -769,9 +783,10 @@ class QuoteLine {
     if (full) return '전체';
     final visits = dayVisits(days);
     return [
-      if (nights > 0) '$nights박',
-      if (visits > 0) visits == 1 ? '당일' : '당일 $visits일',
-    ].join(' + ') + (freeDay ? '(무료)' : '');
+          if (nights > 0) '$nights박',
+          if (visits > 0) visits == 1 ? '당일' : '당일 $visits일',
+        ].join(' + ') +
+        (freeDay ? '(무료)' : '');
   }
 }
 
@@ -854,6 +869,14 @@ class Quote {
   }
 
   int get total => beforeDiscount - specialDiscount;
+
+  /// 고른 날에 낼 금액 — 사람별 [QuoteLine.amountOn] 합에 사전등록·지정 할인(%)을 적용한다.
+  /// 그룹당 금액과 지정 할인(원)은 날짜에 속하지 않아 빼고 보지만, 신청 합계([total])는 넘지 않는다.
+  int totalOn(Set<DateTime> picked, FeeRule fee) {
+    final sum = lines.fold(0, (s, l) => s + l.amountOn(picked, fee));
+    final off = sum * (100 - earlyPct) ~/ 100 * (100 - discount.pct) ~/ 100;
+    return math.min(off, total);
+  }
 
   /// "성인 2 · 중고등 1 · 유치 1"
   String get summary {
@@ -969,10 +992,7 @@ QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
   final lodging = (fee.lodging[g] ?? 0) * nights.length;
   // 무료 날에만 오고 묵지도 않는다 = 낼 돈이 없다.
   final freeDay =
-      !isFull &&
-      days.isNotEmpty &&
-      nights.isEmpty &&
-      days.every(fee.isFreeDay);
+      !isFull && days.isNotEmpty && nights.isEmpty && days.every(fee.isFreeDay);
   return QuoteLine(
     p,
     g,

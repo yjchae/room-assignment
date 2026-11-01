@@ -331,17 +331,32 @@ void main() {
     });
 
     test('입금이 없는 신청인지는 무료 날로 정한다 (금액 0원이 아니라)', () {
-      expect(fq([on([sun])]).freeDayOnly, isTrue);
-      expect(fq([on([sun, tue])]).freeDayOnly, isFalse);
+      expect(
+        fq([
+          on([sun]),
+        ]).freeDayOnly,
+        isTrue,
+      );
+      expect(
+        fq([
+          on([sun, tue]),
+        ]).freeDayOnly,
+        isFalse,
+      );
       // 날짜를 아직 안 고른 사람이 섞여도 무료 날 신청, 가족당 금액 없음
-      final mixed = fq([on([sun]), on([])]);
+      final mixed = fq([
+        on([sun]),
+        on([]),
+      ]);
       expect((mixed.freeDayOnly, mixed.total), (true, 0));
       // 100% 할인으로 0원이 된 신청은 아니다
       final discounted = quote(
         rule(),
         start: fri,
         end: tue,
-        people: [on([tue])],
+        people: [
+          on([tue]),
+        ],
         appliedAt: DateTime(2026, 9, 10),
         discount: const Discount(pct: 100),
       );
@@ -349,7 +364,12 @@ void main() {
     });
 
     test('당일 금액이 원래 0원인 사람은 (무료) 표시가 붙지 않는다', () {
-      final infant = Person(name: '아기', gender: 'M', birthYear: 2025, days: [tue]);
+      final infant = Person(
+        name: '아기',
+        gender: 'M',
+        birthYear: 2025,
+        days: [tue],
+      );
       final l = fq([infant]).lines.single;
       expect((l.amount, l.stay), (0, '당일'));
     });
@@ -391,8 +411,7 @@ void main() {
     );
     Person on(List<DateTime>? days, List<DateTime>? stays, {int y = 1980}) =>
         Person(name: '가', gender: 'M', birthYear: y, days: days, stays: stays);
-    QuoteLine line(Person x, {FeeRule? f}) =>
-        q(f ?? rule(), [x]).lines.single;
+    QuoteLine line(Person x, {FeeRule? f}) => q(f ?? rule(), [x]).lines.single;
 
     test('전체 참가 + 숙박 2박 = 15만 + 6만', () {
       final l = line(on(null, [fri, sat]));
@@ -429,7 +448,9 @@ void main() {
       final l = line(on(null, [fri]), f: rule(fullPct: 10));
       expect((l.participation, l.lodging), (135000, 30000));
       final f = rule()..early = [earlyBird];
-      final r = q(f, [on(null, [fri])]);
+      final r = q(f, [
+        on(null, [fri]),
+      ]);
       expect(r.subtotal, 180000);
       expect(r.earlyDiscount, 18000);
       expect((r.participationTotal, r.lodgingTotal), (150000, 30000));
@@ -439,7 +460,12 @@ void main() {
       final f = rule(free: [sun]);
       final only = line(on([sun], []), f: f);
       expect((only.amount, only.freeDay), (0, true));
-      expect(q(f, [on([sun], [])]).freeDayOnly, isTrue);
+      expect(
+        q(f, [
+          on([sun], []),
+        ]).freeDayOnly,
+        isTrue,
+      );
       final stay = line(on([sat, sun], [sat]), f: f);
       expect((stay.participation, stay.lodging), (60000, 30000));
       expect(stay.freeDay, isFalse);
@@ -503,7 +529,10 @@ void main() {
     });
 
     test('isFree: 숙박비 별도면 1박당 대신 숙박비를 본다', () {
-      final f = FeeRule(perNight: {AgeGroup.adult: 1000}, lodgingSeparate: true);
+      final f = FeeRule(
+        perNight: {AgeGroup.adult: 1000},
+        lodgingSeparate: true,
+      );
       expect(f.isFree, isTrue);
       f.lodging[AgeGroup.adult] = 1000;
       expect(f.isFree, isFalse);
@@ -657,6 +686,69 @@ void main() {
         isTrue,
       );
       expect(g.freeFor(g.quoteFor([p('가', 1985)], start)), isFalse);
+    });
+  });
+
+  group('날짜별 금액', () {
+    final fri = start, sat = DateTime(2026, 10, 10), sun = end;
+    Person on(List<DateTime>? days) =>
+        Person(name: '김', gender: 'M', birthYear: 1980, days: days);
+    Quote of(FeeRule f, List<Person> ps, {Discount d = Discount.none}) => quote(
+      f,
+      start: start,
+      end: end,
+      people: ps,
+      appliedAt: DateTime(2026, 9, 25), // 사전등록 구간 밖
+      discount: d,
+    );
+
+    test('전체 참석도 그 밤 1박 요금, 마지막 날은 0원, 모두 고르면 정액을 안 넘는다', () {
+      final f = planRule();
+      final l = of(f, [on(null)]).lines.single;
+      expect(l.amountOn({sat}, f), 70000);
+      expect(l.amountOn({sun}, f), 0);
+      expect(l.amountOn({fri, sat, sun}, f), 140000);
+    });
+
+    test('당일은 당일 요금, 무료 날은 0원, 안 오는 날은 0원', () {
+      final f = planRule()..freeDays = [sun];
+      expect(
+        of(f, [
+          on([sat]),
+        ]).lines.single.amountOn({sat}, f),
+        30000,
+      );
+      expect(
+        of(f, [
+          on([sat]),
+        ]).lines.single.amountOn({fri}, f),
+        0,
+      );
+      expect(
+        of(f, [
+          on([sun]),
+        ]).lines.single.amountOn({sun}, f),
+        0,
+      );
+    });
+
+    test('숙박비 별도: 참가일 하루 참가 + 묵는 밤 숙박비', () {
+      final f = planRule()
+        ..lodgingSeparate = true
+        ..lodging = {AgeGroup.adult: 40000};
+      final l = of(f, [
+        on(null)..stays = [fri],
+      ]).lines.single;
+      expect(l.amountOn({fri}, f), 70000);
+      expect(l.amountOn({sat}, f), 30000);
+    });
+
+    test('신청 금액: 지정 할인(%)은 적용, 그룹당 금액은 빼고, 합계는 넘지 않는다', () {
+      final f = planRule();
+      final half = of(f, [on(null)], d: const Discount(pct: 50));
+      expect(half.totalOn({sat}, f), 35000);
+      final zero = of(f, [on(null)], d: const Discount(amount: 999999));
+      expect(zero.totalOn({sat}, f), 0);
     });
   });
 }

@@ -2170,7 +2170,7 @@ void main() {
       expect(find.text('박할인'), findsNothing);
     });
 
-    testWidgets('신청·입금: 날짜 칩을 여러 개 고르면 그 밤 숙박하는 신청만 집계한다', (tester) async {
+    testWidgets('신청·입금: 날짜 칩을 고르면 그 날 오는 신청과 그 날 금액만 집계한다', (tester) async {
       Person who(String id, String name, [List<DateTime>? days]) =>
           Person(id: id, name: name, gender: 'M', birthYear: 1970, days: days);
       Registration one(String id, String phone, List<Person> people) =>
@@ -2181,23 +2181,17 @@ void main() {
             people: people,
             createdAt: DateTime(2026, 9, 11),
           );
-      final d9 = DateTime(2026, 10, 9),
-          d10 = DateTime(2026, 10, 10),
-          d11 = DateTime(2026, 10, 11);
+      final d9 = DateTime(2026, 10, 9), d10 = DateTime(2026, 10, 10);
       final first = one('r1', '01011112222', [
-        who('a', '김첫날', [d9, d10]), // 금요일 밤만
+        who('a', '김첫날', [d9]),
       ]);
       final family = one('r2', '01033334444', [
-        who('b', '이둘째', [d10, d11]), // 토요일 밤만
+        who('b', '이둘째', [d10]),
         who('c', '이전체'),
-      ]);
-      final visitor = one('r4', '01077778888', [
-        who('e', '최일요', [d11]), // 일요일 당일
       ]);
       fake.regs
         ..add(first)
         ..add(family)
-        ..add(visitor)
         ..add(
           one('r3', '01055556666', [who('d', '박취소')])
             ..status = RegStatus.cancelled
@@ -2224,32 +2218,31 @@ void main() {
       );
       String n(int v) =>
           v.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+$)'), (_) => ',');
-      expect(cardValue('인원'), '4');
+      expect(cardValue('인원'), '3');
 
       // 취소된 신청은 카드 합계에서도, 표의 금액 칸에서도 빠진다.
-      expect(cardValue('입금대기 금액'), n(sum([first, family, visitor])));
+      expect(cardValue('입금대기 금액'), n(sum([first, family])));
       expect(cardValue('입금 확인 (자동 0 · 수동 0)'), '0');
       expect(find.text('160,000원'), findsNothing);
       expect(find.text('박취소'), findsWidgets);
 
-      // 마지막 날은 밤이 없어 칩도 없다.
-      expect(find.textContaining('10-11(일)'), findsNothing);
-
-      // 칩 인원은 취소를 빼고 그 밤 숙박하는 사람 수. 일요일부터 오는 사람은 안 잡힌다.
-      await tester.tap(find.widgetWithText(FilterChip, '10-10(토) 숙박 2명'));
+      // 칩 인원은 취소를 빼고 그 날 오는 사람 수.
+      await tester.tap(find.widgetWithText(FilterChip, '10-11(일) 1명'));
       await tester.pumpAndSettle();
       expect(find.text('이둘째'), findsWidgets); // 표는 신청자 이름으로 보인다
-      expect(find.text('김첫날'), findsNothing); // 토요일에 오지만 묵지 않는다
-      expect(find.text('최일요'), findsNothing);
-      expect(cardValue('인원'), '2');
-      expect(cardValue('입금대기 금액'), n(sum([family])));
+      expect(find.text('김첫날'), findsNothing);
+      expect(cardValue('인원'), '1'); // 같은 신청의 이둘째는 이 날 안 온다
+      // 이전체는 전체 참석이지만 마지막 날은 묵지 않아 앞 밤 요금에 들어 있다.
+      expect(cardValue('입금대기 금액'), '0');
 
-      // 둘째 날짜를 더 고르면 합집합. 두 밤 다 묵는 사람도 한 번만 센다.
-      await tester.tap(find.widgetWithText(FilterChip, '10-09(금) 숙박 2명'));
+      // 둘째 날짜를 더 고르면 합집합. 두 날 다 오는 사람도 한 번만 센다.
+      await tester.tap(find.widgetWithText(FilterChip, '10-09(금) 2명'));
       await tester.pumpAndSettle();
       expect(find.text('김첫날'), findsWidgets);
-      expect(cardValue('인원'), '3');
-      expect(cardValue('입금대기 금액'), n(sum([first, family])));
+      expect(cardValue('인원'), '2');
+      // 금요일: 김첫날 당일 30,000 + 이전체 1박 70,000. 표의 금액 칸도 같다.
+      expect(cardValue('입금대기 금액'), '100,000');
+      expect(find.text('30,000원'), findsWidgets);
       expect(find.widgetWithText(ChoiceChip, '전체 3'), findsOneWidget);
     });
 

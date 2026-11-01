@@ -40,7 +40,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
   /// 무료 날만 당일로 오는 사람(`QuoteLine.freeDay`)이 있는 신청만. 할인으로 0원이 된 사람은 아니다.
   bool freeDayOnly = false;
 
-  /// 고른 밤 중 하루라도 숙박하는 사람이 있는 신청만. 비면 날짜로 거르지 않는다.
+  /// 고른 날짜 중 하루라도 오는 사람이 있는 신청만. 비면 날짜로 거르지 않는다.
   final dayFilter = <DateTime>{};
   String query = '';
   String? selectedId;
@@ -128,8 +128,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     final unit = g.isHomestay ? '곳' : '명';
     return [
       if (n.added > 0)
-        g.isHomestay ? ' 가정 ${n.added}곳을 방으로 만들었습니다.' : ' 참석자 ${n.added}명을 등록했습니다.',
-      if (n.removed > 0) ' 취소된 신청의 ${g.isHomestay ? '가정' : '참석자'} ${n.removed}$unit을 뺐습니다.',
+        g.isHomestay
+            ? ' 가정 ${n.added}곳을 방으로 만들었습니다.'
+            : ' 참석자 ${n.added}명을 등록했습니다.',
+      if (n.removed > 0)
+        ' 취소된 신청의 ${g.isHomestay ? '가정' : '참석자'} ${n.removed}$unit을 뺐습니다.',
     ].join();
   }
 
@@ -181,13 +184,10 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       for (final r in all)
         r.id: g.quoteFor(r.people, r.createdAt, discount: r.discount),
     };
-    // 마지막 날 밤은 집회 밖이라 칩이 없다.
-    final nights = g.days.take(g.nights).toList();
-    List<DateTime> staysOf(Person p) =>
-        p.nightsIn(g.start, g.end, separate: g.fee.lodgingSeparate);
-    // 다른 집회의 날짜가 남아 있어도 칩으로 못 끄는 필터가 되지 않게 이 집회 밤으로 좁힌다.
-    final picked = nights.where(dayFilter.contains).toSet();
-    bool comes(Person p) => picked.isEmpty || staysOf(p).any(picked.contains);
+    // 다른 집회의 날짜가 남아 있어도 칩으로 못 끄는 필터가 되지 않게 이 집회 날짜로 좁힌다.
+    final picked = g.days.where(dayFilter.contains).toSet();
+    bool comes(Person p) =>
+        picked.isEmpty || p.daysIn(g.start, g.end).any(picked.contains);
     final dated = picked.isEmpty
         ? all
         : all.where((r) => r.people.any(comes)).toList();
@@ -199,13 +199,16 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
             _matches(r))
           r,
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // 날짜를 고르면 금액도 그 날 몫만 센다. 신청 금액을 넘지 않는 건 [Quote.totalOn] 이 지킨다.
+    int? onDays(Registration r) =>
+        picked.isEmpty ? null : quotes[r.id]!.totalOn(picked, g.fee);
     final active = dated.where((r) => r.status != RegStatus.cancelled);
     final pendingSum = active
         .where((r) => r.status == RegStatus.pending)
-        .fold(0, (s, r) => s + quotes[r.id]!.total);
+        .fold(0, (s, r) => s + (onDays(r) ?? quotes[r.id]!.total));
     final paidSum = active
         .where((r) => r.status == RegStatus.confirmed)
-        .fold(0, (s, r) => s + r.paid);
+        .fold(0, (s, r) => s + math.min(r.paid, onDays(r) ?? r.paid));
     final selected = all.where((r) => r.id == selectedId).firstOrNull;
     final size = windowSizeOf(context);
     Widget detailOf(Registration selected) => _Detail(
@@ -245,11 +248,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       0,
       (n, r) => n + quotes[r.id]!.lines.where((l) => l.freeDay).length,
     );
-    // 날짜 칩의 인원은 다른 날짜 선택과 상관없이 그 밤 숙박 전체.
-    int staysOn(DateTime d) => all
+    // 날짜 칩의 인원은 다른 날짜 선택과 상관없이 그 날 전체.
+    int peopleOn(DateTime d) => all
         .where((r) => r.status != RegStatus.cancelled)
         .expand((r) => r.people)
-        .where((p) => staysOf(p).contains(d))
+        .where((p) => p.daysIn(g.start, g.end).contains(d))
         .length;
     final chips = <Widget>[
       for (final f in [null, ...RegStatus.values])
@@ -274,14 +277,15 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           selected: freeDayOnly,
           onSelected: (v) => setState(() => freeDayOnly = v),
         ),
-      // 하루짜리·날짜 없는 집회는 밤이 없어 칩도 없다.
-      for (final d in nights)
-        FilterChip(
-          label: Text('${mdw(d)} 숙박 ${staysOn(d)}명'),
-          selected: picked.contains(d),
-          onSelected: (v) =>
-              setState(() => v ? dayFilter.add(d) : dayFilter.remove(d)),
-        ),
+      // 하루짜리·날짜 없는 집회는 고를 날짜가 없다.
+      if (g.days.length > 1)
+        for (final d in g.days)
+          FilterChip(
+            label: Text('${mdw(d)} ${peopleOn(d)}명'),
+            selected: picked.contains(d),
+            onSelected: (v) =>
+                setState(() => v ? dayFilter.add(d) : dayFilter.remove(d)),
+          ),
     ];
     final Widget table = shown.isEmpty
         ? EmptyNotice(
@@ -312,6 +316,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                           return _RegRow(
                             r: r,
                             q: quotes[r.id]!,
+                            onDays: onDays(r),
                             selected: r.id == selectedId,
                             checked: checked.contains(r.id),
                             onTap: () => setState(
@@ -372,7 +377,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           Padding(
             padding: EdgeInsets.fromLTRB(size.isCompact ? 12 : 16, 0, 16, 4),
             child: const Text(
-              '인원은 고른 밤에 숙박하는 사람만 세고, 금액은 그 사람이 든 신청의 전체 금액입니다.',
+              '고른 날짜에 오는 사람과 그 날 요금(1박·당일, 할인 반영)만 셉니다. 그룹당 금액은 빠집니다.',
               style: TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ),
@@ -476,6 +481,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                         return _RegCard(
                           r: r,
                           q: quotes[r.id]!,
+                          onDays: onDays(r),
                           checked: checked.contains(r.id),
                           onTap: () => setState(() => selectedId = r.id),
                           onCheck: (v) => setState(
@@ -649,16 +655,12 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     // 무료 날 당일만인 신청(날짜 없는 집회는 전원 미참가)은 금액·입금자 없이 바로 확정.
     // ponytail: 무료 집회는 예전처럼 입금 확인 창을 거친다 — 같이 바꾸려면 freeFor(q) 로.
     if (q.noPayment) {
-      return _patch(
-        r,
-        {
-          'status': 'confirmed',
-          'paid': 0,
-          'paid_at': ymd(DateTime.now()),
-          'paid_ref': null,
-        },
-        '${r.applicant} 신청을 확정했습니다.',
-      );
+      return _patch(r, {
+        'status': 'confirmed',
+        'paid': 0,
+        'paid_at': ymd(DateTime.now()),
+        'paid_ref': null,
+      }, '${r.applicant} 신청을 확정했습니다.');
     }
     final amount = TextEditingController(text: '${q.total}');
     final dep = TextEditingController(text: r.depositorName);
@@ -738,17 +740,13 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       ),
     );
     if (ok != true) return;
-    await _patch(
-      r,
-      {
-        'status': 'confirmed',
-        'paid': int.parse(digitsOnly(amount.text)),
-        'paid_at': ymd(date),
-        'paid_ref': null,
-        'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
-      },
-      '${r.applicant} 입금 확인했습니다.',
-    );
+    await _patch(r, {
+      'status': 'confirmed',
+      'paid': int.parse(digitsOnly(amount.text)),
+      'paid_at': ymd(date),
+      'paid_ref': null,
+      'depositor': dep.text.trim().isEmpty ? null : dep.text.trim(),
+    }, '${r.applicant} 입금 확인했습니다.');
   }
 
   Future<void> _bulkConfirm(Map<String, Quote> quotes) async {
@@ -1162,11 +1160,13 @@ bool _hasMinister(Registration r) => r.people.any((p) => p.minister);
 String _n(int n) => won(n).replaceAll('원', '');
 
 /// 목록의 금액 칸. 취소된 신청은 받을 돈이 아니라서 금액을 보이지 않는다 — 위 카드 합계에서도 빠진다.
-String _amountText(Registration r, Quote q) => r.status == RegStatus.cancelled
+/// [onDays] = 날짜 칩을 고른 동안의 그 날 금액.
+String _amountText(Registration r, Quote q, int? onDays) =>
+    r.status == RegStatus.cancelled
     ? '—'
     : q.noPayment
     ? '무료'
-    : won(q.total);
+    : won(onDays ?? q.total);
 
 String _stay(Quote q) {
   final full = q.lines.where((l) => l.full).length;
@@ -1236,6 +1236,7 @@ class _RegRow extends StatelessWidget {
   const _RegRow({
     required this.r,
     required this.q,
+    this.onDays,
     required this.selected,
     required this.checked,
     required this.onTap,
@@ -1243,6 +1244,7 @@ class _RegRow extends StatelessWidget {
   });
   final Registration r;
   final Quote q;
+  final int? onDays;
   final bool selected, checked;
   final VoidCallback onTap;
   final ValueChanged<bool> onCheck;
@@ -1334,7 +1336,7 @@ class _RegRow extends StatelessWidget {
               SizedBox(
                 width: _wMoney,
                 child: Text(
-                  _amountText(r, q),
+                  _amountText(r, q, onDays),
                   textAlign: TextAlign.right,
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
@@ -1424,12 +1426,14 @@ class _RegCard extends StatelessWidget {
   const _RegCard({
     required this.r,
     required this.q,
+    this.onDays,
     required this.checked,
     required this.onTap,
     required this.onCheck,
   });
   final Registration r;
   final Quote q;
+  final int? onDays;
   final bool checked;
   final VoidCallback onTap;
   final ValueChanged<bool> onCheck;
@@ -1529,7 +1533,7 @@ class _RegCard extends StatelessWidget {
                           ),
                         const SizedBox(width: 8),
                         Text(
-                          _amountText(r, q),
+                          _amountText(r, q, onDays),
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontFeatures: _tabular,
