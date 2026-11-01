@@ -39,6 +39,9 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
 
   /// 무료 날만 당일로 오는 사람(`QuoteLine.freeDay`)이 있는 신청만. 할인으로 0원이 된 사람은 아니다.
   bool freeDayOnly = false;
+
+  /// 고른 날짜 중 하루라도 오는 사람이 있는 신청만. 비면 날짜로 거르지 않는다.
+  final dayFilter = <DateTime>{};
   String query = '';
   String? selectedId;
 
@@ -178,15 +181,22 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
       for (final r in all)
         r.id: g.quoteFor(r.people, r.createdAt, discount: r.discount),
     };
+    // 다른 집회의 날짜가 남아 있어도 칩으로 못 끄는 필터가 되지 않게 이 집회 날짜로 좁힌다.
+    final picked = g.days.where(dayFilter.contains).toSet();
+    bool comes(Person p) =>
+        picked.isEmpty || p.daysIn(g.start, g.end).any(picked.contains);
+    final dated = picked.isEmpty
+        ? all
+        : all.where((r) => r.people.any(comes)).toList();
     final shown = [
-      for (final r in all)
+      for (final r in dated)
         if ((filter == null || r.status == filter) &&
             (!ministerOnly || _hasMinister(r)) &&
             (!freeDayOnly || quotes[r.id]!.lines.any((l) => l.freeDay)) &&
             _matches(r))
           r,
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final active = all.where((r) => r.status != RegStatus.cancelled);
+    final active = dated.where((r) => r.status != RegStatus.cancelled);
     final pendingSum = active
         .where((r) => r.status == RegStatus.pending)
         .fold(0, (s, r) => s + quotes[r.id]!.total);
@@ -228,22 +238,28 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
     }
 
     // 신청이 아니라 사람 수로 센다 — 가족 중 한 명만 무료 날 당일로 올 수 있다.
-    final freeDayPeople = all.fold(
+    final freeDayPeople = dated.fold(
       0,
       (n, r) => n + quotes[r.id]!.lines.where((l) => l.freeDay).length,
     );
+    // 날짜 칩의 인원은 다른 날짜 선택과 상관없이 그 날 전체.
+    int peopleOn(DateTime d) => all
+        .where((r) => r.status != RegStatus.cancelled)
+        .expand((r) => r.people)
+        .where((p) => p.daysIn(g.start, g.end).contains(d))
+        .length;
     final chips = <Widget>[
       for (final f in [null, ...RegStatus.values])
         ChoiceChip(
           label: Text(
-            '${f?.labelFor(free: g.fee.isFree) ?? '전체'} ${all.where((r) => f == null || r.status == f).length}',
+            '${f?.labelFor(free: g.fee.isFree) ?? '전체'} ${dated.where((r) => f == null || r.status == f).length}',
           ),
           selected: filter == f,
           onSelected: (_) => setState(() => filter = f),
         ),
       if (g.asks('minister') || all.any(_hasMinister))
         FilterChip(
-          label: Text('사역자 ${all.where(_hasMinister).length}'),
+          label: Text('사역자 ${dated.where(_hasMinister).length}'),
           selected: ministerOnly,
           onSelected: (v) => setState(() => ministerOnly = v),
         ),
@@ -255,6 +271,15 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
           selected: freeDayOnly,
           onSelected: (v) => setState(() => freeDayOnly = v),
         ),
+      // 하루짜리·날짜 없는 집회는 고를 날짜가 없다.
+      if (g.days.length > 1)
+        for (final d in g.days)
+          FilterChip(
+            label: Text('${mdw(d)} ${peopleOn(d)}명'),
+            selected: picked.contains(d),
+            onSelected: (v) =>
+                setState(() => v ? dayFilter.add(d) : dayFilter.remove(d)),
+          ),
     ];
     final Widget table = shown.isEmpty
         ? EmptyNotice(
@@ -322,7 +347,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
               StatCard('신청', '${active.length}', unit: '건'),
               StatCard(
                 '인원',
-                '${active.fold(0, (s, r) => s + r.people.length)}',
+                '${active.fold(0, (s, r) => s + r.people.where(comes).length)}',
                 unit: '명',
               ),
               StatCard(
@@ -341,6 +366,14 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
             ],
           ),
         ),
+        if (picked.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.fromLTRB(size.isCompact ? 12 : 16, 0, 16, 4),
+            child: const Text(
+              '인원은 고른 날짜에 오는 사람만 세고, 금액은 그 사람이 든 신청의 전체 금액입니다.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
         if (size.isCompact)
           _compactTools(g, quotes, chips)
         else
@@ -1126,6 +1159,13 @@ bool _hasMinister(Registration r) => r.people.any((p) => p.minister);
 
 String _n(int n) => won(n).replaceAll('원', '');
 
+/// 목록의 금액 칸. 취소된 신청은 받을 돈이 아니라서 금액을 보이지 않는다 — 위 카드 합계에서도 빠진다.
+String _amountText(Registration r, Quote q) => r.status == RegStatus.cancelled
+    ? '—'
+    : q.noPayment
+    ? '무료'
+    : won(q.total);
+
 String _stay(Quote q) {
   final full = q.lines.where((l) => l.full).length;
   final part = q.lines.length - full;
@@ -1292,7 +1332,7 @@ class _RegRow extends StatelessWidget {
               SizedBox(
                 width: _wMoney,
                 child: Text(
-                  q.noPayment ? '무료' : won(q.total),
+                  _amountText(r, q),
                   textAlign: TextAlign.right,
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
@@ -1487,7 +1527,7 @@ class _RegCard extends StatelessWidget {
                           ),
                         const SizedBox(width: 8),
                         Text(
-                          q.noPayment ? '무료' : won(q.total),
+                          _amountText(r, q),
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontFeatures: _tabular,
