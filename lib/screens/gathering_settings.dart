@@ -1678,7 +1678,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
 
   /// 회비 안내 문구 (§27.2). 신청 웹 회비표 아래의 나이 설명 두 줄을 바꾼다. 주인만 고친다.
   Widget _feeNoteField(Gathering x) {
-    final top = x.fee.groupOf(x.start.year); // 출생연도 모름(0) → 가장 높은 구분
+    final top = x.fee.unknownGroup; // 출생연도 모름(0) → 성인
     final auto = x.asks('birthYear')
         ? [
             '나이는 ${x.start.year}년 − 출생연도로 계산합니다.',

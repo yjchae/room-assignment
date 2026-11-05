@@ -188,6 +188,16 @@ class FeeRule {
     return hit ?? lowest ?? AgeGroup.infant;
   }
 
+  /// 출생연도를 모르는 사람(0 = 운영자가 안 받거나 비움)의 구분 = 성인. 성인을 지웠으면 19세가 걸리는 구분.
+  /// 시작 나이가 가장 높은 구분으로 보내면 '장년 60세~' 를 더하는 순간 모름이 전부 장년 금액이 된다 (§27.3).
+  AgeGroup get unknownGroup => groups.contains(AgeGroup.adult)
+      ? AgeGroup.adult
+      : groupOf(defaultMinAge[AgeGroup.adult]!);
+
+  /// [year] 집회에서 [birthYear] 생의 구분. 0 이하(모름)면 [unknownGroup]. 회비 계산은 모두 이것으로.
+  AgeGroup groupOfBirth(int birthYear, int year) =>
+      birthYear <= 0 ? unknownGroup : groupOf(year - birthYear);
+
   /// [start] 에 시작하는 집회에 [on] 날짜에 신청했을 때의 사전등록 할인율.
   int earlyPctOn(DateTime on, DateTime start) {
     final d = _nights(_day(on), _day(start));
@@ -213,6 +223,8 @@ class FeeRule {
 
   /// 받는 돈이 하나도 없다 (모든 금액이 0 이거나 비어 있음). 신청 웹에서 회비·계좌를 숨긴다.
   /// 숙박비 별도면 쓰지 않는 1박당(perNight) 대신 숙박비(lodging)를 본다. 날짜별 당일 금액도 본다.
+  /// ponytail: 기간 밖·일정 없는 날의 dayPrices 도 센다(날짜를 모르는 게터라). 그런 값만 남은 0원 집회는
+  ///           무료로 안 보인다 — 문제가 되면 집회 설정 저장 때 기간 밖 dayPrices 를 지운다.
   bool get isFree => [
     for (final m in [
       full,
@@ -1092,14 +1104,14 @@ Quote quote(
   QuoteLine line(Person p) {
     if (dateless) {
       // 기간을 기준일 하루로 본다 — 저장된 end 가 어긋나 있어도 참가 = 전체 참석.
-      final g = fee.groupOf(s.year - p.birthYear);
+      final g = fee.groupOfBirth(p.birthYear, s.year);
       final days = p.daysIn(s, s);
       final isFull = days.isNotEmpty;
       final amount = isFull ? fee.fullPrice(g, 0) : 0;
       return QuoteLine(p, g, days, isFull, amount, dateless: true);
     }
     if (fee.lodgingSeparate) return _separateLine(fee, p, s, e);
-    final g = fee.groupOf(s.year - p.birthYear);
+    final g = fee.groupOfBirth(p.birthYear, s.year);
     final days = p.daysIn(s, e);
 
     final nightly = fee.perNight[g] ?? 0;
@@ -1151,7 +1163,7 @@ Quote quote(
 /// - 숙박비: 숙박 1박 × 고른 밤 수. 상한·전체참석 할인 없음.
 /// 1박당(perNight) 금액은 쓰지 않는다 — 끄면 되살아나도록 지우지는 않는다.
 QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
-  final g = fee.groupOf(s.year - p.birthYear);
+  final g = fee.groupOfBirth(p.birthYear, s.year);
   final days = p.daysIn(s, e);
   final nights = p.nightsIn(s, e, separate: true);
   final allDays = _nights(s, e) + 1;

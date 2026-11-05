@@ -331,8 +331,8 @@ class _FeeTable extends StatelessWidget {
       return hi <= lo ? '$lo세' : '$lo~$hi세';
     }
 
-    // 출생연도를 모르면(0) 연 나이 = 집회 연도라 시작 나이가 가장 높은 구분 (기본 구분이면 성인).
-    final unknown = f.groupOf(g.start.year);
+    // 출생연도를 모르면(0) 성인 구분 (성인을 지웠으면 19세가 걸리는 구분).
+    final unknown = f.unknownGroup;
     final separate = f.lodgingSeparate;
     // 날짜 없는 집회는 `참가비` 한 열이다 (참가 = 하루짜리 전체 참석 금액).
     final dateless = g.dateless;
@@ -433,15 +433,16 @@ class _FeeTable extends StatelessWidget {
         const SizedBox(height: 8),
         for (final line in [
           // 운영자가 적은 회비 안내 문구가 있으면 나이 설명 두 줄 대신 그 문구 (줄마다, §27.2).
-          if (g.feeNote case final note? when note.trim().isNotEmpty)
+          // (안쪽 for·if 를 ...[] 로 감싼다 — 그냥 두면 아래 else 가 안쪽 `if (l…)` 에 붙어
+          // 문구가 없는 기존 집회에서 나이 설명이 사라진다.)
+          if (g.feeNote case final note? when note.trim().isNotEmpty) ...[
             for (final l in note.split('\n'))
-              if (l.trim().isNotEmpty)
-                l
-              else ...[
-                if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
-                if (byAge && !g.requires('birthYear'))
-                  '출생연도를 비워 두면 ${f.labelOf(unknown)} 금액으로 계산합니다.',
-              ],
+              if (l.trim().isNotEmpty) l,
+          ] else ...[
+            if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
+            if (byAge && !g.requires('birthYear'))
+              '출생연도를 비워 두면 ${f.labelOf(unknown)} 금액으로 계산합니다.',
+          ],
           if (f.fullDiscountPct > 0 && !dateless)
             '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
           if (dateless)
