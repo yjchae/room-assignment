@@ -75,9 +75,21 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   final themeInput = TextEditingController();
   final ministerNotice = TextEditingController();
 
-  /// '열키:구분' → 입력칸. 예: 'full:adult'
+  /// '열키:구분id' → 입력칸. 예: 'full:adult', 구분 이름은 'label:adult',
+  /// 날짜별 당일 금액은 'day:2026-10-09:adult' ([_dayCtl]).
   final fee = <String, TextEditingController>{};
   final early = <_Early>[];
+
+  /// 날짜(dateOnly) → 당일 금액 방식 'free'(무료) · 'price'(금액 지정). 없으면 기본 (PLAN_GATHERING §27.1).
+  /// 금액 지정인데 칸을 모두 비우면 저장은 '기본'과 같다(dayPrices 에 키 없음). 세그먼트는 이 화면을
+  /// 여는 동안 '금액 지정'으로 남는다 — 칸을 채우다 만 상태를 저장 한 번에 날리지 않게.
+  final dayMode = <DateTime, String>{};
+
+  /// 회비 안내 문구 (§27.2). 주인만 고친다.
+  final feeNote = TextEditingController();
+
+  /// 방금 [+ 구분 추가]로 만든 구분 — 그 이름 칸에 바로 포커스를 준다.
+  String? _newGroup;
 
   /// 일정표 줄 전체. 집회 기간 밖 날짜의 줄은 화면에 안 그리지만 여기 남아 있다가 같이 저장된다
   /// (날짜를 잘못 바꿨다 되돌리면 그대로 살아 있게).
@@ -295,29 +307,76 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     holder.text = x.bank.holder;
     perReg.text = x.fee.perRegistration == 0 ? '' : '${x.fee.perRegistration}';
     fullPct.text = x.fee.fullDiscountPct == 0 ? '' : '${x.fee.fullDiscountPct}';
-    for (final ag in AgeGroup.values) {
-      fee['minAge:${ag.name}'] = TextEditingController(
-        text: '${x.fee.minAge[ag] ?? FeeRule.defaultMinAge[ag]}',
-      );
-      fee['full:${ag.name}'] = TextEditingController(
-        text: x.fee.full[ag]?.toString() ?? '',
-      );
-      fee['perNight:${ag.name}'] = TextEditingController(
-        text: x.fee.perNight[ag]?.toString() ?? '',
-      );
-      fee['dayOnly:${ag.name}'] = TextEditingController(
-        text: x.fee.dayOnly[ag]?.toString() ?? '',
-      );
-      fee['lodging:${ag.name}'] = TextEditingController(
-        text: x.fee.lodging[ag]?.toString() ?? '',
-      );
+    for (final ag in x.fee.groups) {
+      _addGroupControllers(x.fee, ag);
     }
+    dayMode.clear();
+    for (final d in x.fee.dayPrices.keys) {
+      dayMode[dateOnly(d)] = 'price';
+    }
+    for (final d in x.fee.freeDays) {
+      dayMode[dateOnly(d)] = 'free'; // 무료 날이 이긴다 (FeeRule.dayPriceOn 과 같게)
+    }
+    feeNote.text = x.feeNote ?? '';
     early
       ..clear()
       ..addAll(x.fee.early.map((e) => _Early(e.fromDays, e.toDays, e.pct)));
     lines
       ..clear()
       ..addAll(x.schedule.map((e) => _Line(e.date, e.time, e.title)));
+  }
+
+  /// 구분 [ag] 한 줄의 입력칸(이름·시작 나이·금액 열)을 만든다.
+  void _addGroupControllers(FeeRule f, AgeGroup ag) {
+    String v(int? n) => n?.toString() ?? '';
+    fee['label:${ag.name}'] = TextEditingController(text: f.labelOf(ag));
+    fee['minAge:${ag.name}'] = TextEditingController(text: '${f.startAge(ag)}');
+    fee['full:${ag.name}'] = TextEditingController(text: v(f.full[ag]));
+    fee['perNight:${ag.name}'] = TextEditingController(text: v(f.perNight[ag]));
+    fee['dayOnly:${ag.name}'] = TextEditingController(text: v(f.dayOnly[ag]));
+    fee['lodging:${ag.name}'] = TextEditingController(text: v(f.lodging[ag]));
+  }
+
+  /// [d] 날 구분 [ag] 의 당일 금액 칸. 처음 그릴 때 저장된 값으로 만든다.
+  TextEditingController _dayCtl(DateTime d, AgeGroup ag) => fee.putIfAbsent(
+    'day:${ymd(d)}:${ag.name}',
+    () =>
+        TextEditingController(text: g!.fee.pricesOn(d)?[ag]?.toString() ?? ''),
+  );
+
+  /// [+ 구분 추가] — 다이얼로그 없이 표 맨 끝에 빈 줄을 더한다. 이름·시작 나이는 저장 때 검사한다.
+  void _addGroup() {
+    final x = g!;
+    final ag = x.fee.addGroup('', 0);
+    _addGroupControllers(x.fee, ag);
+    fee['label:${ag.name}']!.text = '';
+    fee['minAge:${ag.name}']!.text = '';
+    setState(() => _newGroup = ag.name);
+  }
+
+  void _removeGroup(AgeGroup ag) {
+    if (!g!.fee.removeGroup(ag)) return;
+    final gone = [
+      for (final k in fee.keys)
+        if (k.endsWith(':${ag.name}')) k,
+    ];
+    final ctls = [for (final k in gone) fee.remove(k)!];
+    setState(() {});
+    // 지금 그려진 입력칸이 아직 붙잡고 있다 — 다음 프레임에 놓는다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final c in ctls) {
+        c.dispose();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final c in fee.values) {
+      c.dispose();
+    }
+    feeNote.dispose();
+    super.dispose();
   }
 
   void _snack(String m) =>
@@ -346,11 +405,19 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       return n;
     }
 
+    // 구분: 이름은 입력칸에서 (§27.3). 오류 문구도 고친 이름으로 적는다.
+    final groups = [
+      for (final ag in x.fee.groups)
+        ag.withLabel(fee['label:${ag.name}']!.text.trim()),
+    ];
+    String nameOf(int i) =>
+        groups[i].label.isEmpty ? '${i + 1}번째 구분' : groups[i].label;
+
     Map<AgeGroup, int> column(String col) => {
-      for (final ag in AgeGroup.values)
+      for (final (i, ag) in groups.indexed)
         ag: ?number(
           fee['$col:${ag.name}']!.text,
-          '${_feeCols[col]} · ${ag.label}',
+          '${_feeCols[col]} · ${nameOf(i)}',
         ),
     };
 
@@ -368,10 +435,43 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       holder: holder.text.trim(),
     );
 
+    for (final (i, ag) in groups.indexed) {
+      if (ag.label.isEmpty) errs.add('${i + 1}번째 구분: 이름을 입력하세요.');
+    }
+    final labels = [for (final ag in groups) ag.label];
+    for (final l in labels.toSet()) {
+      if (l.isNotEmpty && labels.where((x) => x == l).length > 1) {
+        errs.add('구분 이름 "$l"이(가) 겹칩니다. 다른 이름으로 바꾸세요.');
+      }
+    }
     final minAge = column('minAge');
-    for (final ag in AgeGroup.values) {
+    for (final (i, ag) in groups.indexed) {
       if (fee['minAge:${ag.name}']!.text.trim().isEmpty) {
-        errs.add('시작 나이 · ${ag.label}: 비워둘 수 없습니다.');
+        errs.add('시작 나이 · ${nameOf(i)}: 비워둘 수 없습니다.');
+      }
+    }
+    final ages = minAge.values.toList();
+    for (final a in ages.toSet()) {
+      if (ages.where((x) => x == a).length > 1) {
+        errs.add('시작 나이 $a세가 두 구분에 겹칩니다. 구분마다 다른 나이로 정하세요.');
+      }
+    }
+
+    // 날짜별 당일 금액 (§27.1). 일정 없는 날·날짜 없는 집회는 비운다 (화면에선 꺼져 보이는데
+    // 그 규칙으로 계산되지 않게). 기간 밖 날짜(날짜를 줄였다 되돌릴 때)는 예전처럼 남긴다.
+    final freeDays = <DateTime>[];
+    final dayPrices = <DateTime, Map<AgeGroup, int>>{};
+    if (!x.dateless) {
+      for (final MapEntry(key: d, value: mode) in dayMode.entries) {
+        if (x.isOff(d)) continue;
+        if (mode == 'free') freeDays.add(d);
+        if (mode != 'price') continue;
+        final m = {
+          for (final (i, ag) in groups.indexed)
+            ag: ?number(_dayCtl(d, ag).text, '${mdw(d)} 당일 · ${nameOf(i)}'),
+        };
+        // 칸을 모두 비우면 '기본'과 같다 — 키를 남기지 않는다.
+        if (m.isNotEmpty) dayPrices[d] = m;
       }
     }
     final es = <EarlyDiscount>[];
@@ -388,11 +488,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       es.add((fromDays: from, toDays: to, pct: pct));
     }
     x.fee = FeeRule(
+      // 구분을 꼭 넘긴다 — 빠지면 기본 다섯으로 돌아가 더한 구분·이름이 사라진다.
+      groups: groups,
       full: column('full'),
       // 날짜 없는 집회는 숨긴 1박당·당일·숙박비를 비운다 (화면의 참가비만으로 금액·무료가 정해지게).
       perNight: x.dateless ? {} : column('perNight'),
       dayOnly: x.dateless ? {} : column('dayOnly'),
-      minAge: {...FeeRule.defaultMinAge, ...minAge},
+      // 구분에 있는 것만 (뺀 구분의 나이가 남지 않게).
+      minAge: minAge,
       perRegistration: number(perReg.text, '가족당 금액') ?? 0,
       // 날짜 없는 집회는 전체 참석 할인을 숨기고 0 으로 둔다 (참가 = 전체 참석이라 늘 걸린다).
       fullDiscountPct: x.dateless
@@ -403,15 +506,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       lodgingSeparate:
           x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
       lodging: x.dateless ? {} : column('lodging'),
-      // 일정 없는 날로 끈 날은 무료 날에서도 뺀다 (화면에선 꺼져 보이는데 0원으로 계산되지 않게).
-      // 날짜 없는 집회는 무료 날을 비운다 (화면에 안 보이는 규칙으로 0원이 되지 않게).
-      freeDays: x.dateless
-          ? []
-          : [
-              for (final d in x.fee.freeDays)
-                if (!x.isOff(d)) d,
-            ],
+      freeDays: freeDays,
+      dayPrices: dayPrices,
     );
+    // 회비 안내 문구는 주인만 — 아니면 손대지 않는다 (서버 트리거가 FORBIDDEN 으로 막는다).
+    // 공백뿐이면 자동 문구(null), 그 밖에는 적은 그대로 (다듬으면 바뀐 것으로 보인다).
+    if (owner) {
+      x.feeNote = feeNote.text.trim().isEmpty ? null : feeNote.text;
+    }
     x.schedule = [
       for (final l in lines)
         if (l.title.text.trim().isNotEmpty)
@@ -442,7 +544,18 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       g = saved.copy();
       _snack('저장했습니다. 신청 웹에 바로 반영됩니다.');
     } catch (e) {
-      setState(() => errors = [errorText(e)]);
+      // FORBIDDEN 의 기본 문구는 담당구역 이야기라 이 화면에 맞게 바꾼다.
+      final forbidden =
+          errorText(e) == errorText(const RemoteError('FORBIDDEN'));
+      setState(
+        () => errors = [
+          !forbidden
+              ? errorText(e)
+              : g!.feeNote != current.value?.feeNote
+              ? '회비 안내 문구는 이 집회의 집회관리자만 고칠 수 있습니다. 문구를 처음 내용으로 되돌린 뒤 다시 저장하세요.'
+              : '이 집회 설정을 고칠 권한이 없습니다. 집회관리자에게 문의하세요.',
+        ],
+      );
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -806,7 +919,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     scrollDirection: Axis.horizontal,
                     child: Table(
                       defaultColumnWidth: const FixedColumnWidth(136),
-                      columnWidths: const {0: FixedColumnWidth(80)},
+                      columnWidths: const {0: FixedColumnWidth(168)},
                       defaultVerticalAlignment:
                           TableCellVerticalAlignment.middle,
                       children: [
@@ -816,15 +929,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                             for (final label in cols.values) _th(label),
                           ],
                         ),
-                        for (final ag in AgeGroup.values)
+                        for (final ag in x.fee.groups)
                           TableRow(
                             children: [
-                              Text(
-                                ag.label,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                              _groupNameCell(x, ag),
                               for (final col in cols.keys)
                                 Padding(
                                   padding: const EdgeInsets.all(4),
@@ -832,9 +940,15 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                                     controller: fee['$col:${ag.name}'],
                                     keyboardType: TextInputType.number,
                                     textAlign: TextAlign.right,
+                                    // 당일 금액은 날짜별 금액 칸의 힌트가 된다.
+                                    onChanged: col == 'dayOnly'
+                                        ? (_) => setState(() {})
+                                        : null,
                                     decoration: InputDecoration(
                                       suffixText: col == 'minAge' ? '세~' : '원',
-                                      hintText: col != 'full'
+                                      hintText: col == 'minAge'
+                                          ? null
+                                          : col != 'full'
                                           ? '0'
                                           : x.fee.lodgingSeparate
                                           ? '하루×${x.days.length}'
@@ -845,6 +959,14 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                             ],
                           ),
                       ],
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('구분 추가'),
+                      onPressed: _addGroup,
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -877,41 +999,25 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   if (x.nights > 0 && !x.dateless) ...[
                     const SizedBox(height: 20),
                     const Text(
-                      '당일 무료인 날',
+                      '날짜별 당일 금액',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                     ),
                     Text(
                       x.fee.lodgingSeparate
-                          ? '이 날은 참가비를 받지 않습니다(전체 참석은 정액 그대로). 숙박하면 숙박비는 받습니다.'
-                          : '이 날 하루만 당일로 오면 무료입니다. 이 날을 포함해 1박 이상 묵으면 회비표대로 받습니다.',
+                          ? '그 날 하루 참가비를 바꿉니다. 무료 = 그 날 참가비를 받지 않습니다(숙박하면 숙박비는 받습니다). '
+                                '금액 지정 = 구분별 하루 참가 금액, 비운 칸은 기본 하루 참가 금액입니다. 전체 참석은 정액 그대로입니다.'
+                          : '그 날 하루만 당일로 오는 사람의 금액을 바꿉니다. 무료 = 0원, 금액 지정 = 구분별 금액이고 '
+                                '비운 칸은 기본 당일 금액입니다. 이 날을 포함해 1박 이상 묵거나 전체 참석하면 회비표대로 받습니다.',
                       style: const TextStyle(
                         fontSize: 12,
                         color: AppColors.textMuted,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final d in x.days)
-                          FilterChip(
-                            label: Text(mdw(d)),
-                            tooltip: x.isOff(d) ? '일정 없는 날' : null,
-                            selected: x.fee.isFreeDay(d) && !x.isOff(d),
-                            onSelected: x.isOff(d)
-                                ? null
-                                : (on) => setState(
-                                    () => on
-                                        ? x.fee.freeDays.add(dateOnly(d))
-                                        : x.fee.freeDays.removeWhere(
-                                            (f) => dateOnly(f) == dateOnly(d),
-                                          ),
-                                  ),
-                          ),
-                      ],
-                    ),
+                    for (final d in x.days) _dayPriceRow(x, d),
                   ],
+                  const SizedBox(height: 20),
+                  _feeNoteField(x),
                 ]),
                 _card('할인', [
                   // 날짜 없는 집회는 참가 = 전체 참석이라 전체 참석 할인을 숨긴다 (저장 때 0).
@@ -1457,6 +1563,144 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
       FieldType.select => '$f · ${spec.type.label}(${spec.options.length})',
       _ => '$f · ${spec.type.label}',
     };
+  }
+
+  /// 회비표 첫 칸: 구분 이름 입력 + [삭제]. 마지막 하나는 지울 수 없다.
+  Widget _groupNameCell(Gathering x, AgeGroup ag) => Padding(
+    padding: const EdgeInsets.all(4),
+    child: Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: fee['label:${ag.name}'],
+            autofocus: _newGroup == ag.name,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+            // 날짜별 금액 칸의 이름표가 따라 바뀌게.
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(hintText: '이름'),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.remove_circle_outline, size: 18),
+          tooltip: x.fee.groups.length <= 1 ? '구분은 하나 이상 있어야 합니다' : '구분 삭제',
+          color: AppColors.textMuted,
+          visualDensity: VisualDensity.compact,
+          onPressed: x.fee.groups.length <= 1 ? null : () => _removeGroup(ag),
+        ),
+      ],
+    ),
+  );
+
+  /// 날짜별 당일 금액 한 줄: 날짜 + [기본 | 무료 | 금액 지정], 금액 지정이면 아래에 구분별 금액 칸.
+  /// 일정 없는 날은 고를 수 없고, 저장 때도 규칙을 비운다.
+  Widget _dayPriceRow(Gathering x, DateTime d) {
+    final day = dateOnly(d);
+    final off = x.isOff(d);
+    final mode = off ? 'base' : dayMode[day] ?? 'base';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 96,
+                child: Text(
+                  mdw(d),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'base', label: Text('기본')),
+                  ButtonSegment(value: 'free', label: Text('무료')),
+                  ButtonSegment(value: 'price', label: Text('금액 지정')),
+                ],
+                selected: {mode},
+                showSelectedIcon: false,
+                onSelectionChanged: off
+                    ? null
+                    : (v) => setState(
+                        () => v.single == 'base'
+                            ? dayMode.remove(day)
+                            : dayMode[day] = v.single,
+                      ),
+              ),
+              if (off)
+                const Text(
+                  '일정 없는 날',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
+            ],
+          ),
+          if (mode == 'price')
+            Padding(
+              padding: const EdgeInsets.only(left: 108, top: 6),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final ag in x.fee.groups)
+                    SizedBox(
+                      width: 136,
+                      child: TextField(
+                        controller: _dayCtl(day, ag),
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.right,
+                        decoration: InputDecoration(
+                          labelText:
+                              fee['label:${ag.name}']!.text.trim().isEmpty
+                              ? '(이름 없음)'
+                              : fee['label:${ag.name}']!.text.trim(),
+                          // 비우면 기본 당일 금액 — 지금 회비표에 적힌 값을 보여 준다.
+                          hintText:
+                              fee['dayOnly:${ag.name}']!.text.trim().isEmpty
+                              ? '0'
+                              : fee['dayOnly:${ag.name}']!.text.trim(),
+                          suffixText: '원',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 회비 안내 문구 (§27.2). 신청 웹 회비표 아래의 나이 설명 두 줄을 바꾼다. 주인만 고친다.
+  Widget _feeNoteField(Gathering x) {
+    final top = x.fee.groupOf(x.start.year); // 출생연도 모름(0) → 가장 높은 구분
+    final auto = x.asks('birthYear')
+        ? [
+            '나이는 ${x.start.year}년 − 출생연도로 계산합니다.',
+            if (!x.requires('birthYear'))
+              '출생연도를 비워 두면 ${fee['label:${top.name}']?.text.trim() ?? x.fee.labelOf(top)} 금액으로 계산합니다.',
+          ].join('\n')
+        : '출생연도를 받지 않아 자동 문구가 없습니다.';
+    return TextField(
+      controller: feeNote,
+      readOnly: !owner,
+      minLines: 2,
+      maxLines: 6,
+      decoration: InputDecoration(
+        labelText: '회비 안내 문구',
+        hintText: auto,
+        alignLabelWithHint: true,
+        helperText: owner
+            ? '신청 웹 회비표 아래에 줄마다 보입니다. 비워 두면 위 자동 문구가 나갑니다. 할인·날짜별 금액 안내는 따로 붙습니다.'
+            : '집회관리자만 고칠 수 있습니다.',
+        helperMaxLines: 3,
+      ),
+    );
   }
 
   Widget _card(String title, List<Widget> children) => Padding(

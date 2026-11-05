@@ -988,6 +988,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
           ..lodgingSeparate = false
           ..fullDiscountPct = 0
           ..freeDays = []
+          ..dayPrices = {}
           // 1박당·당일·숙박비도 화면에 없다 — 참가비(full)만으로 금액·무료가 정해지게 비운다.
           ..perNight = {}
           ..dayOnly = {}

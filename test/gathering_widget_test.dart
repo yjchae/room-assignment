@@ -497,6 +497,37 @@ void main() {
       expect(find.textContaining('출생연도로 계산'), findsNothing);
     });
 
+    testWidgets('회비표: 더한 구분·날짜별 당일 금액·회비 안내 문구 (§27)', (tester) async {
+      final g = fake.gs.first;
+      g.fee.groups = [
+        ...AgeGroup.values.map(
+          (a) => a == AgeGroup.adult ? a.withLabel('어른') : a,
+        ),
+      ];
+      final senior = g.fee.addGroup('장년', 60);
+      g.fee.full[senior] = 90000;
+      g.fee.dayPrices = {
+        DateTime(2026, 10, 9): {AgeGroup.adult: 10000, AgeGroup.youth: 5000},
+      };
+      g.feeNote = '나이는 학년 기준입니다.\n문의: 총무';
+      setView(tester, const Size(400, 1600));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('어른'), findsOneWidget);
+      expect(find.text('장년'), findsOneWidget);
+      expect(find.text('60세 이상'), findsOneWidget);
+      expect(find.text('19~59세'), findsOneWidget);
+      expect(find.text('90,000원'), findsOneWidget);
+      expect(
+        find.text('· 10-09(금) 당일: 어른 10,000원 · 중고등 5,000원'),
+        findsOneWidget,
+      );
+      expect(find.text('· 나이는 학년 기준입니다.'), findsOneWidget);
+      expect(find.text('· 문의: 총무'), findsOneWidget);
+      expect(find.textContaining('출생연도로 계산'), findsNothing);
+    });
+
     testWidgets('신청을 받지 않으면 [신청하기]가 꺼진다', (tester) async {
       fake.gs.first.open = false;
       setView(tester, const Size(400, 1400));
@@ -1414,7 +1445,7 @@ void main() {
 
     testWidgets('집회 설정: 이메일로 이 집회의 운영자를 등록하고 해제한다', (tester) async {
       current.value = sample();
-      setView(tester, const Size(1400, 3600));
+      setView(tester, const Size(1400, 4400));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(tester.takeException(), isNull);
       expect(find.text('이 집회의 운영자'), findsOneWidget);
@@ -1811,10 +1842,13 @@ void main() {
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(tester.takeException(), isNull);
       expect(find.text('일정표'), findsOneWidget);
-      // 일정표의 날짜 칸 + 회비 카드의 당일 무료 칩
+      // 일정표의 날짜 칸 + 회비 카드의 날짜별 당일 금액 줄
       expect(find.text('10-09(금)'), findsNWidgets(2));
 
-      await tester.tap(find.widgetWithText(FilterChip, '10-10(토)'));
+      // 10-10 줄의 [무료] (줄 순서 = 날짜 순서)
+      await tester.tap(
+        find.widgetWithText(SegmentedButton<String>, '무료').at(1),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(TextButton, '줄 추가').first);
       await tester.pumpAndSettle();
@@ -2293,6 +2327,175 @@ void main() {
       expect(fake.gs.single.fee.full[AgeGroup.adult], 160000);
       expect(current.value!.fee.full[AgeGroup.adult], 160000);
       expect(store.event.name, '신촌하나교회 가족수양회');
+    });
+
+    // 회비표의 입력칸 고르기 (PLAN_GATHERING §27).
+    Finder feeField(bool Function(InputDecoration d) test) =>
+        find.byWidgetPredicate(
+          (w) => w is TextField && w.decoration != null && test(w.decoration!),
+        );
+
+    testWidgets('집회 설정: 구분을 더하고 이름을 고치고 빼서 저장하면 그대로 남는다 (§27.3)', (
+      tester,
+    ) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 4400));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+
+      await tester.tap(find.widgetWithText(TextButton, '구분 추가'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // 이름·시작 나이를 비운 채 저장하면 막는다
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(find.text('6번째 구분: 이름을 입력하세요.'), findsOneWidget);
+      expect(find.text('시작 나이 · 6번째 구분: 비워둘 수 없습니다.'), findsOneWidget);
+      expect(fake.gs.single.fee.groups, hasLength(5));
+
+      await tester.enterText(feeField((d) => d.hintText == '이름').last, '장년');
+      await tester.enterText(feeField((d) => d.suffixText == '세~').last, '19');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('시작 나이 19세가 두 구분에 겹칩니다'), findsOneWidget);
+
+      await tester.enterText(feeField((d) => d.suffixText == '세~').last, '60');
+      await tester.enterText(
+        feeField((d) => d.hintText == '1박×2').last,
+        '100000',
+      );
+      // 성인 → 어른 (id 는 그대로)
+      await tester.enterText(find.widgetWithText(TextField, '성인').first, '어른');
+      // 유치를 뺀다
+      await tester.tap(find.byTooltip('구분 삭제').at(3));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('겹칩니다'), findsNothing);
+
+      final f = fake.gs.single.fee;
+      expect(
+        [for (final g in f.groups) g.label],
+        ['어른', '중고등', '초등', '영유아', '장년'],
+      );
+      expect(f.groups.first, AgeGroup.adult);
+      final senior = f.groups.last;
+      expect(senior.isBuiltIn, isFalse);
+      expect(f.startAge(senior), 60);
+      expect(f.full[senior], 100000);
+      expect(f.full[AgeGroup.adult], 150000);
+      expect(f.minAge.containsKey(AgeGroup.kinder), isFalse);
+      expect(f.groupOf(65), senior);
+      // 서버 왕복(JSON)으로도 남는다
+      final back = FeeRule.fromJson(f.toJson());
+      expect(
+        [for (final g in back.groups) g.label],
+        ['어른', '중고등', '초등', '영유아', '장년'],
+      );
+    });
+
+    testWidgets('집회 설정: 구분이 하나만 남으면 삭제가 꺼진다', (tester) async {
+      current.value = sample()..fee.groups = [AgeGroup.adult];
+      setView(tester, const Size(1400, 4400));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      final del = tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.remove_circle_outline),
+      );
+      expect(del.onPressed, isNull);
+    });
+
+    testWidgets('집회 설정: 날짜별 당일 금액 — 무료·금액 지정을 저장한다 (§27.1)', (tester) async {
+      current.value = sample();
+      setView(tester, const Size(1400, 4400));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(find.text('날짜별 당일 금액'), findsOneWidget);
+      final price = find.widgetWithText(SegmentedButton<String>, '금액 지정');
+      await tester.tap(
+        find.descendant(of: price.at(0), matching: find.text('금액 지정')),
+      );
+      await tester.pumpAndSettle();
+      // 구분별 칸이 나오고, 힌트는 기본 당일 금액
+      final adult = feeField((d) => d.labelText == '성인' && d.suffixText == '원');
+      expect(tester.widget<TextField>(adult).decoration!.hintText, '30000');
+      await tester.enterText(adult, '10000');
+      await tester.enterText(
+        feeField((d) => d.labelText == '중고등' && d.suffixText == '원'),
+        '5,000',
+      );
+      // 10-10 은 무료, 10-11 은 금액 지정인데 칸을 비운다 (= 기본)
+      await tester.tap(
+        find.descendant(
+          of: find.widgetWithText(SegmentedButton<String>, '무료').at(1),
+          matching: find.text('무료'),
+        ),
+      );
+      await tester.tap(
+        find.descendant(of: price.at(2), matching: find.text('금액 지정')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final f = fake.gs.single.fee;
+      expect(f.dayPrices, {
+        DateTime(2026, 10, 9): {AgeGroup.adult: 10000, AgeGroup.youth: 5000},
+      });
+      expect(f.freeDays, [DateTime(2026, 10, 10)]);
+      expect(f.dayPriceOn(AgeGroup.adult, DateTime(2026, 10, 9)), 10000);
+      expect(f.dayPriceOn(AgeGroup.child, DateTime(2026, 10, 9)), 0);
+      expect(f.dayPriceOn(AgeGroup.adult, DateTime(2026, 10, 11)), 30000);
+
+      // 다시 [기본]으로 돌리면 지운다
+      await tester.tap(
+        find.descendant(
+          of: find.widgetWithText(SegmentedButton<String>, '기본').at(0),
+          matching: find.text('기본'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.fee.dayPrices, isEmpty);
+      expect(fake.gs.single.fee.toJson().containsKey('dayPrices'), isFalse);
+    });
+
+    testWidgets('집회 설정: 회비 안내 문구는 주인만 고치고, 보조운영자에겐 읽기 전용 (§27.2)', (
+      tester,
+    ) async {
+      current.value = sample()..feeNote = '나이는 학년 기준입니다.';
+      fake.gs.single.feeNote = '나이는 학년 기준입니다.';
+      fake
+        ..full = false
+        ..managed.add('g1');
+      setView(tester, const Size(1400, 4400));
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      final note = feeField((d) => d.labelText == '회비 안내 문구');
+      expect(tester.widget<TextField>(note).readOnly, isTrue);
+      expect(find.text('집회관리자만 고칠 수 있습니다.'), findsOneWidget);
+      expect(find.text('나이는 학년 기준입니다.'), findsOneWidget);
+      // 보조운영자가 저장해도 문구는 그대로 간다
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.feeNote, '나이는 학년 기준입니다.');
+
+      // 집회관리자(주인)
+      fake.ownedSet.add('g1');
+      await tester.pumpWidget(const SizedBox());
+      await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      expect(tester.widget<TextField>(note).readOnly, isFalse);
+      expect(
+        tester.widget<TextField>(note).decoration!.hintText,
+        '나이는 2026년 − 출생연도로 계산합니다.',
+      );
+      await tester.enterText(note, ' 학년 기준\n문의: 총무 ');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.feeNote, ' 학년 기준\n문의: 총무 ', reason: '다듬지 않는다');
+      await tester.enterText(note, '   ');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await tester.pumpAndSettle();
+      expect(fake.gs.single.feeNote, isNull, reason: '공백뿐이면 자동 문구');
     });
 
     testWidgets('집회 설정: 추가 항목을 지우고 저장하면 신청서에서 빠진다', (tester) async {
