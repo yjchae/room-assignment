@@ -751,4 +751,403 @@ void main() {
       expect(zero.totalOn({sat}, f), 0);
     });
   });
+
+  group('날짜별 당일 금액 (PLAN_GATHERING §27.1)', () {
+    // 금~화 4박5일. 성인: 전체 10만 · 1박 3만 · 당일 1만. 일요일은 무료 날.
+    final fri = DateTime(2026, 10, 9), sat = DateTime(2026, 10, 10);
+    final sun = DateTime(2026, 10, 11), mon = DateTime(2026, 10, 12);
+    final tue = DateTime(2026, 10, 13);
+    FeeRule rule({Map<DateTime, Map<AgeGroup, int>>? prices}) => FeeRule(
+      full: {AgeGroup.adult: 100000},
+      perNight: {AgeGroup.adult: 30000},
+      dayOnly: {AgeGroup.adult: 10000, AgeGroup.youth: 4000},
+      perRegistration: 5000,
+      freeDays: [sun],
+      dayPrices:
+          prices ??
+          {
+            sat: {AgeGroup.adult: 7000},
+            sun: {AgeGroup.adult: 5000}, // 무료 날이 이긴다
+            mon: {AgeGroup.adult: 0},
+          },
+    );
+    Person on(List<DateTime> days) =>
+        Person(name: '가', gender: 'M', birthYear: 1980, days: days);
+    Quote of(FeeRule f, List<DateTime> days) =>
+        q(f, [on(days)], from: fri, to: tue, on: DateTime(2026, 10, 1));
+
+    test('우선순위: 무료 날 > 날짜 지정 금액 > 기본 당일 금액', () {
+      final f = rule();
+      expect(f.dayPriceOn(AgeGroup.adult, fri), 10000, reason: '지정 없음 = 기본');
+      expect(f.dayPriceOn(AgeGroup.adult, sat), 7000, reason: '지정 금액');
+      expect(f.dayPriceOn(AgeGroup.adult, sun), 0, reason: '무료 날이 지정 금액보다 먼저');
+      expect(f.dayPriceOn(AgeGroup.adult, mon), 0, reason: '0원 지정');
+      expect(
+        f.dayPriceOn(AgeGroup.youth, sat),
+        4000,
+        reason: '그 구분은 지정 안 함 = 기본',
+      );
+      expect(f.dayPriceOn(AgeGroup.child, sat), 0, reason: '기본도 없으면 0원');
+      expect(
+        f.dayPriceOn(AgeGroup.adult, DateTime(2026, 10, 10, 15)),
+        7000,
+        reason: '시각은 보지 않는다',
+      );
+      expect(f.pricesOn(fri), isNull);
+    });
+
+    test('보통 집회: 혼자 고른 날마다 그 날 금액, 1박·전체 참석은 그대로', () {
+      final f = rule();
+      expect(of(f, [sat]).lines.single.amount, 7000);
+      expect(
+        of(f, [fri, tue]).lines.single.amount,
+        20000,
+        reason: '지정 없는 날 = 기본 1만',
+      );
+      expect(of(f, [sat, mon]).lines.single.amount, 7000);
+      expect(of(f, [fri, sat]).lines.single.amount, 30000, reason: '묵으면 1박 요금');
+      expect(of(f, [fri, sat, sun, mon, tue]).lines.single.amount, 100000);
+      // 같은 사람 금액을 날짜로 쪼갤 때도 그 날 금액
+      final l = of(f, [sat, mon]).lines.single;
+      expect(l.amountOn({sat}, f), 7000);
+      expect(l.amountOn({mon}, f), 0);
+    });
+
+    test('0원으로 지정한 날은 무료 날이 아니다 (그룹당 금액은 붙는다)', () {
+      final f = rule();
+      final zero = of(f, [mon]);
+      expect(zero.lines.single.amount, 0);
+      expect(zero.lines.single.freeDay, isFalse);
+      expect(zero.freeDayOnly, isFalse);
+      expect(zero.total, 5000);
+      final free = of(f, [sun]);
+      expect(free.lines.single.freeDay, isTrue);
+      expect(free.total, 0);
+    });
+
+    test('부분 참석 상한: 날짜 금액을 높여도 전체 참석 금액을 넘지 않는다', () {
+      final f = rule(
+        prices: {
+          fri: {AgeGroup.adult: 90000},
+          tue: {AgeGroup.adult: 90000},
+        },
+      );
+      expect(of(f, [fri, tue]).lines.single.amount, 100000);
+    });
+
+    test('숙박비 별도: 참가일마다 그 날 하루 참가 금액 + 숙박비, 상한 그대로', () {
+      final fr = DateTime(2026, 10, 9), sa = DateTime(2026, 10, 10);
+      FeeRule sep(Map<DateTime, Map<AgeGroup, int>> prices) => FeeRule(
+        full: {AgeGroup.adult: 150000},
+        dayOnly: {AgeGroup.adult: 60000},
+        lodging: {AgeGroup.adult: 30000},
+        lodgingSeparate: true,
+        dayPrices: prices,
+      );
+      QuoteLine line(FeeRule f, List<DateTime>? days, List<DateTime> stays) =>
+          q(f, [
+            Person(
+              name: '가',
+              gender: 'M',
+              birthYear: 1980,
+              days: days,
+              stays: stays,
+            ),
+          ], on: DateTime(2026, 10, 1)).lines.single;
+      final f = sep({
+        sa: {AgeGroup.adult: 20000},
+      });
+      final l = line(f, [fr, sa], [fr]);
+      expect((l.participation, l.lodging, l.amount), (80000, 30000, 110000));
+      expect(l.amountOn({sa}, f), 20000);
+      expect(
+        line(f, null, [fr, sa]).participation,
+        150000,
+        reason: '전체 참가는 정액 그대로',
+      );
+      final high = sep({
+        fr: {AgeGroup.adult: 100000},
+        sa: {AgeGroup.adult: 100000},
+      });
+      expect(
+        line(high, [fr, sa], []).participation,
+        150000,
+        reason: '전체 참석 금액이 상한',
+      );
+    });
+
+    test('날짜 없는 집회는 날짜별 금액을 보지 않는다', () {
+      final f = FeeRule(
+        full: {AgeGroup.adult: 50000},
+        dayPrices: {
+          fri: {AgeGroup.adult: 1000},
+        },
+      );
+      final r = quote(
+        f,
+        start: fri,
+        end: fri,
+        people: [on([])..days = null],
+        appliedAt: fri,
+        dateless: true,
+      );
+      expect(r.lines.single.amount, 50000);
+    });
+
+    test('isFree 는 날짜별 금액도 본다', () {
+      expect(
+        FeeRule(
+          dayPrices: {
+            sat: {AgeGroup.adult: 5000},
+          },
+        ).isFree,
+        isFalse,
+      );
+      expect(
+        FeeRule(
+          dayPrices: {
+            sat: {AgeGroup.adult: 0},
+          },
+        ).isFree,
+        isTrue,
+      );
+    });
+
+    test('JSON: 날짜 키는 ymd, 값 있는 날만 쓰고 그대로 되읽는다', () {
+      final f = rule()..dayPrices[tue] = {};
+      final j = f.toJson();
+      expect(j['dayPrices'], {
+        '2026-10-10': {'adult': 7000},
+        '2026-10-11': {'adult': 5000},
+        '2026-10-12': {'adult': 0},
+      });
+      final back = FeeRule.fromJson(j);
+      expect(back.dayPriceOn(AgeGroup.adult, sat), 7000);
+      expect(back.dayPriceOn(AgeGroup.adult, mon), 0);
+      expect(back.pricesOn(tue), isNull);
+      expect(FeeRule.fromJson(back.toJson()).toJson(), j);
+      expect(FeeRule().toJson().containsKey('dayPrices'), isFalse);
+      expect(
+        FeeRule.fromJson({
+          'dayPrices': {
+            '2026-10-10': {'adult': 1000, 'nope': 5},
+            '깨짐': {'adult': 1},
+            '2026-10-11': {},
+          },
+        }).dayPrices,
+        {
+          DateTime(2026, 10, 10): {AgeGroup.adult: 1000},
+        },
+        reason: '깨진 날짜·모르는 구분·빈 날은 버린다',
+      );
+    });
+  });
+
+  group('연령 구분 추가 (PLAN_GATHERING §27.3)', () {
+    test('기본 구분: AgeGroup 은 id 로 같고, groups 기본은 다섯', () {
+      expect(const AgeGroup('adult', '어른'), AgeGroup.adult);
+      expect(const AgeGroup('adult', '어른').hashCode, AgeGroup.adult.hashCode);
+      expect(FeeRule().groups, AgeGroup.values);
+      expect(FeeRule(groups: []).groups, AgeGroup.values, reason: '비우면 기본');
+      expect(AgeGroup.adult.isBuiltIn, isTrue);
+      expect(AgeGroup.newId(), matches(RegExp(r'^c[0-9a-z]{6}$')));
+      expect(AgeGroup.newId(), isNot(AgeGroup.newId()));
+    });
+
+    test('기존 회비 JSON 은 한 글자도 안 바뀐다 (groups·dayPrices 키 없음)', () {
+      final old = planRule().toJson();
+      expect(old.keys, [
+        'full',
+        'perNight',
+        'dayOnly',
+        'minAge',
+        'perRegistration',
+        'fullDiscountPct',
+        'early',
+        'freeDays',
+      ]);
+      expect(FeeRule.fromJson(old).toJson(), old);
+      // 서버에 저장돼 있던 모양 그대로 (minAge 를 일부만 가진 옛 JSON 포함)
+      final saved = {
+        'full': {'adult': 150000, 'youth': 120000},
+        'perNight': {'adult': 70000},
+        'dayOnly': {'adult': 30000},
+        'minAge': {'adult': 20},
+        'perRegistration': 10000,
+        'fullDiscountPct': 0,
+        'early': [],
+        'freeDays': ['2026-10-11'],
+      };
+      expect(FeeRule.fromJson(saved).toJson(), {
+        ...saved,
+        'minAge': {
+          'adult': 20,
+          'youth': 13,
+          'child': 7,
+          'kinder': 4,
+          'infant': 0,
+        },
+      });
+    });
+
+    test('새 구분: groupOf · quote · summary 순서', () {
+      final f = planRule(early: []);
+      final senior = f.addGroup('장년', 60);
+      f.full[senior] = 80000;
+      expect(senior.name, matches(RegExp(r'^c[0-9a-z]{6}$')));
+      expect(senior.isBuiltIn, isFalse);
+      expect(f.groupOf(65), senior);
+      expect(f.groupOf(60), senior);
+      expect(f.groupOf(59), AgeGroup.adult);
+      expect(f.groupOf(-1), AgeGroup.infant);
+
+      final people = [p('형', 1980), p('할머니', 1960), p('동생', 1985)];
+      var r = q(f, people);
+      expect(r.lines.map((l) => l.group).toList(), [
+        AgeGroup.adult,
+        senior,
+        AgeGroup.adult,
+      ]);
+      expect(r.lines[1].amount, 80000);
+      expect(r.summary, '성인 2 · 장년 1', reason: '표 순서(맨 끝에 더함)');
+
+      // 표 맨 앞으로 옮기고 성인 이름을 바꾸면 그 순서·이름으로 센다
+      f.groups
+        ..remove(senior)
+        ..insert(0, senior);
+      f.groups[1] = AgeGroup.adult.withLabel('어른');
+      r = q(f, people);
+      expect(r.summary, '장년 1 · 어른 2');
+      expect(r.lines.first.group.label, '어른');
+      expect(f.labelOf(AgeGroup.adult), '어른');
+      expect(r.lines.first.amount, 150000, reason: '이름만 바꾼 구분은 금액 그대로');
+    });
+
+    test('groups JSON 왕복: 기본과 다를 때만 쓴다', () {
+      final f = planRule();
+      final senior = f.addGroup('장년', 60);
+      f.full[senior] = 80000;
+      f.dayPrices[DateTime(2026, 10, 10)] = {senior: 5000};
+      final j = f.toJson();
+      expect(j['groups'], [
+        for (final g in AgeGroup.values) {'id': g.name, 'label': g.label},
+        {'id': senior.name, 'label': '장년'},
+      ]);
+      final back = FeeRule.fromJson(j);
+      expect(
+        back.groups.map((g) => (g.name, g.label)),
+        f.groups.map((g) => (g.name, g.label)),
+      );
+      expect(back.full[senior], 80000);
+      expect(back.startAge(senior), 60);
+      expect(back.dayPriceOn(senior, DateTime(2026, 10, 10)), 5000);
+      expect(FeeRule.fromJson(back.toJson()).toJson(), j);
+
+      // 이름만 바꿔도 기본과 다르다
+      final renamed = planRule()..groups[0] = AgeGroup.adult.withLabel('어른');
+      expect(renamed.toJson()['groups'], isNotNull);
+      expect(FeeRule.fromJson(renamed.toJson()).labelOf(AgeGroup.adult), '어른');
+      // 기본으로 되돌리면 키가 사라진다
+      expect(
+        (renamed..groups[0] = AgeGroup.adult).toJson().containsKey('groups'),
+        isFalse,
+      );
+    });
+
+    test('groups JSON 읽기: 없는 구분의 금액은 버리고, 더한 구분의 시작 나이가 없으면 0', () {
+      final f = FeeRule.fromJson({
+        'groups': [
+          {'id': 'adult', 'label': '성인'},
+          {'id': 'cabc123', 'label': '어린이'},
+          {'id': 'cabc123', 'label': '겹침'},
+          {'id': '', 'label': '빈 id'},
+        ],
+        'full': {'adult': 1000, 'youth': 500, 'cabc123': 300},
+        'minAge': {'adult': 20},
+      });
+      const kid = AgeGroup('cabc123', '어린이');
+      expect(f.groups.map((g) => g.label), ['성인', '어린이']);
+      expect(f.full, {AgeGroup.adult: 1000, kid: 300});
+      expect(f.minAge, {AgeGroup.adult: 20, kid: 0});
+      expect(f.groupOf(19), kid);
+      expect(f.groupOf(20), AgeGroup.adult);
+      expect(f.toJson()['full'], {'adult': 1000, 'cabc123': 300});
+      // 기본 구분인데 이름이 비었으면 기본 이름
+      expect(
+        FeeRule.fromJson({
+          'groups': [
+            {'id': 'youth'},
+          ],
+        }).labelOf(AgeGroup.youth),
+        '중고등',
+      );
+    });
+
+    test('기본 구분을 빼면: 남은 것 중 시작 나이가 가장 낮은 구분으로 떨어진다', () {
+      final f = planRule();
+      expect(f.removeGroup(AgeGroup.infant), isTrue);
+      expect(f.groups, isNot(contains(AgeGroup.infant)));
+      expect(f.full.containsKey(AgeGroup.infant), isFalse, reason: '금액도 지운다');
+      expect(f.groupOf(2), AgeGroup.kinder);
+      expect(f.groupOf(-3), AgeGroup.kinder);
+      expect(q(f, [p('아기', 2025)]).lines.single.group, AgeGroup.kinder);
+      expect(f.toJson()['minAge'], {
+        'adult': 19,
+        'youth': 13,
+        'child': 7,
+        'kinder': 4,
+      });
+
+      final two = FeeRule(groups: [AgeGroup.adult, AgeGroup.youth]);
+      expect(two.groupOf(5), AgeGroup.youth, reason: '어디에도 안 걸리면 가장 낮은 구분');
+      expect(two.removeGroup(AgeGroup.child), isFalse, reason: '없는 구분');
+      expect(two.removeGroup(AgeGroup.youth), isTrue);
+      expect(two.removeGroup(AgeGroup.adult), isFalse, reason: '마지막 하나는 남긴다');
+      expect(two.groupOf(0), AgeGroup.adult);
+    });
+  });
+
+  group('회비 안내 문구 Gathering.feeNote (PLAN_GATHERING §27.2)', () {
+    Gathering g0() => Gathering(name: '집회', start: start, end: end);
+
+    test('칸이 없는 DB 에서 읽었고 값도 없으면 fee_note 를 보내지 않는다', () {
+      expect(g0().toRow().containsKey('fee_note'), isFalse);
+      final old = Gathering.fromRow({...g0().toRow(), 'id': 'x'});
+      expect(old.toRow().containsKey('fee_note'), isFalse);
+      expect(old.copy().toRow().containsKey('fee_note'), isFalse);
+    });
+
+    test('값이 있으면 보내고, 칸이 있는 DB 에서 읽었으면 null 도 보낸다', () {
+      expect((g0()..feeNote = '나이는\n학년으로').toRow()['fee_note'], '나이는\n학년으로');
+      final read = Gathering.fromRow({
+        ...g0().toRow(),
+        'id': 'x',
+        'fee_note': null,
+      });
+      expect(read.feeNote, isNull);
+      expect(read.toRow().containsKey('fee_note'), isTrue);
+      expect(read.toRow()['fee_note'], isNull);
+      expect(
+        read.copy().toRow().containsKey('fee_note'),
+        isTrue,
+        reason: 'copy 도 칸 표시를 잇는다',
+      );
+    });
+
+    test('fromRow·copy 왕복, 공백뿐이면 null(자동 문구)', () {
+      final g = Gathering.fromRow({
+        ...g0().toRow(),
+        'id': 'x',
+        'fee_note': ' 문의: 총무 \n',
+      });
+      expect(g.feeNote, ' 문의: 총무 \n', reason: '내용은 다듬지 않는다');
+      expect(g.copy().feeNote, ' 문의: 총무 \n');
+      expect(g.toRow()['fee_note'], ' 문의: 총무 \n');
+      expect((g..feeNote = '  \n').toRow()['fee_note'], isNull);
+      expect(
+        Gathering.fromRow({...g0().toRow(), 'fee_note': ''}).feeNote,
+        isNull,
+      );
+    });
+  });
 }

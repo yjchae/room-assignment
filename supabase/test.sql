@@ -359,6 +359,39 @@ select t.err($q$select room.remove_gathering_admin('00000000-0000-0000-0000-0000
 select t.err($q$select room.add_gathering_admin('00000000-0000-0000-0000-0000000000b1', 'd@x')$q$, 'FORBIDDEN');
 select t.ok(not room.can_create(), '보조운영자도 집회는 못 만든다');
 
+-- 회비 안내 문구(fee_note)는 주인만 바꾼다. 보조운영자가 같은 값으로 다른 칸을 저장하는 것은 통과 (§27.2)
+select t.ok((select fee_note from room.gatherings where id = '00000000-0000-0000-0000-0000000000b1') is null,
+  '회비 안내 문구는 기본이 null (자동 문구)');
+select t.err($q$update room.gatherings set fee_note = '보조 문구' where id = '00000000-0000-0000-0000-0000000000b1'$q$,
+             'FORBIDDEN');
+do $$ begin
+  update room.gatherings set place = '보조2', fee_note = null where id = '00000000-0000-0000-0000-0000000000b1';
+  perform t.ok(found, '보조운영자도 문구를 그대로 두고 다른 칸은 저장한다');
+end $$;
+set request.jwt.claim.sub = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+update room.gatherings set fee_note = E'나이는 학년으로 봅니다.\n문의: 총무' where id = '00000000-0000-0000-0000-0000000000b1';
+select t.ok((select fee_note from room.gatherings where id = '00000000-0000-0000-0000-0000000000b1')
+              = E'나이는 학년으로 봅니다.\n문의: 총무', '집회관리자(주인)는 문구를 고친다');
+set request.jwt.claim.sub = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+do $$ begin
+  update room.gatherings set place = '보조3', fee_note = E'나이는 학년으로 봅니다.\n문의: 총무'
+   where id = '00000000-0000-0000-0000-0000000000b1';
+  perform t.ok(found, '주인이 쓴 문구를 그대로 보내며 저장하는 것도 통과');
+end $$;
+select t.err($q$update room.gatherings set fee_note = null where id = '00000000-0000-0000-0000-0000000000b1'$q$,
+             'FORBIDDEN');  -- 지우는 것도 바꾸는 것
+set request.jwt.claim.sub = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+update room.gatherings set fee_note = '수퍼어드민 문구' where id = '00000000-0000-0000-0000-0000000000b1';
+select t.ok((select fee_note from room.gatherings where id = '00000000-0000-0000-0000-0000000000b1') = '수퍼어드민 문구',
+  '수퍼어드민도 문구를 고친다');
+reset role;
+set request.jwt.claim.sub = '';
+update room.gatherings set fee_note = null where id = '00000000-0000-0000-0000-0000000000b1';
+select t.ok((select fee_note from room.gatherings where id = '00000000-0000-0000-0000-0000000000b1') is null,
+  '로그인 없이(SQL Editor) 고치면 통과');
+set role authenticated;
+set request.jwt.claim.sub = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+
 -- 새 코드로 바꾸면 예전 링크는 막힌다. 거절·해제하면 다시 못 들어온다
 set request.jwt.claim.sub = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 select set_config('t.code2', room.gathering_invite('00000000-0000-0000-0000-0000000000b1', true), false);

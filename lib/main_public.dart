@@ -321,16 +321,18 @@ class _FeeTable extends StatelessWidget {
     final n = g.nights;
     final byAge = g.asks('birthYear');
     // 시작 나이가 높은 구분부터. 한 구분의 끝 나이 = 바로 위 구분의 시작 나이 − 1.
-    final order = [...f.minAge.entries]
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final order = [...f.groups]
+      ..sort((a, b) => f.startAge(b).compareTo(f.startAge(a)));
     String ages(AgeGroup ag) {
-      final i = order.indexWhere((e) => e.key == ag);
-      final lo = f.minAge[ag] ?? 0;
+      final i = order.indexOf(ag);
+      final lo = f.startAge(ag);
       if (i <= 0) return '$lo세 이상';
-      final hi = order[i - 1].value - 1;
+      final hi = f.startAge(order[i - 1]) - 1;
       return hi <= lo ? '$lo세' : '$lo~$hi세';
     }
 
+    // 출생연도를 모르면(0) 성인 구분 (성인을 지웠으면 19세가 걸리는 구분).
+    final unknown = f.unknownGroup;
     final separate = f.lodgingSeparate;
     // 날짜 없는 집회는 `참가비` 한 열이다 (참가 = 하루짜리 전체 참석 금액).
     final dateless = g.dateless;
@@ -351,6 +353,16 @@ class _FeeTable extends StatelessWidget {
         ),
       ),
     );
+
+    // 그 날 지정한 당일 금액 '성인 10,000원 · 중고등 5,000원'. 표에 보이는 구분 중 지정한 게 없으면 null.
+    String? dayPriceText(DateTime d) {
+      final m = f.pricesOn(d) ?? const {};
+      final parts = [
+        for (final ag in byAge ? f.groups : [unknown])
+          if (m[ag] case final v?) '${f.labelOf(ag)} ${money(v)}',
+      ];
+      return parts.isEmpty ? null : parts.join(' · ');
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -377,8 +389,8 @@ class _FeeTable extends StatelessWidget {
                 ],
               ],
             ),
-            // 출생연도를 안 받으면 모두 성인 금액이라 성인 줄만.
-            for (final ag in byAge ? AgeGroup.values : [AgeGroup.adult])
+            // 출생연도를 안 받으면 모두 같은 구분(기본 구분이면 성인) 금액이라 그 줄만.
+            for (final ag in byAge ? f.groups : [unknown])
               TableRow(
                 children: [
                   Padding(
@@ -387,7 +399,7 @@ class _FeeTable extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          ag.label,
+                          f.labelOf(ag),
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
@@ -420,8 +432,17 @@ class _FeeTable extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         for (final line in [
-          if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
-          if (byAge && !g.requires('birthYear')) '출생연도를 비워 두면 성인 금액으로 계산합니다.',
+          // 운영자가 적은 회비 안내 문구가 있으면 나이 설명 두 줄 대신 그 문구 (줄마다, §27.2).
+          // (안쪽 for·if 를 ...[] 로 감싼다 — 그냥 두면 아래 else 가 안쪽 `if (l…)` 에 붙어
+          // 문구가 없는 기존 집회에서 나이 설명이 사라진다.)
+          if (g.feeNote case final note? when note.trim().isNotEmpty) ...[
+            for (final l in note.split('\n'))
+              if (l.trim().isNotEmpty) l,
+          ] else ...[
+            if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
+            if (byAge && !g.requires('birthYear'))
+              '출생연도를 비워 두면 ${f.labelOf(unknown)} 금액으로 계산합니다.',
+          ],
           if (f.fullDiscountPct > 0 && !dateless)
             '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
           if (dateless)
@@ -440,10 +461,15 @@ class _FeeTable extends StatelessWidget {
                 : '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
           if (n > 0 && !dateless)
             for (final d in g.days)
-              if (f.isFreeDay(d) && !g.isOff(d))
+              if (g.isOff(d))
+                ...[]
+              else if (f.isFreeDay(d))
                 separate
                     ? '${mdw(d)} 참가비는 무료입니다 (숙박하면 숙박비는 받습니다).'
-                    : '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).',
+                    : '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).'
+              else if (dayPriceText(d) case final t?)
+                // 날짜별 당일 금액 (§27.1). 지정한 구분만, 표 순서로.
+                '${mdw(d)} ${separate ? '하루 참가' : '당일'}: $t',
         ])
           Text(
             '· $line',
@@ -951,9 +977,9 @@ class _ApplyPageState extends State<ApplyPage> {
               g.dateless && line.days.isEmpty
                   ? '${line.stay} · ${won(line.amount)}'
                   : line.separate
-                  ? '${line.group.label} · ${line.stay} · '
+                  ? '${g.fee.labelOf(line.group)} · ${line.stay} · '
                         '참가 ${won(line.participation)} + 숙박 ${won(line.lodging)}'
-                  : '${line.group.label} · ${line.stay} · ${won(line.amount)}',
+                  : '${g.fee.labelOf(line.group)} · ${line.stay} · ${won(line.amount)}',
               style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 color: AppColors.brand,

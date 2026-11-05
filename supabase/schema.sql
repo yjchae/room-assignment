@@ -33,6 +33,7 @@
 -- 함수가 던지는 에러 메시지(앱이 이 문자열로 안내 문구를 고른다)
 --   CLOSED  INVALID_PHONE  INVALID_PIN  INVALID_PEOPLE  INVALID_TEXT  INVALID_QUOTED
 --   ALREADY_REGISTERED  TOO_MANY_ATTEMPTS  NOT_EDITABLE  FORBIDDEN  NOT_FOUND  CONFLICT
+--   (FORBIDDEN 은 주인이 아닌 사람이 gatherings.fee_note 를 바꿀 때도 — _fee_note_owner)
 --   NO_ACCOUNT (집회 운영자로 등록하려는 이메일의 계정이 없음)  NO_SUCH_ADMIN (이미 해제된 운영자)
 --   INVALID_ITEMS (스탭이 보낸 담당구역 할 일 표가 너무 크거나 배열이 아님)
 --   BAD_INVITE (집회 초대 링크가 틀렸거나 새 링크로 바뀜)
@@ -78,6 +79,7 @@ create table if not exists room.gatherings (
   deadline date,                             -- 이 날(한국 시간)까지 신청 받음
   minister_notice_on boolean not null default true,  -- 사역자를 체크한 신청자에게 안내 문구를 보일지
   minister_notice text,                      -- 그 문구. 비우면 앱 기본 문구
+  fee_note text,                             -- 신청 웹 회비표 아래 안내 문구. null = 자동 문구. 주인만 고침(_fee_note_owner)
   created_at timestamptz not null default now()
 );
 -- 이미 만든 DB 에 새 칸 추가.
@@ -95,6 +97,7 @@ alter table room.gatherings add column if not exists minister_notice_on boolean 
 alter table room.gatherings add column if not exists minister_notice text;
 alter table room.gatherings add column if not exists field_specs jsonb not null default '{}';
 alter table room.gatherings add column if not exists dateless boolean not null default false;
+alter table room.gatherings add column if not exists fee_note text;
 
 -- 집회별 운영자. 이 집회의 설정·신청·방배정만 만질 수 있다 (새 집회는 못 만든다).
 -- 전체 운영자(room.admins)는 모든 집회를 관리하므로 여기 없어도 된다.
@@ -203,6 +206,24 @@ end $$;
 drop trigger if exists keep_owner on room.gatherings;
 create trigger keep_owner before update on room.gatherings
   for each row execute function room._keep_owner();
+
+-- 회비 안내 문구는 주인(집회관리자·수퍼어드민)만 바꾼다 (PLAN_GATHERING §27.2). 보조운영자도 설정은
+-- 고치므로(configures) RLS 로는 칸 하나를 못 막는다. 같은 값으로 다른 칸을 저장하는 것은 통과.
+-- 로그인 없이(SQL Editor·service role, auth.uid() null) 고치면 통과. insert 는 만드는 사람이 주인이라 보지 않는다.
+-- room.owns 는 아래(권한)에서 만든다 — plpgsql 은 부를 때 찾으므로 순서가 상관없다.
+create or replace function room._fee_note_owner() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if new.fee_note is distinct from old.fee_note
+     and auth.uid() is not null and not room.owns(new.id) then
+    raise exception 'FORBIDDEN';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists fee_note_owner on room.gatherings;
+create trigger fee_note_owner before update on room.gatherings
+  for each row execute function room._fee_note_owner();
 
 -- ---------------------------------------------------------------------------
 -- 권한 (RLS)
@@ -865,6 +886,7 @@ end $$;
 revoke execute on function
   room._touch(),
   room._keep_owner(),
+  room._fee_note_owner(),
   room._join(text),
   room._is_owner(),
   room.enter_app(),
