@@ -6,15 +6,42 @@ import 'dart:math' as math;
 
 import 'models.dart' show FieldSpec, fieldSpecsFromJson, fieldSpecsToJson;
 
-enum AgeGroup {
-  adult('성인'),
-  youth('중고등'),
-  child('초등'),
-  kinder('유치'),
-  infant('영유아');
+/// 나이 구분. 기본 다섯([values])에 집회마다 구분을 더할 수 있다 ([FeeRule.groups], PLAN_GATHERING §27.3).
+/// [name] 은 금액 맵·JSON 의 키(id)라 한 번 정하면 안 바뀐다. 같은지는 [name] 으로만 본다 —
+/// 이름([label])을 고친 구분도 같은 구분이다.
+class AgeGroup {
+  const AgeGroup(this.name, this.label);
 
-  const AgeGroup(this.label);
+  /// id. 기본 구분은 'adult' 같은 영어 이름, 더한 구분은 `c` + 무작위 6자 ([newId]).
+  final String name;
   final String label;
+
+  static const adult = AgeGroup('adult', '성인');
+  static const youth = AgeGroup('youth', '중고등');
+  static const child = AgeGroup('child', '초등');
+  static const kinder = AgeGroup('kinder', '유치');
+  static const infant = AgeGroup('infant', '영유아');
+
+  /// 기본 구분 (표 순서). 집회의 구분은 [FeeRule.groups] 로 읽는다.
+  static const values = [adult, youth, child, kinder, infant];
+
+  /// 기본 다섯 중 하나인가.
+  bool get isBuiltIn => values.contains(this);
+
+  /// 더하는 구분의 새 id.
+  static String newId() =>
+      'c${List.generate(6, (_) => _rand.nextInt(36).toRadixString(36)).join()}';
+
+  AgeGroup withLabel(String label) => AgeGroup(name, label);
+
+  @override
+  bool operator ==(Object other) => other is AgeGroup && other.name == name;
+
+  @override
+  int get hashCode => name.hashCode;
+
+  @override
+  String toString() => 'AgeGroup($name, $label)';
 }
 
 /// 사전등록 할인 한 구간. 집회 시작 [fromDays]일 전 ~ [toDays]일 전(양 끝 포함)에
@@ -23,6 +50,7 @@ typedef EarlyDiscount = ({int fromDays, int toDays, int pct});
 
 class FeeRule {
   FeeRule({
+    List<AgeGroup>? groups,
     Map<AgeGroup, int>? full,
     Map<AgeGroup, int>? perNight,
     Map<AgeGroup, int>? dayOnly,
@@ -31,15 +59,25 @@ class FeeRule {
     this.fullDiscountPct = 0,
     List<EarlyDiscount>? early,
     List<DateTime>? freeDays,
+    Map<DateTime, Map<AgeGroup, int>>? dayPrices,
     this.lodgingSeparate = false,
     Map<AgeGroup, int>? lodging,
-  }) : full = full ?? {},
+  }) : groups = groups == null || groups.isEmpty
+           ? [...AgeGroup.values]
+           : groups,
+       full = full ?? {},
        lodging = lodging ?? {},
        perNight = perNight ?? {},
        dayOnly = dayOnly ?? {},
        minAge = minAge ?? {...defaultMinAge},
        early = early ?? [],
-       freeDays = freeDays ?? [];
+       freeDays = freeDays ?? [],
+       dayPrices = dayPrices ?? {};
+
+  /// 이 집회의 나이 구분 (회비표 순서). 기본 = [AgeGroup.values]. 최소 1개 (§27.3).
+  /// 금액 맵·[minAge] 는 여기 있는 구분만 읽고 쓴다 — 구분을 빼면 그 금액은 저장 때 떨어진다.
+  /// 이름은 여기 든 [AgeGroup.label] 이 맞다 ([labelOf]).
+  List<AgeGroup> groups;
 
   /// 전체 참석 정액. 키가 없으면 1박당 × 전체 박수.
   Map<AgeGroup, int> full;
@@ -47,10 +85,10 @@ class FeeRule {
   /// 부분 참석 1박당. 키가 없으면 0원.
   Map<AgeGroup, int> perNight;
 
-  /// 당일(무박). 키가 없으면 0원.
+  /// 당일(무박). 키가 없으면 0원. 날짜마다 바꾼 금액은 [dayPrices], 읽기는 [dayPriceOn].
   Map<AgeGroup, int> dayOnly;
 
-  /// 구분이 시작되는 연 나이 (집회 연도 − 출생연도).
+  /// 구분이 시작되는 연 나이 (집회 연도 − 출생연도). 읽기는 [startAge].
   Map<AgeGroup, int> minAge;
 
   /// 신청 1건(가족·그룹)당 더하는 금액.
@@ -67,6 +105,24 @@ class FeeRule {
   List<DateTime> freeDays;
   bool isFreeDay(DateTime d) => freeDays.any((f) => _day(f) == _day(d));
 
+  /// 날짜별 당일 금액 (PLAN_GATHERING §27.1). 그 날 하루 참가 금액을 구분별로 바꾼다 —
+  /// 구분 키가 없으면 [dayOnly] 그대로. 무료 날([freeDays])이 이긴다. 읽기는 [dayPriceOn].
+  /// ponytail: 당일 금액만 바꾼다. 1박당 금액까지 날짜별로 바꾸려면 nightPrices 를 같은 모양으로 더한다.
+  Map<DateTime, Map<AgeGroup, int>> dayPrices;
+
+  /// [d] 날에 금액을 지정해 둔 구분별 금액. 없으면 null.
+  Map<AgeGroup, int>? pricesOn(DateTime d) {
+    for (final e in dayPrices.entries) {
+      if (_day(e.key) == _day(d)) return e.value;
+    }
+    return null;
+  }
+
+  /// [d] 날 하루 참가(당일) 금액 [g]. 무료 날 → 0원 · 그 날 지정 금액 · 없으면 [dayOnly].
+  /// 보통 집회의 당일·숙박비 별도의 하루 참가 금액은 모두 이것으로 센다.
+  int dayPriceOn(AgeGroup g, DateTime d) =>
+      isFreeDay(d) ? 0 : pricesOn(d)?[g] ?? dayOnly[g] ?? 0;
+
   /// 숙박비 별도 (PLAN_GATHERING §20). 켜면 참가비(전체 참석 · 하루 참가)와 숙박비(1박)를 따로 받고,
   /// 신청서에서 숙박할 밤을 따로 고른다. 기본은 꺼짐 — 기존 집회도 켤 수 있다 (§22).
   bool lodgingSeparate;
@@ -74,23 +130,62 @@ class FeeRule {
   /// 숙박 1박 [구분]. 숙박비 별도일 때만 쓴다. 키가 없으면 0원.
   Map<AgeGroup, int> lodging;
 
-  static const defaultMinAge = {
+  /// 기본 구분의 시작 나이. 키가 [AgeGroup] 이라(== 를 덮어씀) const 맵이 될 수 없다.
+  static final Map<AgeGroup, int> defaultMinAge = Map.unmodifiable({
     AgeGroup.adult: 19,
     AgeGroup.youth: 13,
     AgeGroup.child: 7,
     AgeGroup.kinder: 4,
     AgeGroup.infant: 0,
-  };
+  });
 
-  /// 연 나이 → 구분. 시작 나이가 높은 구분부터 보고 처음 걸리는 것.
-  /// 어디에도 안 걸리면(출생연도 오타로 음수 등) 영유아.
-  AgeGroup groupOf(int age) {
-    final order = [...minAge.entries]
-      ..sort((a, b) => b.value.compareTo(a.value));
-    for (final e in order) {
-      if (age >= e.value) return e.key;
+  /// [g] 가 시작되는 나이. 비었으면 기본 구분은 [defaultMinAge], 더한 구분은 0.
+  int startAge(AgeGroup g) => minAge[g] ?? defaultMinAge[g] ?? 0;
+
+  /// [g] 의 이 집회 이름 ([groups] 에 든 이름). 없는 구분이면 [g] 의 이름 그대로.
+  String labelOf(AgeGroup g) =>
+      groups.firstWhere((x) => x == g, orElse: () => g).label;
+
+  /// 구분을 하나 더한다 (새 id, 표 맨 끝). 만든 구분을 돌려준다.
+  AgeGroup addGroup(String label, int startAge) {
+    var id = AgeGroup.newId();
+    while (groups.any((g) => g.name == id)) {
+      id = AgeGroup.newId();
     }
-    return AgeGroup.infant;
+    final g = AgeGroup(id, label);
+    groups.add(g);
+    minAge[g] = startAge;
+    return g;
+  }
+
+  /// [g] 를 뺀다 — 그 구분의 금액·시작 나이도 같이 지운다. 마지막 하나는 빼지 않는다 (false).
+  bool removeGroup(AgeGroup g) {
+    if (groups.length <= 1 || !groups.contains(g)) return false;
+    groups.remove(g);
+    for (final m in [
+      full,
+      perNight,
+      dayOnly,
+      minAge,
+      lodging,
+      ...dayPrices.values,
+    ]) {
+      m.remove(g);
+    }
+    dayPrices.removeWhere((_, m) => m.isEmpty);
+    return true;
+  }
+
+  /// 연 나이 → 구분. [groups] 중 시작 나이가 높은 구분부터 보고 처음 걸리는 것(같으면 표 앞쪽).
+  /// 어디에도 안 걸리면(출생연도 오타로 음수 등) 시작 나이가 가장 낮은 구분 — 기본 구분이면 영유아.
+  AgeGroup groupOf(int age) {
+    AgeGroup? hit, lowest;
+    for (final g in groups) {
+      final a = startAge(g);
+      if (a <= age && (hit == null || a > startAge(hit))) hit = g;
+      if (lowest == null || a < startAge(lowest)) lowest = g;
+    }
+    return hit ?? lowest ?? AgeGroup.infant;
   }
 
   /// [start] 에 시작하는 집회에 [on] 날짜에 신청했을 때의 사전등록 할인율.
@@ -103,6 +198,7 @@ class FeeRule {
 
   /// 전체 참석자가 내는 금액 ([nights]박 집회, 전체참석 할인 반영). 정액이 비었으면
   /// 숙박비 별도 = 하루 참가 × 일수, 아니면 1박당 × 박수(하루짜리는 당일 금액).
+  /// 날짜별 당일 금액([dayPrices])은 보지 않는다 — 전체 참석 금액은 그대로다 (§27.1).
   /// [quote] 와 신청 웹 회비표가 같이 쓴다.
   int fullPrice(AgeGroup g, int nights) {
     final base =
@@ -116,38 +212,83 @@ class FeeRule {
   }
 
   /// 받는 돈이 하나도 없다 (모든 금액이 0 이거나 비어 있음). 신청 웹에서 회비·계좌를 숨긴다.
-  /// 숙박비 별도면 쓰지 않는 1박당(perNight) 대신 숙박비(lodging)를 본다.
+  /// 숙박비 별도면 쓰지 않는 1박당(perNight) 대신 숙박비(lodging)를 본다. 날짜별 당일 금액도 본다.
   bool get isFree => [
-    ...full.values,
-    ...(lodgingSeparate ? lodging.values : perNight.values),
-    ...dayOnly.values,
+    for (final m in [
+      full,
+      lodgingSeparate ? lodging : perNight,
+      dayOnly,
+      ...dayPrices.values,
+    ])
+      ..._inGroups(m).values,
     perRegistration,
   ].every((v) => v == 0);
 
-  Map<String, dynamic> toJson() => {
-    'full': _groupsOut(full),
-    'perNight': _groupsOut(perNight),
-    'dayOnly': _groupsOut(dayOnly),
-    'minAge': _groupsOut(minAge),
-    'perRegistration': perRegistration,
-    'fullDiscountPct': fullDiscountPct,
-    'early': [
-      for (final e in early)
-        {'fromDays': e.fromDays, 'toDays': e.toDays, 'pct': e.pct},
-    ],
-    'freeDays': [for (final d in freeDays) ymd(d)],
-    // 켰을 때만 쓴다 — 끈 집회는 열고 저장해도 회비 JSON 이 예전 그대로다 (§22).
-    if (lodgingSeparate) 'lodgingSeparate': true,
-    if (lodging.isNotEmpty) 'lodging': _groupsOut(lodging),
+  /// [m] 에서 [groups] 에 있는 구분만 (원래 순서 그대로).
+  Map<AgeGroup, int> _inGroups(Map<AgeGroup, int> m) => {
+    for (final e in m.entries)
+      if (groups.contains(e.key)) e.key: e.value,
   };
+
+  /// 구분 목록이 기본과 같다 (id·이름·순서). 같으면 JSON 에 `groups` 를 쓰지 않는다.
+  bool get _defaultGroups =>
+      groups.length == AgeGroup.values.length &&
+      [
+        for (var i = 0; i < groups.length; i++)
+          groups[i].name == AgeGroup.values[i].name &&
+              groups[i].label == AgeGroup.values[i].label,
+      ].every((b) => b);
+
+  Map<String, dynamic> toJson() {
+    final prices = {
+      for (final e in dayPrices.entries)
+        if (_inGroups(e.value).isNotEmpty)
+          ymd(e.key): _groupsOut(_inGroups(e.value)),
+    };
+    return {
+      // 기본과 다를 때만 쓴다 — 구분을 안 바꾼 집회는 회비 JSON 이 예전 그대로다 (§27.3).
+      if (!_defaultGroups)
+        'groups': [
+          for (final g in groups) {'id': g.name, 'label': g.label},
+        ],
+      'full': _groupsOut(_inGroups(full)),
+      'perNight': _groupsOut(_inGroups(perNight)),
+      'dayOnly': _groupsOut(_inGroups(dayOnly)),
+      'minAge': _groupsOut(_inGroups(minAge)),
+      'perRegistration': perRegistration,
+      'fullDiscountPct': fullDiscountPct,
+      'early': [
+        for (final e in early)
+          {'fromDays': e.fromDays, 'toDays': e.toDays, 'pct': e.pct},
+      ],
+      'freeDays': [for (final d in freeDays) ymd(d)],
+      // 값이 있을 때만 쓴다 (§27.1).
+      if (prices.isNotEmpty) 'dayPrices': prices,
+      // 켰을 때만 쓴다 — 끈 집회는 열고 저장해도 회비 JSON 이 예전 그대로다 (§22).
+      if (lodgingSeparate) 'lodgingSeparate': true,
+      if (_inGroups(lodging).isNotEmpty)
+        'lodging': _groupsOut(_inGroups(lodging)),
+    };
+  }
 
   factory FeeRule.fromJson(Object? json) {
     final j = json is Map ? json : const {};
+    final groups = _groupListIn(j['groups']);
+    final ages = _groupsIn(j['minAge'], groups);
+    final prices = <DateTime, Map<AgeGroup, int>>{};
+    if (j['dayPrices'] is Map) {
+      for (final e in (j['dayPrices'] as Map).entries) {
+        final d = _date(e.key), m = _groupsIn(e.value, groups);
+        if (d != null && m.isNotEmpty) prices[d] = m;
+      }
+    }
     return FeeRule(
-      full: _groupsIn(j['full']),
-      perNight: _groupsIn(j['perNight']),
-      dayOnly: _groupsIn(j['dayOnly']),
-      minAge: {...defaultMinAge, ..._groupsIn(j['minAge'])},
+      groups: groups,
+      full: _groupsIn(j['full'], groups),
+      perNight: _groupsIn(j['perNight'], groups),
+      dayOnly: _groupsIn(j['dayOnly'], groups),
+      // 구분마다 채운다 — 기본 구분은 기본 나이, 더한 구분인데 비었으면 0.
+      minAge: {for (final g in groups) g: ages[g] ?? defaultMinAge[g] ?? 0},
       perRegistration: _int(j['perRegistration']),
       fullDiscountPct: _int(j['fullDiscountPct']),
       early: [
@@ -163,8 +304,9 @@ class FeeRule {
         for (final d in (j['freeDays'] is List ? j['freeDays'] as List : []))
           ?_date(d),
       ],
+      dayPrices: prices,
       lodgingSeparate: j['lodgingSeparate'] == true,
-      lodging: _groupsIn(j['lodging']),
+      lodging: _groupsIn(j['lodging'], groups),
     );
   }
 }
@@ -405,6 +547,7 @@ class Gathering {
     this.deadline,
     this.ministerNoticeOn = true,
     String? ministerNotice,
+    this.feeNote,
   }) : ministerNotice = ministerNotice ?? defaultMinisterNotice,
        themes = themes ?? [],
        schedule = schedule ?? [],
@@ -492,6 +635,13 @@ class Gathering {
   bool ministerNoticeOn;
   String ministerNotice;
 
+  /// 신청 웹 회비표 아래 안내 문구 (서버 `fee_note`, PLAN_GATHERING §27.2). null = 자동 문구(나이 설명 두 줄).
+  /// 집회관리자(주인)·수퍼어드민만 고친다 — 서버 트리거 `_fee_note_owner` 가 다른 사람의 변경을 FORBIDDEN 으로 막는다.
+  String? feeNote;
+
+  /// 서버에서 읽은 행에 `fee_note` 칸이 있었다. [_hasSpecsColumn] 과 같은 이유로 이때만 null 도 보낸다.
+  bool _hasFeeNoteColumn = false;
+
   /// [people] 신청에 사역자 안내를 보여 주는가 — 사역자를 체크한 사람이 있을 때만.
   bool ministerNoticeFor(Iterable<Person> people) =>
       asks('minister') &&
@@ -572,37 +722,48 @@ class Gathering {
     'deadline': deadline == null ? null : ymd(deadline!),
     'minister_notice_on': ministerNoticeOn,
     'minister_notice': ministerNotice,
+    // 공백뿐이면 null(자동 문구)로 보낸다. 내용은 다듬지 않는다 — 바꾼 것으로 보여 트리거에 막힌다.
+    if (feeNote != null || _hasFeeNoteColumn)
+      'fee_note': (feeNote ?? '').trim().isEmpty ? null : feeNote,
   };
 
-  factory Gathering.fromRow(Map r) => Gathering(
-    id: '${r['id'] ?? ''}',
-    name: '${r['name'] ?? ''}',
-    kind: GatheringKind.parse(r['kind']),
-    dateless: r['dateless'] == true,
-    start: _date(r['start_date']) ?? DateTime.now(),
-    end: _date(r['end_date']) ?? DateTime.now(),
-    schedule: _scheduleIn(r['schedule']),
-    offDays: [for (final d in (r['off_days'] as List? ?? [])) ?_date(d)],
-    themes: [for (final t in (r['themes'] as List? ?? [])) '$t'],
-    place: _str(r['place']),
-    address: _str(r['address']),
-    notice: _str(r['notice']),
-    posterUrl: _str(r['poster_url']),
-    backgroundUrl: _str(r['background_url']),
-    fee: FeeRule.fromJson(r['fee']),
-    bank: Bank.fromJson(r['bank']),
-    formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
-    fieldSpecs: fieldSpecsFromJson(r['field_specs']),
-    hiddenFields: [for (final f in (r['hidden_fields'] as List? ?? [])) '$f'],
-    shownFields: [for (final f in (r['shown_fields'] as List? ?? [])) '$f'],
-    requiredFields: r['required_fields'] is List
-        ? [for (final f in r['required_fields'] as List) '$f']
-        : null,
-    open: r['open'] == true,
-    deadline: _date(r['deadline']),
-    ministerNoticeOn: r['minister_notice_on'] != false,
-    ministerNotice: _str(r['minister_notice']),
-  ).._hasSpecsColumn = r.containsKey('field_specs');
+  factory Gathering.fromRow(Map r) =>
+      Gathering(
+          id: '${r['id'] ?? ''}',
+          name: '${r['name'] ?? ''}',
+          kind: GatheringKind.parse(r['kind']),
+          dateless: r['dateless'] == true,
+          start: _date(r['start_date']) ?? DateTime.now(),
+          end: _date(r['end_date']) ?? DateTime.now(),
+          schedule: _scheduleIn(r['schedule']),
+          offDays: [for (final d in (r['off_days'] as List? ?? [])) ?_date(d)],
+          themes: [for (final t in (r['themes'] as List? ?? [])) '$t'],
+          place: _str(r['place']),
+          address: _str(r['address']),
+          notice: _str(r['notice']),
+          posterUrl: _str(r['poster_url']),
+          backgroundUrl: _str(r['background_url']),
+          fee: FeeRule.fromJson(r['fee']),
+          bank: Bank.fromJson(r['bank']),
+          formFields: [for (final f in (r['form_fields'] as List? ?? [])) '$f'],
+          fieldSpecs: fieldSpecsFromJson(r['field_specs']),
+          hiddenFields: [
+            for (final f in (r['hidden_fields'] as List? ?? [])) '$f',
+          ],
+          shownFields: [
+            for (final f in (r['shown_fields'] as List? ?? [])) '$f',
+          ],
+          requiredFields: r['required_fields'] is List
+              ? [for (final f in r['required_fields'] as List) '$f']
+              : null,
+          open: r['open'] == true,
+          deadline: _date(r['deadline']),
+          ministerNoticeOn: r['minister_notice_on'] != false,
+          ministerNotice: _str(r['minister_notice']),
+          feeNote: _str(r['fee_note']),
+        )
+        .._hasSpecsColumn = r.containsKey('field_specs')
+        .._hasFeeNoteColumn = r.containsKey('fee_note');
 }
 
 enum RegStatus {
@@ -755,7 +916,8 @@ class QuoteLine {
   /// 날짜 없는 집회의 줄 ([Gathering.dateless]). [stay] 가 '참가' / '미참가' 가 된다.
   final bool dateless;
 
-  /// 고른 날([picked])에 내는 금액 = 회비표 요금으로 센다. 그 밤을 묵으면 1박 요금, 당일로 오면 당일 요금
+  /// 고른 날([picked])에 내는 금액 = 회비표 요금으로 센다. 그 밤을 묵으면 1박 요금,
+  /// 당일로 오면 그 날 당일 요금([FeeRule.dayPriceOn])
   /// (숙박비 별도면 참가일마다 하루 참가 + 묵는 밤마다 숙박 1박). 무료 날은 0원이고 전체 참석자도 같다 —
   /// 마지막 날처럼 묵지 않고 떠나는 날은 앞 밤 요금에 들어 있어 0원이다. 이 사람 금액([amount])을 넘지 않는다.
   /// ponytail: 1박당 금액을 비워 둔 집회는 0원으로 나온다. 정액만 쓰는 집회가 생기면 정액 ÷ 박수로 보탠다.
@@ -764,8 +926,9 @@ class QuoteLine {
     final visits = separate ? days : dayVisitDays(days);
     final sum =
         nightly * (stayNights ?? nightsOf(days)).where(picked.contains).length +
-        (fee.dayOnly[group] ?? 0) *
-            visits.where((d) => picked.contains(d) && !fee.isFreeDay(d)).length;
+        visits
+            .where(picked.contains)
+            .fold<int>(0, (t, d) => t + fee.dayPriceOn(group, d));
     return math.min(sum, amount);
   }
 
@@ -832,6 +995,7 @@ class Quote {
     this.perRegistration, [
     this.discount = Discount.none,
     this.noShow = false,
+    this.order = const [],
   ]);
   final List<QuoteLine> lines;
   final int earlyPct;
@@ -840,6 +1004,9 @@ class Quote {
 
   /// 날짜 없는 집회에서 신청 전원이 미참가. 금액·그룹당 금액이 0이고 입금이 없다.
   final bool noShow;
+
+  /// 구분 순서 ([FeeRule.groups]). [summary] 가 이 순서로 센다. 비면 기본 구분 순서.
+  final List<AgeGroup> order;
 
   int get subtotal => lines.fold(0, (s, l) => s + l.amount);
 
@@ -884,9 +1051,13 @@ class Quote {
     for (final l in lines) {
       c[l.group] = (c[l.group] ?? 0) + 1;
     }
+    final groups = order.isEmpty ? AgeGroup.values : order;
     return [
-      for (final g in AgeGroup.values)
+      for (final g in groups)
         if (c[g] != null) '${g.label} ${c[g]}',
+      // 순서에 없는 구분(있을 수 없지만)은 뒤에 붙인다 — 사람 수가 빠지지 않게.
+      for (final e in c.entries)
+        if (!groups.contains(e.key)) '${e.key.label} ${e.value}',
     ].join(' · ');
   }
 }
@@ -896,7 +1067,8 @@ class Quote {
 ///
 /// - 모든 날에 참석하면 전체 참석(정액), 아니면 부분 참석
 ///   (1박당 × 이어진 날 사이 박수 + 당일 × 앞뒤 없이 혼자 고른 날 수).
-/// - 혼자 고른 날이 당일 무료 날([FeeRule.freeDays])이면 그 날은 0원. 묵는 날은 그대로 받는다.
+/// - 혼자 고른 날의 당일 금액은 그 날 금액([FeeRule.dayPriceOn]) — 무료 날([FeeRule.freeDays])은 0원,
+///   날짜별 금액([FeeRule.dayPrices])이 있으면 그 값. 묵는 날·전체 참석 금액은 그대로 받는다.
 /// - 일정은 집회 기간 안으로 잘라서 본다.
 /// - 부분 참석 금액은 전체 참석자가 내는 금액을 넘지 않는다.
 /// - 참석자가 없으면 그룹당 금액도 붙지 않는다 (빈 신청서에 금액이 뜨지 않게).
@@ -931,7 +1103,6 @@ Quote quote(
     final days = p.daysIn(s, e);
 
     final nightly = fee.perNight[g] ?? 0;
-    final day = fee.dayOnly[g] ?? 0;
     final fullPrice = fee.fullPrice(g, allNights);
 
     final isFull = days.length == allNights + 1;
@@ -944,7 +1115,8 @@ Quote quote(
         ? fullPrice
         : math.min(
             nightly * nightsOf(days).length +
-                day * dayVisitDays(days).where((d) => !fee.isFreeDay(d)).length,
+                dayVisitDays(days)
+                    .fold<int>(0, (t, d) => t + fee.dayPriceOn(g, d)),
             fullPrice,
           );
     return QuoteLine(p, g, days, isFull, amount, freeDay: freeDay);
@@ -968,12 +1140,14 @@ Quote quote(
             note: discount.note,
           ),
     noShow,
+    fee.groups,
   );
 }
 
 /// 숙박비 별도 집회의 한 사람.
 /// - 참가비: 모든 날 참가 = 전체 참석 정액(비우면 하루 × 일수, 전체참석 할인).
-///   아니면 하루 참가 × 참가일수 — 당일 무료 날은 세지 않고, 전체 참석 금액을 넘지 않는다.
+///   아니면 참가일마다 그 날 하루 참가 금액([FeeRule.dayPriceOn]: 무료 날 0원 · 날짜별 금액 · 하루 참가)의 합
+///   — 전체 참석 금액을 넘지 않는다.
 /// - 숙박비: 숙박 1박 × 고른 밤 수. 상한·전체참석 할인 없음.
 /// 1박당(perNight) 금액은 쓰지 않는다 — 끄면 되살아나도록 지우지는 않는다.
 QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
@@ -982,13 +1156,15 @@ QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
   final nights = p.nightsIn(s, e, separate: true);
   final allDays = _nights(s, e) + 1;
 
-  final day = fee.dayOnly[g] ?? 0;
   final fullPrice = fee.fullPrice(g, allDays - 1);
 
   final isFull = days.length == allDays;
   final participation = isFull
       ? fullPrice
-      : math.min(day * days.where((d) => !fee.isFreeDay(d)).length, fullPrice);
+      : math.min(
+          days.fold<int>(0, (t, d) => t + fee.dayPriceOn(g, d)),
+          fullPrice,
+        );
   final lodging = (fee.lodging[g] ?? 0) * nights.length;
   // 무료 날에만 오고 묵지도 않는다 = 낼 돈이 없다.
   final freeDay =
@@ -1064,12 +1240,29 @@ Map<String, int> _groupsOut(Map<AgeGroup, int> m) => {
   for (final e in m.entries) e.key.name: e.value,
 };
 
-Map<AgeGroup, int> _groupsIn(Object? m) {
-  final names = AgeGroup.values.asNameMap();
+/// 금액 맵 JSON → [groups] 에 있는 구분만 (키 = id).
+Map<AgeGroup, int> _groupsIn(Object? m, List<AgeGroup> groups) {
+  final ids = {for (final g in groups) g.name: g};
   return {
     if (m is Map)
-      for (final e in m.entries) ?names['${e.key}']: _int(e.value),
+      for (final e in m.entries) ?ids['${e.key}']: _int(e.value),
   };
+}
+
+/// 회비 JSON 의 `groups` → 구분 목록. 없거나 비었으면 기본 다섯. id 가 비었거나 겹친 줄은 버린다.
+List<AgeGroup> _groupListIn(Object? j) {
+  final out = <AgeGroup>[];
+  if (j is List) {
+    for (final e in j) {
+      if (e is! Map) continue;
+      final id = '${e['id'] ?? ''}'.trim();
+      if (id.isEmpty || out.any((g) => g.name == id)) continue;
+      final builtIn = AgeGroup.values.where((g) => g.name == id).firstOrNull;
+      final label = '${e['label'] ?? ''}';
+      out.add(AgeGroup(id, label.isEmpty ? builtIn?.label ?? id : label));
+    }
+  }
+  return out.isEmpty ? [...AgeGroup.values] : out;
 }
 
 int _int(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
