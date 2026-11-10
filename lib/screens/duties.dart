@@ -136,7 +136,9 @@ class _DutyCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            (duty.tasks ?? '').trim().isEmpty ? '해야 할 일을 적지 않았습니다.' : duty.tasks!,
+            (duty.tasks ?? '').trim().isEmpty
+                ? '해야 할 일을 적지 않았습니다.'
+                : duty.tasks!,
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -365,7 +367,8 @@ Future<void> _pickMembers(BuildContext context, Duty duty) async {
                                   if (a.age > 0) '${a.age}세',
                                   if ((a.cell ?? '').isNotEmpty) '셀 ${a.cell}',
                                   if ((a.zone ?? '').isNotEmpty) '존 ${a.zone}',
-                                  if (other.isNotEmpty) '담당 ${other.join(", ")}',
+                                  if (other.isNotEmpty)
+                                    '담당 ${other.join(", ")}',
                                 ].join(' · '),
                                 style: const TextStyle(fontSize: 12),
                               ),

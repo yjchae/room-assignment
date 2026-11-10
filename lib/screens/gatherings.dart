@@ -351,7 +351,12 @@ class _SignUpDialogState extends State<_SignUpDialog> {
     });
     if (bad != null) return;
     try {
-      await remote.signUp(name.text, email.text, pw.text, invite: pendingInvite);
+      await remote.signUp(
+        name.text,
+        email.text,
+        pw.text,
+        invite: pendingInvite,
+      );
       if (mounted) setState(() => done = true);
     } catch (e) {
       if (mounted) setState(() => err = errorText(e));
@@ -464,7 +469,8 @@ class _AdminRequestsDialogState extends State<_AdminRequestsDialog> {
     final ok = await confirmDialog(
       context,
       title: '가입 거절',
-      body: '${r.email} 님은 이 앱에 로그인할 수 없게 됩니다. '
+      body:
+          '${r.email} 님은 이 앱에 로그인할 수 없게 됩니다. '
           '계정은 지우지 않습니다(같은 서버를 쓰는 다른 서비스 계정일 수 있습니다).',
       action: '거절',
       danger: true,
@@ -722,9 +728,7 @@ class _GatheringsScreenState extends State<GatheringsScreen> {
     }
     try {
       final signed = remote.signedIn;
-      scope = signed
-          ? await remote.scope()
-          : _noScope;
+      scope = signed ? await remote.scope() : _noScope;
       list = await remote.gatherings();
       // 집회별 운영자에게는 맡은 집회만 보여준다 (집회 설정 자체는 누구나 읽을 수 있지만,
       // 목록에 남의 집회가 섞여 있으면 열었다가 아무것도 못 하고 막힌다).

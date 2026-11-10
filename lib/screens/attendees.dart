@@ -1760,7 +1760,7 @@ Future<String?> _customFieldDialog(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('체크하면 회비 무료'),
                       subtitle: const Text(
-                        '체크한 사람은 참가비·숙박비 모두 0원으로 계산합니다. 집회 설정 [저장] 뒤 신청서에 반영됩니다.',
+                        '체크한 사람의 회비를 받지 않습니다. 무료 범위(참가비·숙박비)는 집회 설정 [회비]에서 고르고, [저장] 뒤 신청서에 반영됩니다.',
                         style: TextStyle(
                           fontSize: 12,
                           color: AppColors.textMuted,

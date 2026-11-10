@@ -542,7 +542,7 @@ void main() {
       expect(find.text('· 나이는 학년 기준입니다.'), findsNothing);
     });
 
-    testWidgets('회비 무료 항목 안내: 문구가 없을 때만 회비표 아래에 (§28)', (tester) async {
+    testWidgets('회비 무료 항목은 회비표 아래 안내에 아무것도 더하지 않는다 (§28)', (tester) async {
       final g = fake.gs.first
         ..formFields = ['탈북민']
         ..fieldSpecs = {
@@ -551,7 +551,7 @@ void main() {
       setView(tester, const Size(400, 1600));
       await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
       await tester.pumpAndSettle();
-      expect(find.text('· 탈북민에 체크한 분은 회비가 무료입니다.'), findsOneWidget);
+      expect(find.textContaining('회비가 무료입니다'), findsNothing);
 
       g.feeNote = '운영자 안내';
       await tester.pumpWidget(const SizedBox());
@@ -1605,7 +1605,8 @@ void main() {
 
     testWidgets('집회 설정: 초대 링크를 복사한다', (tester) async {
       current.value = sample();
-      setView(tester, const Size(1400, 3600));
+      // 회비 카드가 길어져(§28.3 무료 범위) 한 화면에 다 보이도록 높게 연다.
+      setView(tester, const Size(1400, 4200));
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       await tester.tap(find.text('초대 링크 복사'));
       await tester.pumpAndSettle();

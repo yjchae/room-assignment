@@ -396,8 +396,6 @@ class _FeeTable extends StatelessWidget {
           else if (dayPriceText(d) case final t?)
             // 날짜별 당일 금액 (§27.1). 지정한 구분만, 표 순서로.
             '${mdw(d)} ${separate ? '하루 참가' : '당일'}: $t',
-      // 회비 무료 항목 (예: 탈북민, §28).
-      for (final name in g.freeFields) '$name에 체크한 분은 회비가 무료입니다.',
     ];
 
     return Column(

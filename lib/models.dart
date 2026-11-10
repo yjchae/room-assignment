@@ -120,14 +120,41 @@ enum FieldType {
 /// 켜고 끄는 항목(체크박스·토글 버튼)이 켜졌을 때 저장하는 값. 꺼지면 값을 지운다.
 const fieldOn = '예';
 
+/// 회비 무료 항목에 체크한 사람이 안 내는 범위 (PLAN_GATHERING §28.3).
+/// 참가비만·숙박비만은 숙박비 별도 집회에서만 뜻이 있다 — 아니면 [all] 로 센다.
+enum FreeScope {
+  all('참가비·숙박비', '무료'),
+  participation('참가비만', '참가비 무료'),
+  lodging('숙박비만', '숙박비 무료');
+
+  const FreeScope(this.label, this.short);
+
+  /// 집회 설정 칩 글자.
+  final String label;
+
+  /// 참석 일정 끝에 붙는 글자 — "(탈북민 숙박비 무료)".
+  final String short;
+
+  static FreeScope parse(Object? v) =>
+      values.firstWhere((s) => s.name == v, orElse: () => all);
+}
+
 /// 사용자 정의 항목 하나의 형식과 보기 목록 (PLAN_GATHERING §21).
 class FieldSpec {
   const FieldSpec({
     this.type = FieldType.text,
     this.options = const [],
     this._free = false,
+    this.freeScope = FreeScope.all,
   });
   final FieldType type;
+
+  /// [free] 인 항목의 무료 범위. 집회 설정 [회비] 카드의 칩으로 고른다 (§28.3).
+  final FreeScope freeScope;
+
+  /// [freeScope] 만 바꾼 사본.
+  FieldSpec withScope(FreeScope scope) =>
+      FieldSpec(type: type, options: options, free: free, freeScope: scope);
 
   /// 켜면 회비가 무료인 항목 (예: 탈북민). 켜고 끄는 형식([isOnOff])에서만 뜻이 있다 —
   /// 형식을 텍스트로 바꾸면 저절로 꺼진다. 회비 계산은 `quote(freeFields:)` 가 본다 (PLAN_GATHERING §28).
@@ -150,6 +177,8 @@ class FieldSpec {
     if (hasOptions) 'options': options,
     // 켰을 때만 쓴다 — 이 기능 전 집회의 field_specs 가 저장만으로 바뀌지 않게.
     if (free) 'free': true,
+    // 기본(참가비·숙박비)이 아닐 때만 쓴다.
+    if (free && freeScope != FreeScope.all) 'freeScope': freeScope.name,
   };
 
   factory FieldSpec.fromJson(Object? j) {
@@ -161,6 +190,7 @@ class FieldSpec {
           ? [for (final o in j['options'] as List) '$o']
           : const [],
       free: j['free'] == true,
+      freeScope: FreeScope.parse(j['freeScope']),
     );
   }
 
@@ -169,12 +199,14 @@ class FieldSpec {
       other is FieldSpec &&
       other.type == type &&
       other.free == free &&
+      other.freeScope == freeScope &&
       other.options.length == options.length &&
       Iterable.generate(options.length)
           .every((i) => other.options[i] == options[i]);
 
   @override
-  int get hashCode => Object.hash(type, free, Object.hashAll(options));
+  int get hashCode =>
+      Object.hash(type, free, freeScope, Object.hashAll(options));
 }
 
 /// 텍스트(형식 없음)는 빼고 쓴다.

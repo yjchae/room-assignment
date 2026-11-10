@@ -192,30 +192,26 @@ class Store extends ChangeNotifier {
   /// 숙박비 별도 집회는 신청서에서 따로 고른 밤([Person.nightsIn])으로 묵는 기간을 정한다.
   Attendee attendeeOf(Gathering g, Registration r, Person p) {
     final days = p.daysIn(g.start, g.end);
-    final nights = p.nightsIn(
-      g.start,
-      g.end,
-      separate: g.fee.lodgingSeparate,
-    );
+    final nights = p.nightsIn(g.start, g.end, separate: g.fee.lodgingSeparate);
     final last = nights.lastOrNull;
     final gap =
         nights.isNotEmpty && nightsOf(nights).length != nights.length - 1;
     return Attendee(
-      id: p.id,
-      name: p.name,
-      gender: p.gender,
-      age: p.birthYear == 0 ? 0 : g.start.year - p.birthYear, // 0 = 모름
-      phone: fmtPhone(p.phone ?? r.phone),
-      cell: p.cell,
-      zone: p.zone,
-      checkIn: nights.firstOrNull ?? days.first,
-      checkOut: last == null
-          ? days.first
-          : DateTime(last.year, last.month, last.day + 1),
-      stayNights: gap ? nights : null,
-      extra: {...p.extra},
-      registrationId: r.id,
-    )
+        id: p.id,
+        name: p.name,
+        gender: p.gender,
+        age: p.birthYear == 0 ? 0 : g.start.year - p.birthYear, // 0 = 모름
+        phone: fmtPhone(p.phone ?? r.phone),
+        cell: p.cell,
+        zone: p.zone,
+        checkIn: nights.firstOrNull ?? days.first,
+        checkOut: last == null
+            ? days.first
+            : DateTime(last.year, last.month, last.day + 1),
+        stayNights: gap ? nights : null,
+        extra: {...p.extra},
+        registrationId: r.id,
+      )
       ..staff = p.staff
       ..pay = payOf(r.status);
   }
@@ -702,7 +698,11 @@ class Store extends ChangeNotifier {
   /// 방에 있는 사람 중 입금 전(입금대기)인 사람 수. 정원에는 들어가고 표시만 따로 한다.
   /// 기간을 나눈 사람은 한 명으로 센다.
   int unpaidIn(Room room) =>
-      occupantsOf(room).where((a) => a.unpaid).map((a) => a.personId).toSet().length;
+      occupantsOf(room)
+          .where((a) => a.unpaid)
+          .map((a) => a.personId)
+          .toSet()
+          .length;
 
   /// 해당 밤들 중 가장 붐비는 시점 기준 남은 자리. 음수면 초과.
   int freeSeats(Room room) => room.capacity - peakOccupancy(room);
@@ -812,8 +812,9 @@ class Store extends ChangeNotifier {
         ...switch (parseRoomRange(part)) {
           final xs when xs.isNotEmpty => xs,
           // 숫자·범위 기호뿐인데 못 읽었으면('310-301', '301 302') 오타다 — 이름 방으로 만들지 않는다.
-          _ when names && !RegExp(r'^[\d\s\-~]*$').hasMatch(part) =>
-            [part.trim()],
+          _ when names && !RegExp(r'^[\d\s\-~]*$').hasMatch(part) => [
+            part.trim(),
+          ],
           _ => const <String>[],
         },
     ];
@@ -983,7 +984,8 @@ class Store extends ChangeNotifier {
   /// 기존 계산이 그대로 맞는다. 화면에서는 [Attendee.personId] 로 다시 한 사람으로 묶는다.
   Attendee? splitStay(Attendee a, DateTime at) {
     final cut = dateOnly(at);
-    if (!cut.isAfter(dateOnly(a.checkIn)) || !cut.isBefore(dateOnly(a.checkOut))) {
+    if (!cut.isAfter(dateOnly(a.checkIn)) ||
+        !cut.isBefore(dateOnly(a.checkOut))) {
       return null;
     }
     final later = Attendee.fromJson({
@@ -997,8 +999,14 @@ class Store extends ChangeNotifier {
       'checkOut': a.checkOut.toIso8601String(),
     })..splitOf = a.personId;
     if (a.stayNights case final ns?) {
-      later.stayNights = [for (final n in ns) if (!n.isBefore(cut)) n];
-      a.stayNights = [for (final n in ns) if (n.isBefore(cut)) n];
+      later.stayNights = [
+        for (final n in ns)
+          if (!n.isBefore(cut)) n,
+      ];
+      a.stayNights = [
+        for (final n in ns)
+          if (n.isBefore(cut)) n,
+      ];
     }
     a
       ..checkOut = cut
@@ -1021,7 +1029,8 @@ class Store extends ChangeNotifier {
     final f = dateOnly(from), t = dateOnly(to);
     final out = <Attendee>[];
     for (final a in [...people]) {
-      if (!t.isAfter(dateOnly(a.checkIn)) || !f.isBefore(dateOnly(a.checkOut))) {
+      if (!t.isAfter(dateOnly(a.checkIn)) ||
+          !f.isBefore(dateOnly(a.checkOut))) {
         continue; // 기간이 이 사람 일정과 안 겹친다
       }
       var part = a;
@@ -1148,9 +1157,7 @@ class Store extends ChangeNotifier {
 ) {
   final days = [for (final p in r.people) ...p.daysIn(g.start, g.end)]..sort();
   if (days.isEmpty) return (dateOnly(g.start), dateOnly(g.end), null);
-  final nights = [
-    for (final d in nightsOf(days)) dateOnly(d),
-  ]..sort();
+  final nights = [for (final d in nightsOf(days)) dateOnly(d)]..sort();
   final from = nights.firstOrNull ?? dateOnly(days.first);
   final last = nights.lastOrNull ?? dateOnly(days.last);
   final to = DateTime(last.year, last.month, last.day + 1);
@@ -1399,10 +1406,7 @@ List<ParsedRow> parseAttendeeText(
       else if (age == null || age < 0 || age > 130)
         '나이 오류($ageRaw)',
       if (requirePhone)
-        if (phone == null)
-          '전화 없음'
-        else if (!validPhone(phone))
-          '전화 오류($phone)',
+        if (phone == null) '전화 없음' else if (!validPhone(phone)) '전화 오류($phone)',
     ];
     if (problems.isNotEmpty) {
       rows.add(ParsedRow(i + 1, cells, error: problems.join(', ')));
@@ -1473,17 +1477,22 @@ Map<String, dynamic> mergePlan(
   List mergeList(String k) =>
       mergeMap(byId(base[k]), byId(mine[k]), byId(server[k])).values.toList();
   Map<String, Object?> asMap(Object? x) => {...?(x as Map?)?.cast()};
-  Set<String> asSet(Object? x) => {for (final e in x as List? ?? const []) '$e'};
+  Set<String> asSet(Object? x) => {
+    for (final e in x as List? ?? const []) '$e',
+  };
 
   final out = <String, dynamic>{
     for (final k in {...server.keys, ...mine.keys})
       k: switch (k) {
         'rooms' || 'attendees' || 'duties' => mergeList(k),
-        'visitors' => mergeMap(asMap(base[k]), asMap(mine[k]), asMap(server[k])),
+        'visitors' => mergeMap(
+          asMap(base[k]),
+          asMap(mine[k]),
+          asMap(server[k]),
+        ),
         'deletedIds' => {
-          ...asSet(server[k]).difference(
-            asSet(base[k]).difference(asSet(mine[k])),
-          ),
+          ...asSet(server[k])
+              .difference(asSet(base[k]).difference(asSet(mine[k]))),
           ...asSet(mine[k]).difference(asSet(base[k])),
         }.toList(),
         _ => !same(mine[k], base[k]) ? mine[k] : server[k],
@@ -1491,7 +1500,9 @@ Map<String, dynamic> mergePlan(
   }..removeWhere((_, v) => v == null);
 
   // 한쪽이 지운 방에 다른 쪽이 사람을 넣었으면 그 사람은 미배정으로 — 없는 방에 묶이면 아무 데도 안 보인다.
-  final rooms = {for (final r in out['rooms'] as List? ?? const []) '${(r as Map)['id']}'};
+  final rooms = {
+    for (final r in out['rooms'] as List? ?? const []) '${(r as Map)['id']}',
+  };
   // 서버 문서([base] 로도 쓴다)의 칸을 고치지 않게 복사해서 바꾼다.
   final people = <String>{};
   out['attendees'] = [

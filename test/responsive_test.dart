@@ -62,16 +62,16 @@ void main() {
       attendees: [
         for (var i = 0; i < 6; i++)
           Attendee(
-            id: 'a$i',
-            name: '참석자$i',
-            gender: i.isEven ? 'M' : 'F',
-            age: 20 + i,
-            cell: '셀${i % 2}',
-            zone: 'A존',
-            checkIn: DateTime(2026, 10, 1),
-            checkOut: DateTime(2026, 10, 3),
-            roomId: i < 3 ? 'r301' : null,
-          )
+              id: 'a$i',
+              name: '참석자$i',
+              gender: i.isEven ? 'M' : 'F',
+              age: 20 + i,
+              cell: '셀${i % 2}',
+              zone: 'A존',
+              checkIn: DateTime(2026, 10, 1),
+              checkOut: DateTime(2026, 10, 3),
+              roomId: i < 3 ? 'r301' : null,
+            )
             // 방 타일·목록의 입금대기 표시가 좁은 폭에서 넘치지 않는지 본다.
             ..pay = i == 1 || i == 2 || i == 4 ? payPending : null,
       ],

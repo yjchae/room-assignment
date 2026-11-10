@@ -47,6 +47,7 @@ Quote fq(
   List<Person> people, {
   FeeRule? f,
   Iterable<String> freeFields = const [field],
+  Map<String, FreeScope> freeScopes = const {},
   bool dateless = false,
   DateTime? on,
   Discount discount = Discount.none,
@@ -59,6 +60,7 @@ Quote fq(
   discount: discount,
   dateless: dateless,
   freeFields: freeFields,
+  freeScopes: freeScopes,
 );
 
 void main() {
@@ -416,6 +418,105 @@ void main() {
       expect(x.toRow()['field_specs'], {
         field: {'type': 'check'},
       });
+    });
+  });
+
+  group('무료 범위 — 참가비만·숙박비만 (§28.3)', () {
+    // 숙박비 별도: 성인 참가비 전체 15만 · 하루 3만, 숙박 1박 3만.
+    Quote sq(List<Person> ps, FreeScope scope, {bool separate = true}) => fq(
+      ps,
+      f: rule(separate: separate),
+      freeScopes: {field: scope},
+    );
+
+    test('숙박비만 무료 — 참가비는 받고 숙박비 0원', () {
+      final r = sq([per('가', free: true)], FreeScope.lodging);
+      final l = r.lines.single;
+      expect(l.amount, 150000);
+      expect(l.lodging, 0);
+      expect(l.participation, 150000);
+      expect(l.stay, '전체 · 숙박 2박(탈북민 숙박비 무료)');
+      expect(r.perRegistration, 10000, reason: '내는 사람이 있으면 가족당 금액');
+      expect(r.noPayment, isFalse);
+    });
+
+    test('참가비만 무료 — 숙박비만 받는다', () {
+      final l = sq([
+        per('가', free: true),
+      ], FreeScope.participation).lines.single;
+      expect(l.amount, 60000);
+      expect(l.lodging, 60000);
+      expect(l.participation, 0);
+      expect(l.stay, '전체 · 숙박 2박(탈북민 참가비 무료)');
+    });
+
+    test('참가비만 무료인데 묵지 않으면 0원 → 입금 없음', () {
+      final r = sq([
+        per('가', free: true, days: [sat], stays: const []),
+      ], FreeScope.participation);
+      expect(r.subtotal, 0);
+      expect(r.perRegistration, 0);
+      expect(r.noPayment, isTrue);
+    });
+
+    test('범위 기본(참가비·숙박비)은 지금처럼 0원', () {
+      expect(sq([per('가', free: true)], FreeScope.all).total, 0);
+    });
+
+    test('숙박비 별도가 아니면 범위를 골라 둬도 전체 무료', () {
+      for (final s in FreeScope.values) {
+        final r = sq([per('가', free: true)], s, separate: false);
+        expect(r.total, 0, reason: s.name);
+        expect(r.lines.single.stay, '전체(탈북민 무료)');
+      }
+    });
+
+    test('amountOn 도 무료 범위만큼 뺀다', () {
+      final picked = {fri, sat, sun};
+      final f = rule(separate: true);
+      final lodgingFree = sq([per('가', free: true)], FreeScope.lodging);
+      // 참가 3일 × 하루 3만 = 9만 (숙박 0)
+      expect(lodgingFree.lines.single.amountOn(picked, f), 90000);
+      final feeFree = sq([per('가', free: true)], FreeScope.participation);
+      // 숙박 2박 × 3만 = 6만
+      expect(feeFree.lines.single.amountOn(picked, f), 60000);
+    });
+
+    test('FieldSpec freeScope JSON — 기본은 키 없음, 왕복', () {
+      const base = FieldSpec(type: FieldType.check, free: true);
+      expect(base.toJson().containsKey('freeScope'), isFalse);
+      final x = base.withScope(FreeScope.lodging);
+      expect(x.toJson()['freeScope'], 'lodging');
+      expect(FieldSpec.fromJson(x.toJson()), x);
+      expect(x == base, isFalse);
+      // 무료가 아닌 항목은 범위를 쓰지 않는다.
+      expect(
+        const FieldSpec(
+          type: FieldType.check,
+          freeScope: FreeScope.lodging,
+        ).toJson().containsKey('freeScope'),
+        isFalse,
+      );
+    });
+
+    test('Gathering.quoteFor 가 항목 범위를 넘긴다', () {
+      final g = Gathering(
+        name: '집회',
+        start: fri,
+        end: sun,
+        fee: rule(separate: true),
+        formFields: [field],
+        fieldSpecs: {
+          field: const FieldSpec(
+            type: FieldType.check,
+            free: true,
+            freeScope: FreeScope.lodging,
+          ),
+        },
+      );
+      final q = g.quoteFor([per('가', free: true)], DateTime(2026, 9, 10));
+      expect(q.lines.single.amount, 150000);
+      expect(q.lines.single.lodging, 0);
     });
   });
 }

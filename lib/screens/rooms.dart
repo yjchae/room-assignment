@@ -40,7 +40,11 @@ class RoomsScreen extends StatelessWidget {
                     ? '신청이 들어오면 가정이 생깁니다(대기 표시 = 아직 확정 전). 가정을 누르면 정원·기타를 고칠 수 있습니다'
                     : '방을 누르면 수정 · 추가할 때 "301-310" 처럼 범위로 한 번에',
               ),
-              _kpi(homestay ? '가정' : '방', '${rooms.length}', homestay ? '곳' : '개'),
+              _kpi(
+                homestay ? '가정' : '방',
+                '${rooms.length}',
+                homestay ? '곳' : '개',
+              ),
               _kpi('총 수용', '${store.totalCapacity}', '명'),
               _kpi('빈자리', '$free', '석'),
               if (homestay)

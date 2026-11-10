@@ -32,7 +32,11 @@ class DutyTaskTable extends StatefulWidget {
 
 class _DutyTaskTableState extends State<DutyTaskTable> {
   /// 행 id → 입력칸. 행을 지워도 남은 칸이 엉키지 않게 id 로 들고 있는다.
-  final _ctl = <String, (TextEditingController, TextEditingController, TextEditingController)>{};
+  final _ctl =
+      <
+        String,
+        (TextEditingController, TextEditingController, TextEditingController)
+      >{};
 
   (TextEditingController, TextEditingController, TextEditingController) _of(
     DutyTask t,

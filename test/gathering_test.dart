@@ -681,11 +681,11 @@ void main() {
       expect(s.event.attendees, isEmpty, reason: '당일만 오는 사람은 방이 필요 없다');
 
       final people = s.everyone(oneDay, regs);
-      expect(
-        people.map((a) => a.name),
-        ['당일한', '당일두', '입금전'],
-        reason: '입금 전 신청자도 나온다',
-      );
+      expect(people.map((a) => a.name), [
+        '당일한',
+        '당일두',
+        '입금전',
+      ], reason: '입금 전 신청자도 나온다');
 
       final lines = attendeesCsv(s.event, people).split('\r\n');
       expect(lines.length, 4, reason: '머리글 + 3명');
@@ -730,8 +730,9 @@ void main() {
           ..note = '점심만',
       );
 
-      expect(s.event.attendees.map((a) => a.name), ['자는사람'],
-          reason: '방배정·미배정에 섞이지 않는다');
+      expect(s.event.attendees.map((a) => a.name), [
+        '자는사람',
+      ], reason: '방배정·미배정에 섞이지 않는다');
       final again = s.everyone(g, regs).last;
       expect(again.name, '당일고침');
       expect(again.cell, '3셀');
@@ -754,9 +755,11 @@ void main() {
         ]),
       ];
       final visitor = s.everyone(g, regs).single;
-      s.saveVisitor(visitor
-        ..checkIn = next
-        ..checkOut = next);
+      s.saveVisitor(
+        visitor
+          ..checkIn = next
+          ..checkOut = next,
+      );
 
       final a = s.everyone(g, regs).single;
       expect(a.checkIn, next);
@@ -783,7 +786,11 @@ void main() {
 
       s.syncFromRegistrations(g, regs);
       s.syncRegistrations(g, regs);
-      expect(s.event.attendees.single.checkOut, next, reason: '운영자가 정한 일정이 이긴다');
+      expect(
+        s.event.attendees.single.checkOut,
+        next,
+        reason: '운영자가 정한 일정이 이긴다',
+      );
       expect(s.comesOn(g, regs)(s.event.attendees.single, next), isTrue);
 
       s.syncRegistrations(g, regs, keepAdminEdits: false);
@@ -903,7 +910,10 @@ void main() {
       expect(Gathering.fromRow({...h.toRow(), 'id': 'h1'}).isHomestay, isTrue);
       expect(h.copy().kind, GatheringKind.homestay);
       expect(sample().toRow()['kind'], 'gathering');
-      expect(Gathering.fromRow({'name': 'x', 'kind': '엉뚱'}).isHomestay, isFalse);
+      expect(
+        Gathering.fromRow({'name': 'x', 'kind': '엉뚱'}).isHomestay,
+        isFalse,
+      );
     });
   });
 
@@ -1122,10 +1132,10 @@ void main() {
 
       final later = s.splitStay(kid, DateTime(2026, 10, 11))!;
       expect(kid.checkOut, DateTime(2026, 10, 11)); // 앞쪽은 2박으로 줄고
-      expect((later.checkIn, later.checkOut), (
-        DateTime(2026, 10, 11),
-        DateTime(2026, 10, 12),
-      ));
+      expect(
+        (later.checkIn, later.checkOut),
+        (DateTime(2026, 10, 11), DateTime(2026, 10, 12)),
+      );
       expect(later.roomId, isNull); // 뒤쪽은 미배정
       expect(later.personId, kid.personId); // 같은 사람
       expect(s.unassigned.single.id, later.id);
@@ -1144,10 +1154,7 @@ void main() {
 
       // 나눈 흔적은 저장을 거쳐도 남는다
       final back = Event.fromJson(s.event.toJson());
-      expect(
-        back.attendees.map((x) => x.personId).toSet(),
-        {kid.id},
-      );
+      expect(back.attendees.map((x) => x.personId).toSet(), {kid.id});
     });
 
     test('가정이 신청한 기간이 방에 실린다', () {
@@ -1196,10 +1203,10 @@ void main() {
         ];
       s.syncHomestayRooms(long, [r]);
       final room = s.event.rooms.single;
-      expect((room.hostFrom, room.hostTo), (
-        DateTime(2026, 10, 9),
-        DateTime(2026, 10, 13),
-      ));
+      expect(
+        (room.hostFrom, room.hostTo),
+        (DateTime(2026, 10, 9), DateTime(2026, 10, 13)),
+      );
       expect(room.hostNights, [DateTime(2026, 10, 9), DateTime(2026, 10, 12)]);
       expect(room.hostsOn(DateTime(2026, 10, 9)), isTrue);
       expect(room.hostsOn(DateTime(2026, 10, 10)), isFalse); // 비워 둔 밤
@@ -1263,10 +1270,10 @@ void main() {
         DateTime(2026, 10, 12),
       );
       expect(placed, hasLength(1));
-      expect((placed.single.checkIn, placed.single.checkOut), (
-        DateTime(2026, 10, 10),
-        DateTime(2026, 10, 12),
-      ));
+      expect(
+        (placed.single.checkIn, placed.single.checkOut),
+        (DateTime(2026, 10, 10), DateTime(2026, 10, 12)),
+      );
       expect(placed.single.roomId, 'A');
       // 앞 1박·뒤 1박은 미배정 조각으로 남는다
       expect(s.event.attendees, hasLength(3));
@@ -1283,7 +1290,12 @@ void main() {
       // 일정과 안 겹치는 기간은 건너뛴다 (엉뚱한 배정을 만들지 않는다)
       final before = s.event.attendees.length;
       expect(
-        s.assignRange(s.unassigned, 'A', DateTime(2026, 11, 1), DateTime(2026, 11, 2)),
+        s.assignRange(
+          s.unassigned,
+          'A',
+          DateTime(2026, 11, 1),
+          DateTime(2026, 11, 2),
+        ),
         isEmpty,
       );
       expect(s.event.attendees, hasLength(before));
@@ -1444,15 +1456,17 @@ void main() {
     test('FieldSpec JSON 왕복 — 보기는 셀렉트박스에만, 텍스트는 저장하지 않는다', () {
       expect(FieldSpec.fromJson(church.toJson()), church);
       expect(
-        FieldSpec.fromJson({'type': 'toggle', 'options': ['x']}),
+        FieldSpec.fromJson({
+          'type': 'toggle',
+          'options': ['x'],
+        }),
         const FieldSpec(type: FieldType.toggle),
       );
       expect(FieldSpec.fromJson(null), const FieldSpec());
       expect(FieldSpec.fromJson({'type': '모르는 형식'}).type, FieldType.text);
-      expect(
-        fieldSpecsToJson({'교회': church, '메모': const FieldSpec()}).keys,
-        ['교회'],
-      );
+      expect(fieldSpecsToJson({'교회': church, '메모': const FieldSpec()}).keys, [
+        '교회',
+      ]);
     });
 
     test('Gathering: 형식을 서버 행으로 주고받고, 없는 이름은 텍스트', () {
@@ -1605,10 +1619,7 @@ void main() {
 
     test('기존 집회 행은 읽고 다시 저장해도 같은 행이다 (새 키가 안 생김)', () {
       final row = {...sample().toRow(), 'id': 'g1'};
-      expect(
-        (row['fee'] as Map).containsKey('lodgingSeparate'),
-        isFalse,
-      );
+      expect((row['fee'] as Map).containsKey('lodgingSeparate'), isFalse);
       final back = Gathering.fromRow(row);
       expect(back.fee.lodgingSeparate, isFalse);
       expect({...back.toRow(), 'id': 'g1'}, row);

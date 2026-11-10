@@ -1025,6 +1025,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     for (final d in x.days) _dayPriceRow(x, d),
                   ],
                   const SizedBox(height: 20),
+                  _freeScopeSection(x),
+                  const SizedBox(height: 20),
                   _feeNoteField(x),
                 ]),
                 _card('할인', [
@@ -1692,6 +1694,86 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  /// 회비 무료 항목(예: 탈북민)마다 무료 범위 칩 [참가비·숙박비 | 참가비만 | 숙박비만] (§28.3).
+  /// 범위는 항목 형식(`Event.fieldSpecs`)에 살고 [저장] 때 `field_specs` 로 같이 간다.
+  /// 참가비·숙박비가 나뉘는 숙박비 별도 집회에서만 나눠 고를 수 있다 — 아니면 끄고 이유를 적는다.
+  Widget _freeScopeSection(Gathering x) {
+    final names = [
+      for (final f in store.event.customFields)
+        if (store.event.specOf(f).free) f,
+    ];
+    final split =
+        x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay && !x.dateless;
+    const muted = TextStyle(fontSize: 12, color: AppColors.textMuted);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '회비 무료 항목',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        Text(
+          names.isEmpty
+              ? '[참석자] 항목 추가·고치기 창에서 체크박스·토글 항목에 [체크하면 회비 무료]를 켜면 여기서 무료 범위를 고릅니다.'
+              : split
+              ? '신청서에서 이 항목에 체크한 사람은 고른 범위의 회비를 받지 않습니다.'
+              : '숙박비 별도를 켜야 참가비·숙박비를 나눠 고를 수 있습니다. 지금은 회비 전체가 무료입니다.',
+          style: muted,
+        ),
+        for (final (i, f) in names.indexed)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: i == 0
+                ? null
+                : const BoxDecoration(
+                    border: Border(top: BorderSide(color: AppColors.border)),
+                  ),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: Text(
+                    f,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final scope in FreeScope.values)
+                      ChoiceChip(
+                        label: Text(scope.label),
+                        // 나눌 수 없는 집회는 늘 전체 무료로 센다 (저장된 범위는 지우지 않는다).
+                        selected:
+                            (split
+                                ? store.event.specOf(f).freeScope
+                                : FreeScope.all) ==
+                            scope,
+                        onSelected: split
+                            ? (_) => setState(
+                                () => store.setFieldSpec(
+                                  f,
+                                  store.event.specOf(f).withScope(scope),
+                                ),
+                              )
+                            : null,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
