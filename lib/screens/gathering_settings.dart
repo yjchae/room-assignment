@@ -1777,32 +1777,21 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     );
   }
 
-  /// 회비 안내 문구 (§27.2·§28.1). 적으면 신청 웹 회비표 아래 자동 안내를 통째로 바꾼다. 주인만 고친다.
-  Widget _feeNoteField(Gathering x) {
-    final top = x.fee.unknownGroup; // 출생연도 모름(0) → 성인
-    final auto = x.asks('birthYear')
-        ? [
-            '나이는 ${x.start.year}년 − 출생연도로 계산합니다.',
-            if (!x.requires('birthYear'))
-              '출생연도를 비워 두면 ${fee['label:${top.name}']?.text.trim() ?? x.fee.labelOf(top)} 금액으로 계산합니다.',
-          ].join('\n')
-        : '출생연도를 받지 않아 자동 문구가 없습니다.';
-    return TextField(
-      controller: feeNote,
-      readOnly: !owner,
-      minLines: 2,
-      maxLines: 6,
-      decoration: InputDecoration(
-        labelText: '회비 안내 문구',
-        hintText: auto,
-        alignLabelWithHint: true,
-        helperText: owner
-            ? '적어 두면 신청 웹 회비표 아래에 이 문구만 줄마다 보입니다 — 부분 참석·무료 날·할인 같은 자동 안내도 빠지니 필요하면 직접 적으세요. 비워 두면 자동 안내가 나갑니다.'
-            : '집회관리자만 고칠 수 있습니다.',
-        helperMaxLines: 3,
-      ),
-    );
-  }
+  /// 회비 안내 문구 (§27.2·§28.1). 신청 웹 회비표 아래에는 이 칸의 글만 보인다. 주인만 고친다.
+  Widget _feeNoteField(Gathering x) => TextField(
+    controller: feeNote,
+    readOnly: !owner,
+    minLines: 2,
+    maxLines: 6,
+    decoration: InputDecoration(
+      labelText: '회비 안내 문구',
+      alignLabelWithHint: true,
+      helperText: owner
+          ? '신청 웹 회비표 아래에 여기 적은 글만 그대로 보입니다. 비워 두면 아무것도 보이지 않습니다.'
+          : '집회관리자만 고칠 수 있습니다.',
+      helperMaxLines: 3,
+    ),
+  );
 
   Widget _card(String title, List<Widget> children) => Padding(
     padding: const EdgeInsets.only(bottom: 16),

@@ -525,21 +525,17 @@ void main() {
       // 운영자 문구가 있으면 회비표 아래는 그 문구만 — 날짜별 금액·부분 참석 같은 자동 안내도 빠진다 (§28.1).
       expect(find.text('· 10-09(금) 당일: 어른 10,000원 · 중고등 5,000원'), findsNothing);
       expect(find.textContaining('부분 참석 금액은'), findsNothing);
-      expect(find.text('· 나이는 학년 기준입니다.'), findsOneWidget);
-      expect(find.text('· 문의: 총무'), findsOneWidget);
+      expect(find.text('나이는 학년 기준입니다.\n문의: 총무'), findsOneWidget);
       expect(find.textContaining('출생연도로 계산'), findsNothing);
 
-      // 문구를 지우면 자동 안내가 다시 나온다.
+      // 문구를 지우면 회비표 아래는 비어 있다 — 앱이 안내를 만들어 넣지 않는다 (§28.1).
       g.feeNote = null;
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
       await tester.pumpAndSettle();
-      expect(
-        find.text('· 10-09(금) 당일: 어른 10,000원 · 중고등 5,000원'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('출생연도로 계산'), findsOneWidget);
-      expect(find.text('· 나이는 학년 기준입니다.'), findsNothing);
+      expect(find.textContaining('10-09(금) 당일'), findsNothing);
+      expect(find.textContaining('출생연도로 계산'), findsNothing);
+      expect(find.textContaining('나이는 학년 기준입니다.'), findsNothing);
     });
 
     testWidgets('회비 무료 항목은 회비표 아래 안내에 아무것도 더하지 않는다 (§28)', (tester) async {
@@ -557,7 +553,7 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
       await tester.pumpAndSettle();
-      expect(find.text('· 운영자 안내'), findsOneWidget);
+      expect(find.text('운영자 안내'), findsOneWidget);
       expect(find.textContaining('회비가 무료입니다'), findsNothing);
     });
 
@@ -2557,10 +2553,8 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
       expect(tester.widget<TextField>(note).readOnly, isFalse);
-      expect(
-        tester.widget<TextField>(note).decoration!.hintText,
-        '나이는 2026년 − 출생연도로 계산합니다.',
-      );
+      // 자동 문구를 힌트로도 보이지 않는다 — 적은 글만 나간다 (§28.1).
+      expect(tester.widget<TextField>(note).decoration!.hintText, isNull);
       await tester.enterText(note, ' 학년 기준\n문의: 총무 ');
       await tester.tap(find.widgetWithText(FilledButton, '저장'));
       await tester.pumpAndSettle();
@@ -2828,7 +2822,7 @@ void main() {
       expect(find.text('저녁 집회'), findsNothing);
       expect(find.textContaining('10-09'), findsNothing);
       expect(find.textContaining('부분 참석'), findsNothing);
-      expect(find.textContaining('모두 미참가면 받지 않습니다'), findsOneWidget);
+      expect(find.textContaining('모두 미참가면 받지 않습니다'), findsNothing);
     });
 
     testWidgets('방 관리: 이름 방을 만들고, 같은 이름은 막고, 범위도 된다', (tester) async {

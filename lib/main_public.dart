@@ -354,50 +354,6 @@ class _FeeTable extends StatelessWidget {
       ),
     );
 
-    // 그 날 지정한 당일 금액 '성인 10,000원 · 중고등 5,000원'. 표에 보이는 구분 중 지정한 게 없으면 null.
-    String? dayPriceText(DateTime d) {
-      final m = f.pricesOn(d) ?? const {};
-      final parts = [
-        for (final ag in byAge ? f.groups : [unknown])
-          if (m[ag] case final v?) '${f.labelOf(ag)} ${money(v)}',
-      ];
-      return parts.isEmpty ? null : parts.join(' · ');
-    }
-
-    // 운영자 문구가 없을 때 보이는 자동 안내.
-    final autoNotes = [
-      if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
-      if (byAge && !g.requires('birthYear'))
-        '출생연도를 비워 두면 ${f.labelOf(unknown)} 금액으로 계산합니다.',
-      if (f.fullDiscountPct > 0 && !dateless)
-        '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
-      if (dateless)
-        ...[]
-      else if (separate) ...[
-        '참가비와 숙박비를 따로 받습니다. 숙박비는 묵는 밤마다 받습니다.',
-        '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다.',
-      ] else
-        '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
-      for (final e in f.early)
-        '사전등록 할인: ${mdw(daysBefore(g.start, e.fromDays))} ~ '
-            '${mdw(daysBefore(g.start, e.toDays))} 신청 시 ${e.pct}%',
-      if (f.perRegistration > 0)
-        dateless
-            ? '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다. 모두 미참가면 받지 않습니다.'
-            : '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
-      if (n > 0 && !dateless)
-        for (final d in g.days)
-          if (g.isOff(d))
-            ...[]
-          else if (f.isFreeDay(d))
-            separate
-                ? '${mdw(d)} 참가비는 무료입니다 (숙박하면 숙박비는 받습니다).'
-                : '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).'
-          else if (dayPriceText(d) case final t?)
-            // 날짜별 당일 금액 (§27.1). 지정한 구분만, 표 순서로.
-            '${mdw(d)} ${separate ? '하루 참가' : '당일'}: $t',
-    ];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -464,27 +420,19 @@ class _FeeTable extends StatelessWidget {
               ),
           ],
         ),
-        const SizedBox(height: 8),
-        for (final line in [
-          // 운영자가 적은 회비 안내 문구가 있으면 그 문구만 줄마다 보인다 (§27.2·§28.1) —
-          // 아래 자동 안내(부분 참석 상한·무료 날·할인…)는 운영자가 문구에 직접 적는다.
-          // (안쪽 for·if 를 ...[] 로 감싼다 — 그냥 두면 아래 else 가 안쪽 `if (l…)` 에 붙어
-          // 문구가 없는 기존 집회에서 자동 안내가 사라진다.)
-          if (g.feeNote case final note? when note.trim().isNotEmpty) ...[
-            for (final l in note.split('\n'))
-              if (l.trim().isNotEmpty) l,
-          ] else ...[
-            ...autoNotes,
-          ],
-        ])
+        // 회비표 아래에는 운영자가 [회비 안내 문구] 칸에 적은 글만 그대로 보인다 (§28.1).
+        // 앱이 만드는 자동 안내·글머리표는 넣지 않는다 — 비워 두면 아무것도 없다 (사용자 결정).
+        if (g.feeNote case final note? when note.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
           Text(
-            '· $line',
+            note,
             style: const TextStyle(
               fontSize: 12,
               color: AppColors.textMuted,
               height: 1.6,
             ),
           ),
+        ],
       ],
     );
   }

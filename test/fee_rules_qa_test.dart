@@ -578,30 +578,24 @@ void main() {
       expect(tester.takeException(), isNull);
     }
 
-    testWidgets('4. 신청 웹: 안내 문구가 없으면 자동 나이 설명 두 줄이 그대로 보인다 (기존 집회)', (
-      tester,
-    ) async {
+    // §28.1: 회비표 아래에는 운영자가 적은 글만 그대로. 앱이 만든 안내·글머리표는 없다.
+    testWidgets('4. 신청 웹: 안내 문구가 없으면 회비표 아래에 아무것도 없다', (tester) async {
       await openPublic(tester, pub());
-      expect(find.text('· 나이는 2026년 − 출생연도로 계산합니다.'), findsOneWidget);
-      expect(find.text('· 출생연도를 비워 두면 성인 금액으로 계산합니다.'), findsOneWidget);
-    });
-
-    testWidgets('4. 신청 웹: 출생연도 필수면 자동 문구는 첫 줄만', (tester) async {
-      await openPublic(tester, pub(requireBirth: true));
-      expect(find.text('· 나이는 2026년 − 출생연도로 계산합니다.'), findsOneWidget);
+      expect(find.textContaining('출생연도로 계산'), findsNothing);
       expect(find.textContaining('비워 두면'), findsNothing);
+      expect(find.textContaining('전체 참석 금액을 넘지'), findsNothing);
     });
 
-    testWidgets('4. 신청 웹: 안내 문구의 빈 줄은 버리고 자동 문구를 끼워 넣지 않는다', (tester) async {
+    testWidgets('4. 신청 웹: 안내 문구는 적은 그대로 (빈 줄 포함, 글머리표 없음)', (tester) async {
       await openPublic(tester, pub(note: '첫 줄\n\n둘째 줄'));
-      expect(find.text('· 첫 줄'), findsOneWidget);
-      expect(find.text('· 둘째 줄'), findsOneWidget);
+      expect(find.text('첫 줄\n\n둘째 줄'), findsOneWidget);
+      expect(find.text('· 첫 줄'), findsNothing);
       expect(find.textContaining('출생연도'), findsNothing);
     });
 
-    testWidgets('4. 신청 웹: 공백뿐인 문구는 자동 문구', (tester) async {
+    testWidgets('4. 신청 웹: 공백뿐인 문구는 아무것도 보이지 않는다', (tester) async {
       await openPublic(tester, pub(note: '  \n '));
-      expect(find.text('· 나이는 2026년 − 출생연도로 계산합니다.'), findsOneWidget);
+      expect(find.textContaining('출생연도로 계산'), findsNothing);
     });
   });
 }
