@@ -143,12 +143,10 @@ class Remote {
 
   /// 이 집회의 운영자들 (전체 운영자는 빠진다 — 그들은 모든 집회를 관리한다).
   Future<List<GatheringAdmin>> gatheringAdmins(String gatheringId) async {
-    final rows =
-        await _db.rpc(
-              'gathering_admin_list',
-              params: {'p_gathering': gatheringId},
-            )
-            as List;
+    final rows = await _db.rpc(
+      'gathering_admin_list',
+      params: {'p_gathering': gatheringId},
+    ) as List;
     return [
       for (final r in rows)
         (
@@ -170,7 +168,10 @@ class Remote {
   }
 
   /// 이 집회의 운영자 초대 링크. [renew] 면 새 코드로 바꿔 예전 링크를 막는다.
-  Future<String> gatheringInvite(String gatheringId, {bool renew = false}) async {
+  Future<String> gatheringInvite(
+    String gatheringId, {
+    bool renew = false,
+  }) async {
     final code = await _db.rpc(
       'gathering_invite',
       params: {'p_gathering': gatheringId, 'p_renew': renew},
@@ -233,7 +234,11 @@ class Remote {
       final res = await _db.auth.signUp(
         email: email.trim(),
         password: password,
-        data: {'name': name.trim(), 'room_signup': 'true', 'room_invite': ?invite},
+        data: {
+          'name': name.trim(),
+          'room_signup': 'true',
+          'room_invite': ?invite,
+        },
         emailRedirectTo: adminSiteUrl,
       );
       signedIn = res.session != null;
@@ -454,10 +459,8 @@ class Remote {
     String? depositor,
     String? memo,
     required int quoted,
-  }) async => '${await _db.rpc('admin_add_registration', params: {
-    ..._key(gatheringId, phone, pin),
-    ..._body(people, depositor, memo, quoted),
-  })}';
+  }) async =>
+      '${await _db.rpc('admin_add_registration', params: {..._key(gatheringId, phone, pin), ..._body(people, depositor, memo, quoted)})}';
 
   Future<void> resetPin(String registrationId, String pin) async {
     await _db.rpc(
@@ -700,18 +703,17 @@ String errorText(Object e) {
         'PIN을 여러 번 틀려 30분간 조회가 잠겼습니다. 잠시 후 다시 시도하거나 담당자에게 문의하세요.',
     'NOT_EDITABLE': '입금이 확인됐거나 취소된 신청은 바꿀 수 없습니다. 담당자에게 문의하세요.',
     'FORBIDDEN': '권한이 없습니다. 맡은 담당구역이 맞는지, 이 집회의 운영자인지 확인하세요.',
-    'NO_ACCOUNT':
-        '그 이메일로 가입한 계정이 없습니다. 위 [초대 링크 복사]로 링크를 보내 가입하게 하세요.',
+    'NO_ACCOUNT': '그 이메일로 가입한 계정이 없습니다. 위 [초대 링크 복사]로 링크를 보내 가입하게 하세요.',
     'BAD_INVITE': '초대 링크가 틀렸거나 새 링크로 바뀌었습니다. 집회 담당자에게 새 링크를 받으세요.',
     'INVALID_ROLE': '운영자 역할은 보조운영자나 운영스탭 중 하나만 고를 수 있습니다.',
     // 로그인 없이(anon) 운영자 전용 테이블을 건드렸다 — 세션이 끊겼거나 로그인 전이다.
-    'permission denied for table': '로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인한 뒤 집회를 다시 여세요.',
+    'permission denied for table':
+        '로그인이 풀렸습니다. 오른쪽 위 [운영자 로그인]으로 다시 로그인한 뒤 집회를 다시 여세요.',
     'NOT_FOUND': '신청을 찾지 못했습니다.',
     'registrations_active_phone': '같은 번호로 진행 중인 다른 신청이 있어 되돌릴 수 없습니다.',
     'invalid input syntax for type uuid': '잘못된 링크입니다. 받은 링크를 다시 확인하세요.',
     'Invalid login credentials': '이메일 또는 비밀번호가 다릅니다.',
-    'Email not confirmed':
-        '아직 메일 확인이 안 된 계정입니다. 집회 담당자에게 알리세요.',
+    'Email not confirmed': '아직 메일 확인이 안 된 계정입니다. 집회 담당자에게 알리세요.',
     'User already registered': '이미 가입된 이메일입니다. 승인을 기다리는 중이면 기존 운영자에게 알리세요.',
     'Signups not allowed': '지금은 가입을 받지 않습니다. 기존 운영자에게 문의하세요.',
     'Password should': '비밀번호가 너무 짧거나 쉽습니다. 더 길게 정하세요.',

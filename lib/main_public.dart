@@ -354,16 +354,6 @@ class _FeeTable extends StatelessWidget {
       ),
     );
 
-    // 그 날 지정한 당일 금액 '성인 10,000원 · 중고등 5,000원'. 표에 보이는 구분 중 지정한 게 없으면 null.
-    String? dayPriceText(DateTime d) {
-      final m = f.pricesOn(d) ?? const {};
-      final parts = [
-        for (final ag in byAge ? f.groups : [unknown])
-          if (m[ag] case final v?) '${f.labelOf(ag)} ${money(v)}',
-      ];
-      return parts.isEmpty ? null : parts.join(' · ');
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -430,55 +420,19 @@ class _FeeTable extends StatelessWidget {
               ),
           ],
         ),
-        const SizedBox(height: 8),
-        for (final line in [
-          // 운영자가 적은 회비 안내 문구가 있으면 나이 설명 두 줄 대신 그 문구 (줄마다, §27.2).
-          // (안쪽 for·if 를 ...[] 로 감싼다 — 그냥 두면 아래 else 가 안쪽 `if (l…)` 에 붙어
-          // 문구가 없는 기존 집회에서 나이 설명이 사라진다.)
-          if (g.feeNote case final note? when note.trim().isNotEmpty) ...[
-            for (final l in note.split('\n'))
-              if (l.trim().isNotEmpty) l,
-          ] else ...[
-            if (byAge) '나이는 ${g.start.year}년 − 출생연도로 계산합니다.',
-            if (byAge && !g.requires('birthYear'))
-              '출생연도를 비워 두면 ${f.labelOf(unknown)} 금액으로 계산합니다.',
-          ],
-          if (f.fullDiscountPct > 0 && !dateless)
-            '전체 참석 금액은 전체 참석 할인 ${f.fullDiscountPct}%가 반영된 금액입니다.',
-          if (dateless)
-            ...[]
-          else if (separate) ...[
-            '참가비와 숙박비를 따로 받습니다. 숙박비는 묵는 밤마다 받습니다.',
-            '부분 참석 참가비는 전체 참석 금액을 넘지 않습니다.',
-          ] else
-            '부분 참석 금액은 전체 참석 금액을 넘지 않습니다.',
-          for (final e in f.early)
-            '사전등록 할인: ${mdw(daysBefore(g.start, e.fromDays))} ~ '
-                '${mdw(daysBefore(g.start, e.toDays))} 신청 시 ${e.pct}%',
-          if (f.perRegistration > 0)
-            dateless
-                ? '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다. 모두 미참가면 받지 않습니다.'
-                : '가족(신청 1건)당 ${won(f.perRegistration)}이 더해집니다.',
-          if (n > 0 && !dateless)
-            for (final d in g.days)
-              if (g.isOff(d))
-                ...[]
-              else if (f.isFreeDay(d))
-                separate
-                    ? '${mdw(d)} 참가비는 무료입니다 (숙박하면 숙박비는 받습니다).'
-                    : '${mdw(d)} 하루만 당일로 오면 무료입니다 (이 날을 포함해 1박 이상이면 위 금액).'
-              else if (dayPriceText(d) case final t?)
-                // 날짜별 당일 금액 (§27.1). 지정한 구분만, 표 순서로.
-                '${mdw(d)} ${separate ? '하루 참가' : '당일'}: $t',
-        ])
+        // 회비표 아래에는 운영자가 [회비 안내 문구] 칸에 적은 글만 그대로 보인다 (§28.1).
+        // 앱이 만드는 자동 안내·글머리표는 넣지 않는다 — 비워 두면 아무것도 없다 (사용자 결정).
+        if (g.feeNote case final note? when note.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
           Text(
-            '· $line',
+            note,
             style: const TextStyle(
               fontSize: 12,
               color: AppColors.textMuted,
               height: 1.6,
             ),
           ),
+        ],
       ],
     );
   }
@@ -656,9 +610,7 @@ class _ApplyPageState extends State<ApplyPage> {
             for (final (i, p) in r.people.indexed)
               _PersonForm(p: p, applicant: i == 0),
           ];
-    for (final f in forms) {
-      f.birth.addListener(_changed);
-    }
+    forms.forEach(_listen);
     if (widget.admin) {
       pin.text = '${math.Random.secure().nextInt(10000)}'.padLeft(4, '0');
     }
@@ -679,6 +631,22 @@ class _ApplyPageState extends State<ApplyPage> {
   }
 
   void _changed() => setState(() {});
+
+  /// 금액이 바뀌는 칸 — 출생연도와 회비 무료 항목(§28) — 을 고치면 금액을 다시 센다.
+  /// (체크박스는 제 칸만 다시 그려서, 듣지 않으면 다른 칸을 고칠 때까지 금액이 그대로다.)
+  void _listen(_PersonForm f) {
+    f.birth.addListener(_changed);
+    for (final x in g.freeFields) {
+      f.extra(x).addListener(_changed);
+    }
+  }
+
+  void _unlisten(_PersonForm f) {
+    f.birth.removeListener(_changed);
+    for (final x in g.freeFields) {
+      f.extra(x).removeListener(_changed);
+    }
+  }
 
   /// 새 신청서의 참석일. 신청자는 날짜를 직접 고르도록 빈 부분 참석으로 시작한다
   /// (모든 날을 고르면 전체 참석으로 계산된다). 하루짜리 집회는 고를 게 없어 전체 참석,
@@ -705,7 +673,8 @@ class _ApplyPageState extends State<ApplyPage> {
       : null;
 
   void _addCompanion() => setState(() {
-    final f = _PersonForm(copyFrom: forms.first)..birth.addListener(_changed);
+    final f = _PersonForm(copyFrom: forms.first);
+    _listen(f);
     // 날짜 없는 집회의 새 사람은 [참가]로 시작한다 (신청자가 미참가여도).
     if (g.dateless) f.days = null;
     forms.add(f);
@@ -836,9 +805,7 @@ class _ApplyPageState extends State<ApplyPage> {
           : IconButton(
               tooltip: '이 사람 빼기',
               icon: const Icon(Icons.close),
-              onPressed: () => setState(
-                () => forms.removeAt(i).birth.removeListener(_changed),
-              ),
+              onPressed: () => setState(() => _unlisten(forms.removeAt(i))),
             ),
       children: [
         TextFormField(
@@ -1164,9 +1131,7 @@ class _ApplyPageState extends State<ApplyPage> {
             box(
               const ValueKey('stay-all'),
               allStay ? true : (f.stays.isEmpty ? false : null),
-              (_) => setState(
-                () => f.stays = allStay ? {} : {...nights},
-              ),
+              (_) => setState(() => f.stays = allStay ? {} : {...nights}),
             ),
           ],
         ),
@@ -1861,9 +1826,7 @@ class _StayRow extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                line.person.name.trim().isEmpty
-                    ? '(이름 없음)'
-                    : line.person.name,
+                line.person.name.trim().isEmpty ? '(이름 없음)' : line.person.name,
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -2234,7 +2197,14 @@ class _StaffPageState extends State<StaffPage> {
     ),
     body: _Narrow(
       children: g == null && error == null
-          ? const [Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))]
+          ? const [
+              Center(
+                child: Padding(
+                  padding: EdgeInsets.all(40),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+            ]
           : duties == null
           ? _form()
           : _view(duties!),
@@ -2269,7 +2239,10 @@ class _StaffPageState extends State<StaffPage> {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+            child: Text(
+              error!,
+              style: const TextStyle(color: AppColors.danger),
+            ),
           ),
         FilledButton(
           onPressed: busy || g == null ? null : _login,
@@ -2378,7 +2351,10 @@ class _StaffDutyCardState extends State<_StaffDutyCard> {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+            child: Text(
+              error!,
+              style: const TextStyle(color: AppColors.danger),
+            ),
           ),
         if (saved != null)
           Padding(

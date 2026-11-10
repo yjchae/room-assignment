@@ -4,7 +4,8 @@ library;
 
 import 'dart:math' as math;
 
-import 'models.dart' show FieldSpec, fieldSpecsFromJson, fieldSpecsToJson;
+import 'models.dart'
+    show FieldSpec, FreeScope, fieldOn, fieldSpecsFromJson, fieldSpecsToJson;
 
 /// 나이 구분. 기본 다섯([values])에 집회마다 구분을 더할 수 있다 ([FeeRule.groups], PLAN_GATHERING §27.3).
 /// [name] 은 금액 맵·JSON 의 키(id)라 한 번 정하면 안 바뀐다. 같은지는 [name] 으로만 본다 —
@@ -699,7 +700,15 @@ class Gathering {
     appliedAt: appliedAt,
     discount: discount,
     dateless: dateless,
+    freeFields: freeFields,
+    freeScopes: {for (final f in freeFields) f: specOf(f).freeScope},
   );
+
+  /// 체크하면 회비가 무료인 항목 이름 (예: '탈북민'). 신청서에 묻는 항목만 ([FieldSpec.free]).
+  List<String> get freeFields => [
+    for (final f in formFields)
+      if (specOf(f).free) f,
+  ];
 
   Gathering copy() => Gathering.fromRow({...toRow(), 'id': id});
 
@@ -903,6 +912,8 @@ class QuoteLine {
     this.lodging = 0,
     this.stayNights,
     this.dateless = false,
+    this.exemptBy,
+    this.exemptScope = FreeScope.all,
   });
   final Person person;
   final AgeGroup group;
@@ -928,6 +939,13 @@ class QuoteLine {
   /// 날짜 없는 집회의 줄 ([Gathering.dateless]). [stay] 가 '참가' / '미참가' 가 된다.
   final bool dateless;
 
+  /// 회비 무료 항목(예: '탈북민')에 체크해 0원이 된 사람이면 그 항목 이름 ([FieldSpec.free]).
+  final String? exemptBy;
+  bool get exempt => exemptBy != null;
+
+  /// [exemptBy] 가 빼 준 범위. 참가비만·숙박비만은 숙박비 별도 줄에서만 온다 (§28.3).
+  final FreeScope exemptScope;
+
   /// 고른 날([picked])에 내는 금액 = 회비표 요금으로 센다. 그 밤을 묵으면 1박 요금,
   /// 당일로 오면 그 날 당일 요금([FeeRule.dayPriceOn])
   /// (숙박비 별도면 참가일마다 하루 참가 + 묵는 밤마다 숙박 1박). 무료 날은 0원이고 전체 참석자도 같다 —
@@ -936,12 +954,17 @@ class QuoteLine {
   int amountOn(Set<DateTime> picked, FeeRule fee) {
     final nightly = (separate ? fee.lodging : fee.perNight)[group] ?? 0;
     final visits = separate ? days : dayVisitDays(days);
-    final sum =
-        nightly * (stayNights ?? nightsOf(days)).where(picked.contains).length +
-        visits
-            .where(picked.contains)
-            .fold<int>(0, (t, d) => t + fee.dayPriceOn(group, d));
-    return math.min(sum, amount);
+    // 무료 범위가 참가비만·숙박비만이면 그 쪽은 0원으로 센다 (§28.3).
+    final nightPart = exemptScope == FreeScope.lodging
+        ? 0
+        : nightly *
+              (stayNights ?? nightsOf(days)).where(picked.contains).length;
+    final dayPart = exemptScope == FreeScope.participation
+        ? 0
+        : visits
+              .where(picked.contains)
+              .fold<int>(0, (t, d) => t + fee.dayPriceOn(group, d));
+    return math.min(nightPart + dayPart, amount);
   }
 
   /// 이 사람이 묵는 박수. 0 = 당일만.
@@ -949,7 +972,12 @@ class QuoteLine {
 
   /// "전체" / "1박" / "당일" / "1박 + 당일" / "당일(무료)".
   /// 숙박비 별도면 "전체 · 숙박 2박" / "2일 · 숙박 안 함" / "1일(무료) · 숙박 1박".
-  String get stay {
+  /// 회비 무료 항목에 체크한 사람은 끝에 "(탈북민 무료)" — 오지 않는 사람(날짜 없는 집회의 미참가)은 붙이지 않는다.
+  String get stay => exemptBy == null || days.isEmpty
+      ? _stay
+      : '$_stay($exemptBy ${exemptScope.short})';
+
+  String get _stay {
     if (dateless) return days.isEmpty ? '미참가' : '참가';
     if (separate) {
       final attend = full ? '전체' : '${days.length}일${freeDay ? '(무료)' : ''}';
@@ -1032,8 +1060,13 @@ class Quote {
   /// 무료 날 당일로만 오는 신청 (날짜를 아직 안 고른 사람은 빼고 본다). 입금이 없다.
   bool get freeDayOnly => _freeDayOnly(lines);
 
-  /// 입금이 없는 신청 — 무료 날 당일만 오거나, 날짜 없는 집회에서 전원 미참가.
-  bool get noPayment => freeDayOnly || noShow;
+  /// 회비 무료 항목에 체크한 사람·무료 날 당일만 오는 사람뿐인 신청 ([_noCharge]).
+  bool get exemptOnly =>
+      lines.any((l) => l.exempt && l.days.isNotEmpty) && _noCharge(lines);
+
+  /// 입금이 없는 신청 — 무료 날 당일만 오거나, 회비 무료 항목에 체크한 사람뿐이거나,
+  /// 날짜 없는 집회에서 전원 미참가.
+  bool get noPayment => _noCharge(lines) || noShow;
 
   /// 할인 후 금액의 원 미만을 버리도록 계산한다 (할인액 쪽이 올림).
   int get earlyDiscount => subtotal - subtotal * (100 - earlyPct) ~/ 100;
@@ -1096,12 +1129,58 @@ Quote quote(
   required DateTime appliedAt,
   Discount discount = Discount.none,
   bool dateless = false,
+  Iterable<String> freeFields = const [],
+  Map<String, FreeScope> freeScopes = const {},
 }) {
   final s = _day(start);
   final e = _day(end).isBefore(s) ? s : _day(end);
   final allNights = _nights(s, e);
 
+  // 회비 무료 항목(예: 탈북민)에 체크한 사람은 0원 — 무료 날·할인·숙박비 별도와 상관없이 (§28).
+  // 숙박비 별도 집회는 범위(참가비만·숙박비만)를 고를 수 있다 (§28.3).
+  // 일정·구분은 그대로 적어 두어 참석자 화면·엑셀이 평소처럼 읽는다.
+  QuoteLine? exemptLine(Person p) {
+    final by = freeFields.where((f) => p.extra[f] == fieldOn).firstOrNull;
+    if (by == null) return null;
+    // 참가비만·숙박비만 (§28.3) — 숙박비 별도 집회만. 평소 계산에서 한쪽만 0원으로.
+    final scope = fee.lodgingSeparate && !dateless
+        ? freeScopes[by] ?? FreeScope.all
+        : FreeScope.all;
+    if (scope != FreeScope.all) {
+      final b = _separateLine(fee, p, s, e);
+      final lodging = scope == FreeScope.participation ? b.lodging : 0;
+      return QuoteLine(
+        p,
+        b.group,
+        b.days,
+        b.full,
+        scope == FreeScope.participation ? b.lodging : b.participation,
+        freeDay: b.freeDay,
+        lodging: lodging,
+        stayNights: b.stayNights,
+        exemptBy: by,
+        exemptScope: scope,
+      );
+    }
+    final to = dateless ? s : e;
+    final g = fee.groupOfBirth(p.birthYear, s.year);
+    final days = p.daysIn(s, to);
+    return QuoteLine(
+      p,
+      g,
+      days,
+      dateless ? days.isNotEmpty : days.length == _nights(s, to) + 1,
+      0,
+      stayNights: fee.lodgingSeparate && !dateless
+          ? p.nightsIn(s, e, separate: true)
+          : null,
+      dateless: dateless,
+      exemptBy: by,
+    );
+  }
+
   QuoteLine line(Person p) {
+    if (exemptLine(p) case final x?) return x;
     if (dateless) {
       // 기간을 기준일 하루로 본다 — 저장된 end 가 어긋나 있어도 참가 = 전체 참석.
       final g = fee.groupOfBirth(p.birthYear, s.year);
@@ -1135,8 +1214,8 @@ Quote quote(
   }
 
   final lines = people.map(line).toList();
-  // 모두 무료 날 당일로만 오면 가족당 금액도 붙이지 않는다.
-  final freeOnly = _freeDayOnly(lines);
+  // 모두 무료 날 당일로만 오거나 회비 무료 항목에 체크했으면 가족당 금액도 붙이지 않는다.
+  final freeOnly = _noCharge(lines);
   // 날짜 없는 집회에서 전원 미참가면 그룹당 금액도 없다.
   final noShow =
       dateless && lines.isNotEmpty && lines.every((l) => l.days.isEmpty);
@@ -1191,6 +1270,16 @@ QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
     lodging: lodging,
     stayNights: nights,
   );
+}
+
+/// 내는 사람이 없다 — 모두 무료 날 당일만 오거나 회비 무료 항목에 체크했다 (날짜 안 고른 사람은 빼고 본다).
+/// 무료 항목에 체크했어도 오지 않는 사람(고른 날 없음)은 무료 날처럼 '내지 않는 사람'으로 세지 않는다 —
+/// 그렇지 않으면 날짜를 안 고른 사람끼리인 신청에서 가족당 금액이 빠진다.
+/// 참가비만·숙박비만 무료인 사람은 실제로 0원일 때만 '내지 않는 사람'이다 (§28.3).
+bool _noCharge(List<QuoteLine> lines) {
+  bool waived(QuoteLine l) => l.exempt && l.amount == 0;
+  return lines.any((l) => l.freeDay || (waived(l) && l.days.isNotEmpty)) &&
+      lines.every((l) => l.freeDay || waived(l) || l.days.isEmpty);
 }
 
 bool _freeDayOnly(List<QuoteLine> lines) =>

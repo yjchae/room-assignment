@@ -246,9 +246,7 @@ void main() {
     expect(store.event.attendees.every((a) => a.personId == 'k1'), isTrue);
   });
 
-  testWidgets('방배정: 사용 기간을 정한 방은 며칠을 넣을지 묻고 남은 기간은 미배정으로 둔다', (
-    tester,
-  ) async {
+  testWidgets('방배정: 사용 기간을 정한 방은 며칠을 넣을지 묻고 남은 기간은 미배정으로 둔다', (tester) async {
     current.value = Gathering(
       id: 'g1',
       name: '수련회',
@@ -298,9 +296,7 @@ void main() {
     expect(store.unassigned.single.checkIn, DateTime(2026, 1, 3));
   });
 
-  testWidgets('홈스테이 배정: 신청하지 않은 날이 들어가면 경고하고 신청일을 알려준다', (
-    tester,
-  ) async {
+  testWidgets('홈스테이 배정: 신청하지 않은 날이 들어가면 경고하고 신청일을 알려준다', (tester) async {
     current.value = Gathering(
       id: 'h1',
       name: '홈스테이',
@@ -341,10 +337,7 @@ void main() {
     await tester.tap(find.textContaining('개 방 배정'));
     await tester.pumpAndSettle();
     // 신청한 날이 기간이 아니라 날짜로 보인다
-    expect(
-      find.text('01-01(목), 01-03(토) (2박)'),
-      findsOneWidget,
-    );
+    expect(find.text('01-01(목), 01-03(토) (2박)'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(OutlinedButton, '전체 기간 배정'));
     await tester.pumpAndSettle();
@@ -359,9 +352,7 @@ void main() {
     expect(store.event.attendees.single.roomId, isNull); // 취소하면 그대로
   });
 
-  testWidgets('홈스테이 배정: 가정을 여러 곳 골라 채워도 신청하지 않은 날은 경고한다', (
-    tester,
-  ) async {
+  testWidgets('홈스테이 배정: 가정을 여러 곳 골라 채워도 신청하지 않은 날은 경고한다', (tester) async {
     current.value = Gathering(
       id: 'h1',
       name: '홈스테이',
@@ -423,9 +414,7 @@ void main() {
     expect(store.event.attendees.every((a) => a.roomId == null), isTrue);
   });
 
-  testWidgets('홈스테이 배정: 신청서에서 기간을 못 가져온 가정은 그렇게 말해 준다', (
-    tester,
-  ) async {
+  testWidgets('홈스테이 배정: 신청서에서 기간을 못 가져온 가정은 그렇게 말해 준다', (tester) async {
     current.value = Gathering(
       id: 'h1',
       name: '홈스테이',

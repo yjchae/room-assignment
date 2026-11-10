@@ -1573,7 +1573,9 @@ Future<void> pushStay(
     if (n > 0) {
       messenger.showSnackBar(
         SnackBar(
-          content: Text('신청 $n건의 날짜도 새 일정으로 바꿨습니다. 금액이 달라졌으면 [신청·입금]에 경고가 뜹니다.'),
+          content: Text(
+            '신청 $n건의 날짜도 새 일정으로 바꿨습니다. 금액이 달라졌으면 [신청·입금]에 경고가 뜹니다.',
+          ),
         ),
       );
     }
@@ -1680,9 +1682,8 @@ Future<String?> _customFieldDialog(
   final old = editing == null ? const FieldSpec() : store.event.specOf(editing);
   final ctl = TextEditingController(text: editing ?? '');
   var type = old.type;
-  final options = [
-    for (final o in old.options) TextEditingController(text: o),
-  ];
+  var free = old.free;
+  final options = [for (final o in old.options) TextEditingController(text: o)];
   if (options.isEmpty) options.add(TextEditingController());
   final messenger = ScaffoldMessenger.of(context);
 
@@ -1752,6 +1753,23 @@ Future<String?> _customFieldDialog(
                         ),
                       ),
                     ),
+                  // 체크박스·토글만 — 켜면 체크한 사람의 회비가 0원 (예: 탈북민, PLAN_GATHERING §28).
+                  if (type == FieldType.check || type == FieldType.toggle) ...[
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('체크하면 회비 무료'),
+                      subtitle: const Text(
+                        '체크한 사람의 회비를 받지 않습니다. 무료 범위(참가비·숙박비)는 집회 설정 [회비]에서 고르고, [저장] 뒤 신청서에 반영됩니다.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      value: free,
+                      onChanged: (v) => setLocal(() => free = v),
+                    ),
+                  ],
                   if (type == FieldType.select) ...[
                     const SizedBox(height: 16),
                     const Text(
@@ -1843,6 +1861,7 @@ Future<String?> _customFieldDialog(
   final spec = FieldSpec(
     type: type,
     options: type == FieldType.select ? picked() : const [],
+    free: free,
   );
   if (editing == null) {
     if (!store.addCustomField(name, spec)) {

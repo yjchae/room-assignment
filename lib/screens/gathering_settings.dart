@@ -57,7 +57,10 @@ Map<String, String> _feeColsFor({required bool separate}) => separate
         'dayOnly': '하루 참가',
         'lodging': _feeCols['lodging']!,
       }
-    : {for (final k in ['minAge', 'full', 'perNight', 'dayOnly']) k: _feeCols[k]!};
+    : {
+        for (final k in ['minAge', 'full', 'perNight', 'dayOnly'])
+          k: _feeCols[k]!,
+      };
 
 class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   /// 고치는 중인 사본. 저장 전까지 서버·[current] 와 다를 수 있다.
@@ -503,8 +506,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
           : number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
       // 스위치를 숨기는 집회(하루짜리·홈스테이)는 끈다 — 날짜를 줄여 숨겨진 뒤에도 켜진 채 남지 않게.
-      lodgingSeparate:
-          x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
+      lodgingSeparate: x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
       lodging: x.dateless ? {} : column('lodging'),
       freeDays: freeDays,
       dayPrices: dayPrices,
@@ -878,7 +880,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     const Text(
                       '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.\n'
                       '토글을 끈 날은 일정 없는 날로, 신청자가 부분 참석 날짜로 고를 수 없습니다.',
-                      style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     for (final d in x.days) _scheduleDay(x, d),
@@ -1000,7 +1005,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     const SizedBox(height: 20),
                     const Text(
                       '날짜별 당일 금액',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     Text(
                       x.fee.lodgingSeparate
@@ -1016,6 +1024,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     const SizedBox(height: 8),
                     for (final d in x.days) _dayPriceRow(x, d),
                   ],
+                  const SizedBox(height: 20),
+                  _freeScopeSection(x),
                   const SizedBox(height: 20),
                   _feeNoteField(x),
                 ]),
@@ -1385,12 +1395,18 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   else if (admins == null)
                     const Text(
                       '불러오는 중…',
-                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
                     )
                   else if (admins!.isEmpty)
                     const Text(
                       '등록된 운영자가 없습니다. (전체 운영자는 모든 집회를 관리합니다.)',
-                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
                     )
                   else ...[
                     if (!owner)
@@ -1434,23 +1450,26 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                 // 삭제는 서버 RLS 가 어차피 주인(전체 운영자·만든 집회관리자)만 통과시킨다.
                 if (owner || adminsError != null)
                   _card('집회 삭제', [
-                  const Text(
-                    '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',
-                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.danger,
+                    const Text(
+                      '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
                       ),
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                      label: const Text('집회 삭제'),
-                      onPressed: () => _delete(cur),
                     ),
-                  ),
-                ]),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                        ),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text('집회 삭제'),
+                        onPressed: () => _delete(cur),
+                      ),
+                    ),
+                  ]),
               ],
             ),
           ),
@@ -1465,7 +1484,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     final off = x.isOff(d);
     final mine = [
       if (!off)
-        for (final l in lines) if (dateOnly(l.date) == dateOnly(d)) l,
+        for (final l in lines)
+          if (dateOnly(l.date) == dateOnly(d)) l,
     ];
     return Padding(
       padding: const EdgeInsets.only(top: 12),
@@ -1541,12 +1561,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       ],
                     ),
                   ),
-                if (!off) TextButton.icon(
-                  onPressed: () =>
-                      setState(() => lines.add(_Line(dateOnly(d), '', ''))),
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('줄 추가'),
-                ),
+                if (!off)
+                  TextButton.icon(
+                    onPressed: () =>
+                        setState(() => lines.add(_Line(dateOnly(d), '', ''))),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('줄 추가'),
+                  ),
               ],
             ),
           ),
@@ -1555,13 +1576,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     );
   }
 
-  /// "교회 · 셀렉트박스(5)" — 텍스트 항목은 이름만.
+  /// "교회 · 셀렉트박스(5)" / "탈북민 · 체크박스 · 회비 무료" — 텍스트 항목은 이름만.
   String _fieldChipLabel(String f) {
     final spec = store.event.specOf(f);
     return switch (spec.type) {
       FieldType.text => f,
       FieldType.select => '$f · ${spec.type.label}(${spec.options.length})',
-      _ => '$f · ${spec.type.label}',
+      _ => '$f · ${spec.type.label}${spec.free ? ' · 회비 무료' : ''}',
     };
   }
 
@@ -1676,32 +1697,101 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     );
   }
 
-  /// 회비 안내 문구 (§27.2). 신청 웹 회비표 아래의 나이 설명 두 줄을 바꾼다. 주인만 고친다.
-  Widget _feeNoteField(Gathering x) {
-    final top = x.fee.unknownGroup; // 출생연도 모름(0) → 성인
-    final auto = x.asks('birthYear')
-        ? [
-            '나이는 ${x.start.year}년 − 출생연도로 계산합니다.',
-            if (!x.requires('birthYear'))
-              '출생연도를 비워 두면 ${fee['label:${top.name}']?.text.trim() ?? x.fee.labelOf(top)} 금액으로 계산합니다.',
-          ].join('\n')
-        : '출생연도를 받지 않아 자동 문구가 없습니다.';
-    return TextField(
-      controller: feeNote,
-      readOnly: !owner,
-      minLines: 2,
-      maxLines: 6,
-      decoration: InputDecoration(
-        labelText: '회비 안내 문구',
-        hintText: auto,
-        alignLabelWithHint: true,
-        helperText: owner
-            ? '신청 웹 회비표 아래에 줄마다 보입니다. 비워 두면 위 자동 문구가 나갑니다. 할인·날짜별 금액 안내는 따로 붙습니다.'
-            : '집회관리자만 고칠 수 있습니다.',
-        helperMaxLines: 3,
-      ),
+  /// 회비 무료 항목(예: 탈북민)마다 무료 범위 칩 [참가비·숙박비 | 참가비만 | 숙박비만] (§28.3).
+  /// 범위는 항목 형식(`Event.fieldSpecs`)에 살고 [저장] 때 `field_specs` 로 같이 간다.
+  /// 참가비·숙박비가 나뉘는 숙박비 별도 집회에서만 나눠 고를 수 있다 — 아니면 끄고 이유를 적는다.
+  Widget _freeScopeSection(Gathering x) {
+    final names = [
+      for (final f in store.event.customFields)
+        if (store.event.specOf(f).free) f,
+    ];
+    final split =
+        x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay && !x.dateless;
+    const muted = TextStyle(fontSize: 12, color: AppColors.textMuted);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '회비 무료 항목',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        Text(
+          names.isEmpty
+              ? '[참석자] 항목 추가·고치기 창에서 체크박스·토글 항목에 [체크하면 회비 무료]를 켜면 여기서 무료 범위를 고릅니다.'
+              : split
+              ? '신청서에서 이 항목에 체크한 사람은 고른 범위의 회비를 받지 않습니다.'
+              : '숙박비 별도를 켜야 참가비·숙박비를 나눠 고를 수 있습니다. 지금은 회비 전체가 무료입니다.',
+          style: muted,
+        ),
+        for (final (i, f) in names.indexed)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: i == 0
+                ? null
+                : const BoxDecoration(
+                    border: Border(top: BorderSide(color: AppColors.border)),
+                  ),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: Text(
+                    f,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final scope in FreeScope.values)
+                      ChoiceChip(
+                        label: Text(scope.label),
+                        // 나눌 수 없는 집회는 늘 전체 무료로 센다 (저장된 범위는 지우지 않는다).
+                        selected:
+                            (split
+                                ? store.event.specOf(f).freeScope
+                                : FreeScope.all) ==
+                            scope,
+                        onSelected: split
+                            ? (_) => setState(
+                                () => store.setFieldSpec(
+                                  f,
+                                  store.event.specOf(f).withScope(scope),
+                                ),
+                              )
+                            : null,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
+
+  /// 회비 안내 문구 (§27.2·§28.1). 신청 웹 회비표 아래에는 이 칸의 글만 보인다. 주인만 고친다.
+  Widget _feeNoteField(Gathering x) => TextField(
+    controller: feeNote,
+    readOnly: !owner,
+    minLines: 2,
+    maxLines: 6,
+    decoration: InputDecoration(
+      labelText: '회비 안내 문구',
+      alignLabelWithHint: true,
+      helperText: owner
+          ? '신청 웹 회비표 아래에 여기 적은 글만 그대로 보입니다. 비워 두면 아무것도 보이지 않습니다.'
+          : '집회관리자만 고칠 수 있습니다.',
+      helperMaxLines: 3,
+    ),
+  );
 
   Widget _card(String title, List<Widget> children) => Padding(
     padding: const EdgeInsets.only(bottom: 16),

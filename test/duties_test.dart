@@ -8,7 +8,8 @@ import 'package:room_assignment/screens/duties.dart';
 import 'package:room_assignment/screens/duty_tasks_screen.dart';
 import 'package:room_assignment/widgets/duty_tasks.dart';
 import 'package:room_assignment/store.dart';
-import 'package:room_assignment/screens/gathering_settings.dart' show setFieldMode;
+import 'package:room_assignment/screens/gathering_settings.dart'
+    show setFieldMode;
 import 'package:room_assignment/theme.dart';
 
 final start = DateTime(2026, 1, 1);
@@ -82,7 +83,8 @@ void main() {
         status: RegStatus.confirmed,
         createdAt: start,
       );
-      final s = Store()..event = Event(name: '', startDate: start, endDate: end);
+      final s = Store()
+        ..event = Event(name: '', startDate: start, endDate: end);
       s.syncRegistrations(x, [r]);
       expect(s.event.attendees.single.staff, isTrue);
       // 저장했다 읽어도 남는다.

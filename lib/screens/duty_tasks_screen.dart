@@ -44,7 +44,9 @@ class DutyTasksScreen extends StatelessWidget {
                         Clipboard.setData(ClipboardData(text: staffLink(id)));
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('스탭 페이지 링크를 복사했습니다. 담당구역을 맡은 사람에게 보내세요.'),
+                            content: Text(
+                              '스탭 페이지 링크를 복사했습니다. 담당구역을 맡은 사람에게 보내세요.',
+                            ),
                           ),
                         );
                       },
@@ -60,7 +62,8 @@ class DutyTasksScreen extends StatelessWidget {
             padding: const EdgeInsets.only(top: 60),
             child: EmptyNotice(
               icon: Icons.fact_check_outlined,
-              text: '담당구역이 없습니다. [담당구역]에서 구역을 만들고 사람을 배정하면\n여기에 그 구역의 할 일이 모입니다.',
+              text:
+                  '담당구역이 없습니다. [담당구역]에서 구역을 만들고 사람을 배정하면\n여기에 그 구역의 할 일이 모입니다.',
               action: FilledButton(
                 onPressed: () => tabIndex.value = dutiesTab,
                 child: const Text('담당구역으로'),
