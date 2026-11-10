@@ -57,7 +57,10 @@ Map<String, String> _feeColsFor({required bool separate}) => separate
         'dayOnly': '하루 참가',
         'lodging': _feeCols['lodging']!,
       }
-    : {for (final k in ['minAge', 'full', 'perNight', 'dayOnly']) k: _feeCols[k]!};
+    : {
+        for (final k in ['minAge', 'full', 'perNight', 'dayOnly'])
+          k: _feeCols[k]!,
+      };
 
 class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
   /// 고치는 중인 사본. 저장 전까지 서버·[current] 와 다를 수 있다.
@@ -503,8 +506,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
           : number(fullPct.text, '전체 참석 할인율', max: 100) ?? 0,
       early: es,
       // 스위치를 숨기는 집회(하루짜리·홈스테이)는 끈다 — 날짜를 줄여 숨겨진 뒤에도 켜진 채 남지 않게.
-      lodgingSeparate:
-          x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
+      lodgingSeparate: x.fee.lodgingSeparate && x.nights > 0 && !x.isHomestay,
       lodging: x.dateless ? {} : column('lodging'),
       freeDays: freeDays,
       dayPrices: dayPrices,
@@ -878,7 +880,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     const Text(
                       '날짜마다 무엇을 하는지 적습니다. 신청 웹의 집회 페이지에 그대로 보입니다.\n'
                       '토글을 끈 날은 일정 없는 날로, 신청자가 부분 참석 날짜로 고를 수 없습니다.',
-                      style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     for (final d in x.days) _scheduleDay(x, d),
@@ -1000,7 +1005,10 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                     const SizedBox(height: 20),
                     const Text(
                       '날짜별 당일 금액',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     Text(
                       x.fee.lodgingSeparate
@@ -1385,12 +1393,18 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                   else if (admins == null)
                     const Text(
                       '불러오는 중…',
-                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
                     )
                   else if (admins!.isEmpty)
                     const Text(
                       '등록된 운영자가 없습니다. (전체 운영자는 모든 집회를 관리합니다.)',
-                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
                     )
                   else ...[
                     if (!owner)
@@ -1434,23 +1448,26 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                 // 삭제는 서버 RLS 가 어차피 주인(전체 운영자·만든 집회관리자)만 통과시킨다.
                 if (owner || adminsError != null)
                   _card('집회 삭제', [
-                  const Text(
-                    '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',
-                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.danger,
+                    const Text(
+                      '서버의 집회 설정과 신청 내역이 모두 지워집니다. 이 PC의 방배정 파일은 남습니다.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
                       ),
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                      label: const Text('집회 삭제'),
-                      onPressed: () => _delete(cur),
                     ),
-                  ),
-                ]),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                        ),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text('집회 삭제'),
+                        onPressed: () => _delete(cur),
+                      ),
+                    ),
+                  ]),
               ],
             ),
           ),
@@ -1465,7 +1482,8 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     final off = x.isOff(d);
     final mine = [
       if (!off)
-        for (final l in lines) if (dateOnly(l.date) == dateOnly(d)) l,
+        for (final l in lines)
+          if (dateOnly(l.date) == dateOnly(d)) l,
     ];
     return Padding(
       padding: const EdgeInsets.only(top: 12),
@@ -1541,12 +1559,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
                       ],
                     ),
                   ),
-                if (!off) TextButton.icon(
-                  onPressed: () =>
-                      setState(() => lines.add(_Line(dateOnly(d), '', ''))),
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('줄 추가'),
-                ),
+                if (!off)
+                  TextButton.icon(
+                    onPressed: () =>
+                        setState(() => lines.add(_Line(dateOnly(d), '', ''))),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('줄 추가'),
+                  ),
               ],
             ),
           ),

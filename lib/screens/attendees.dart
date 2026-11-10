@@ -1573,7 +1573,9 @@ Future<void> pushStay(
     if (n > 0) {
       messenger.showSnackBar(
         SnackBar(
-          content: Text('신청 $n건의 날짜도 새 일정으로 바꿨습니다. 금액이 달라졌으면 [신청·입금]에 경고가 뜹니다.'),
+          content: Text(
+            '신청 $n건의 날짜도 새 일정으로 바꿨습니다. 금액이 달라졌으면 [신청·입금]에 경고가 뜹니다.',
+          ),
         ),
       );
     }
@@ -1681,9 +1683,7 @@ Future<String?> _customFieldDialog(
   final ctl = TextEditingController(text: editing ?? '');
   var type = old.type;
   var free = old.free;
-  final options = [
-    for (final o in old.options) TextEditingController(text: o),
-  ];
+  final options = [for (final o in old.options) TextEditingController(text: o)];
   if (options.isEmpty) options.add(TextEditingController());
   final messenger = ScaffoldMessenger.of(context);
 

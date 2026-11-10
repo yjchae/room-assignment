@@ -77,27 +77,30 @@ class Event {
       'visitors': {for (final e in visitors.entries) e.key: e.value.toJson()},
   };
 
-  factory Event.fromJson(Map<String, dynamic> j) => Event(
-    name: j['name'] as String? ?? '',
-    startDate: DateTime.parse(j['startDate'] as String),
-    endDate: DateTime.parse(j['endDate'] as String),
-    rooms: (j['rooms'] as List? ?? [])
-        .map((e) => Room.fromJson(e as Map<String, dynamic>))
-        .toList(),
-    attendees: (j['attendees'] as List? ?? [])
-        .map((e) => Attendee.fromJson(e as Map<String, dynamic>))
-        .toList(),
-    duties: (j['duties'] as List? ?? [])
-        .map((e) => Duty.fromJson(e as Map<String, dynamic>))
-        .toList(),
-    customFields: (j['customFields'] as List? ?? []).map((e) => '$e').toList(),
-  )
-    ..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'}
-    ..fieldSpecs = fieldSpecsFromJson(j['fieldSpecs'])
-    ..visitors = {
-      for (final e in (j['visitors'] as Map? ?? {}).entries)
-        '${e.key}': Attendee.fromJson(e.value as Map<String, dynamic>),
-    };
+  factory Event.fromJson(Map<String, dynamic> j) =>
+      Event(
+          name: j['name'] as String? ?? '',
+          startDate: DateTime.parse(j['startDate'] as String),
+          endDate: DateTime.parse(j['endDate'] as String),
+          rooms: (j['rooms'] as List? ?? [])
+              .map((e) => Room.fromJson(e as Map<String, dynamic>))
+              .toList(),
+          attendees: (j['attendees'] as List? ?? [])
+              .map((e) => Attendee.fromJson(e as Map<String, dynamic>))
+              .toList(),
+          duties: (j['duties'] as List? ?? [])
+              .map((e) => Duty.fromJson(e as Map<String, dynamic>))
+              .toList(),
+          customFields: (j['customFields'] as List? ?? [])
+              .map((e) => '$e')
+              .toList(),
+        )
+        ..deletedIds = {for (final e in j['deletedIds'] as List? ?? []) '$e'}
+        ..fieldSpecs = fieldSpecsFromJson(j['fieldSpecs'])
+        ..visitors = {
+          for (final e in (j['visitors'] as Map? ?? {}).entries)
+            '${e.key}': Attendee.fromJson(e.value as Map<String, dynamic>),
+        };
 }
 
 /// 사용자 정의 항목의 형식. 값은 형식과 상관없이 늘 문자열 하나로 저장한다([Attendee.extra]).
@@ -122,8 +125,8 @@ class FieldSpec {
   const FieldSpec({
     this.type = FieldType.text,
     this.options = const [],
-    bool free = false,
-  }) : _free = free;
+    this._free = false,
+  });
   final FieldType type;
 
   /// 켜면 회비가 무료인 항목 (예: 탈북민). 켜고 끄는 형식([isOnOff])에서만 뜻이 있다 —
@@ -494,28 +497,29 @@ class Attendee {
     if (splitOf != null) 'splitOf': splitOf,
   };
 
-  factory Attendee.fromJson(Map<String, dynamic> j) => Attendee(
-    id: j['id'] as String,
-    name: j['name'] as String,
-    gender: j['gender'] as String,
-    age: (j['age'] as num).toInt(),
-    phone: j['phone'] as String?,
-    cell: j['cell'] as String?,
-    zone: j['zone'] as String?,
-    note: j['note'] as String?,
-    roomId: j['roomId'] as String?,
-    checkIn: DateTime.parse(j['checkIn'] as String),
-    checkOut: DateTime.parse(j['checkOut'] as String),
-    stayNights: (j['stayNights'] as List?)
-        ?.map((e) => dateOnly(DateTime.parse('$e')))
-        .toList(),
-    extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
-    registrationId: j['registrationId'] as String?,
-  )
-    ..staff = j['staff'] == true
-    ..pay = j['pay'] as String?
-    ..editedByAdmin = j['edited'] == true
-    ..splitOf = j['splitOf'] as String?;
+  factory Attendee.fromJson(Map<String, dynamic> j) =>
+      Attendee(
+          id: j['id'] as String,
+          name: j['name'] as String,
+          gender: j['gender'] as String,
+          age: (j['age'] as num).toInt(),
+          phone: j['phone'] as String?,
+          cell: j['cell'] as String?,
+          zone: j['zone'] as String?,
+          note: j['note'] as String?,
+          roomId: j['roomId'] as String?,
+          checkIn: DateTime.parse(j['checkIn'] as String),
+          checkOut: DateTime.parse(j['checkOut'] as String),
+          stayNights: (j['stayNights'] as List?)
+              ?.map((e) => dateOnly(DateTime.parse('$e')))
+              .toList(),
+          extra: (j['extra'] as Map?)?.map((k, v) => MapEntry('$k', '$v')),
+          registrationId: j['registrationId'] as String?,
+        )
+        ..staff = j['staff'] == true
+        ..pay = j['pay'] as String?
+        ..editedByAdmin = j['edited'] == true
+        ..splitOf = j['splitOf'] as String?;
 }
 
 /// [Attendee.pay]·[Room.pay] 값. 신청 상태(`RegStatus`)를 그대로 옮긴 이름이다

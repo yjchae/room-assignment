@@ -962,8 +962,9 @@ class QuoteLine {
 
   /// "전체" / "1박" / "당일" / "1박 + 당일" / "당일(무료)".
   /// 숙박비 별도면 "전체 · 숙박 2박" / "2일 · 숙박 안 함" / "1일(무료) · 숙박 1박".
+  /// 회비 무료 항목에 체크한 사람은 끝에 "(탈북민 무료)" — 오지 않는 사람(날짜 없는 집회의 미참가)은 붙이지 않는다.
   String get stay =>
-      exemptBy == null ? _stay : '$_stay($exemptBy 무료)';
+      exemptBy == null || days.isEmpty ? _stay : '$_stay($exemptBy 무료)';
 
   String get _stay {
     if (dateless) return days.isEmpty ? '미참가' : '참가';
@@ -1049,7 +1050,8 @@ class Quote {
   bool get freeDayOnly => _freeDayOnly(lines);
 
   /// 회비 무료 항목에 체크한 사람·무료 날 당일만 오는 사람뿐인 신청 ([_noCharge]).
-  bool get exemptOnly => lines.any((l) => l.exempt) && _noCharge(lines);
+  bool get exemptOnly =>
+      lines.any((l) => l.exempt && l.days.isNotEmpty) && _noCharge(lines);
 
   /// 입금이 없는 신청 — 무료 날 당일만 오거나, 회비 무료 항목에 체크한 사람뿐이거나,
   /// 날짜 없는 집회에서 전원 미참가.
@@ -1238,8 +1240,10 @@ QuoteLine _separateLine(FeeRule fee, Person p, DateTime s, DateTime e) {
 }
 
 /// 내는 사람이 없다 — 모두 무료 날 당일만 오거나 회비 무료 항목에 체크했다 (날짜 안 고른 사람은 빼고 본다).
+/// 무료 항목에 체크했어도 오지 않는 사람(고른 날 없음)은 무료 날처럼 '내지 않는 사람'으로 세지 않는다 —
+/// 그렇지 않으면 날짜를 안 고른 사람끼리인 신청에서 가족당 금액이 빠진다.
 bool _noCharge(List<QuoteLine> lines) =>
-    lines.any((l) => l.freeDay || l.exempt) &&
+    lines.any((l) => l.freeDay || (l.exempt && l.days.isNotEmpty)) &&
     lines.every((l) => l.freeDay || l.exempt || l.days.isEmpty);
 
 bool _freeDayOnly(List<QuoteLine> lines) =>

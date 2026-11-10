@@ -65,8 +65,10 @@ class FakeRemote extends Remote {
   }
 
   @override
-  Future<String> gatheringInvite(String gatheringId, {bool renew = false}) async =>
-      'https://invite/$gatheringId${renew ? '/new' : ''}';
+  Future<String> gatheringInvite(
+    String gatheringId, {
+    bool renew = false,
+  }) async => 'https://invite/$gatheringId${renew ? '/new' : ''}';
 
   String? newPassword;
 
@@ -88,11 +90,11 @@ class FakeRemote extends Remote {
     String password, {
     String? invite,
   }) async => requests.add((
-        id: 'u${requests.length + 1}',
-        email: email,
-        name: name,
-        at: DateTime(2026, 9, 1),
-      ));
+    id: 'u${requests.length + 1}',
+    email: email,
+    name: name,
+    at: DateTime(2026, 9, 1),
+  ));
 
   @override
   Future<List<AdminRequest>> adminRequests() async => [...requests];
@@ -326,7 +328,8 @@ class FakeRemote extends Remote {
               duty: Duty.fromJson(Map<String, dynamic>.from(d)),
               members: [
                 for (final a in attendees)
-                  if ((d['personIds'] as List).contains(a['id'])) '${a['name']}',
+                  if ((d['personIds'] as List).contains(a['id']))
+                    '${a['name']}',
               ],
             ),
       ],
@@ -497,7 +500,7 @@ void main() {
       expect(find.textContaining('출생연도로 계산'), findsNothing);
     });
 
-    testWidgets('회비표: 더한 구분·날짜별 당일 금액·회비 안내 문구 (§27)', (tester) async {
+    testWidgets('회비표: 더한 구분·날짜별 당일 금액·회비 안내 문구 (§27·§28.1)', (tester) async {
       final g = fake.gs.first;
       g.fee.groups = [
         ...AgeGroup.values.map(
@@ -519,13 +522,43 @@ void main() {
       expect(find.text('60세 이상'), findsOneWidget);
       expect(find.text('19~59세'), findsOneWidget);
       expect(find.text('90,000원'), findsOneWidget);
+      // 운영자 문구가 있으면 회비표 아래는 그 문구만 — 날짜별 금액·부분 참석 같은 자동 안내도 빠진다 (§28.1).
+      expect(find.text('· 10-09(금) 당일: 어른 10,000원 · 중고등 5,000원'), findsNothing);
+      expect(find.textContaining('부분 참석 금액은'), findsNothing);
+      expect(find.text('· 나이는 학년 기준입니다.'), findsOneWidget);
+      expect(find.text('· 문의: 총무'), findsOneWidget);
+      expect(find.textContaining('출생연도로 계산'), findsNothing);
+
+      // 문구를 지우면 자동 안내가 다시 나온다.
+      g.feeNote = null;
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
       expect(
         find.text('· 10-09(금) 당일: 어른 10,000원 · 중고등 5,000원'),
         findsOneWidget,
       );
-      expect(find.text('· 나이는 학년 기준입니다.'), findsOneWidget);
-      expect(find.text('· 문의: 총무'), findsOneWidget);
-      expect(find.textContaining('출생연도로 계산'), findsNothing);
+      expect(find.textContaining('출생연도로 계산'), findsOneWidget);
+      expect(find.text('· 나이는 학년 기준입니다.'), findsNothing);
+    });
+
+    testWidgets('회비 무료 항목 안내: 문구가 없을 때만 회비표 아래에 (§28)', (tester) async {
+      final g = fake.gs.first
+        ..formFields = ['탈북민']
+        ..fieldSpecs = {
+          '탈북민': const FieldSpec(type: FieldType.check, free: true),
+        };
+      setView(tester, const Size(400, 1600));
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(find.text('· 탈북민에 체크한 분은 회비가 무료입니다.'), findsOneWidget);
+
+      g.feeNote = '운영자 안내';
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(const PublicApp(gatheringId: 'g1'));
+      await tester.pumpAndSettle();
+      expect(find.text('· 운영자 안내'), findsOneWidget);
+      expect(find.textContaining('회비가 무료입니다'), findsNothing);
     });
 
     testWidgets('신청을 받지 않으면 [신청하기]가 꺼진다', (tester) async {
@@ -610,6 +643,29 @@ void main() {
       // 셀·존은 신청자 것을 따라가지 않고 빈칸으로 시작한다.
       expect((people.first.cell, people.first.zone), ('1셀', 'A존'));
       expect((people.last.cell, people.last.zone), (null, null));
+    });
+
+    testWidgets('회비 무료 항목: 체크하는 즉시 그 사람 금액이 0원으로 (§28.2)', (tester) async {
+      setView(tester, const Size(400, 3200));
+      final g = sample()
+        ..formFields = ['탈북민']
+        ..fieldSpecs = {
+          '탈북민': const FieldSpec(type: FieldType.check, free: true),
+        };
+      await pumpPage(tester, ApplyPage(gathering: g));
+      await tester.enterText(field('이름 *'), '홍길동');
+      await tester.enterText(field('출생연도 *'), '1985');
+      await attendAll(tester);
+      expect(find.text('160,000원'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(CheckboxListTile, '탈북민'));
+      await tester.pump();
+      expect(find.text('160,000원'), findsNothing);
+      expect(find.text('성인 · 전체(탈북민 무료) · 0원'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(CheckboxListTile, '탈북민'));
+      await tester.pump();
+      expect(find.text('160,000원'), findsOneWidget);
     });
 
     testWidgets('운영자가 정한 필수 여부: 출생연도·성별 선택, 셀 필수', (tester) async {
@@ -738,7 +794,11 @@ void main() {
       await pumpPage(tester, ApplyPage(gathering: g));
       expect(tester.takeException(), isNull);
       expect(find.widgetWithText(SwitchListTile, '전체 참석'), findsNothing);
-      expect(find.byKey(const ValueKey('stay-2026-10-11')), findsNothing, reason: '마지막 날은 밤이 없다');
+      expect(
+        find.byKey(const ValueKey('stay-2026-10-11')),
+        findsNothing,
+        reason: '마지막 날은 밤이 없다',
+      );
       await tester.enterText(field('이름 *'), '홍길동');
       await tester.enterText(field('휴대폰번호 *'), '010-1234-5678');
       await tester.enterText(field('조회용 PIN (숫자 4자리) *'), '1234');
@@ -758,7 +818,9 @@ void main() {
       expect(p.stays, [DateTime(2026, 10, 10)]);
     });
 
-    testWidgets('숙박비 별도: 켜기 전 신청을 고치면 숙박 칸이 이어진 날 사이 밤으로 채워져 있다', (tester) async {
+    testWidgets('숙박비 별도: 켜기 전 신청을 고치면 숙박 칸이 이어진 날 사이 밤으로 채워져 있다', (
+      tester,
+    ) async {
       setView(tester, const Size(400, 3000));
       final g = sample()..fee.lodgingSeparate = true;
       final r = pendingReg()
@@ -893,7 +955,11 @@ void main() {
       final saved = Event.fromJson(fake.plans['g1']!).duties.first;
       expect(saved.name, '주방');
       expect(
-        (saved.items.single.kind, saved.items.single.content, saved.items.single.qty),
+        (
+          saved.items.single.kind,
+          saved.items.single.content,
+          saved.items.single.qty,
+        ),
         ('준비물', '국자', '2'),
       );
     });
@@ -904,7 +970,9 @@ void main() {
           id: 'r-x',
           gatheringId: 'g1',
           phone: '01099990000',
-          people: [Person(id: 'p-x', name: '박참석', gender: 'M', birthYear: 1990)],
+          people: [
+            Person(id: 'p-x', name: '박참석', gender: 'M', birthYear: 1990),
+          ],
           status: RegStatus.confirmed,
           createdAt: DateTime(2026, 9, 10),
         ),
@@ -1451,7 +1519,6 @@ void main() {
       expect(find.text('이 집회의 운영자'), findsOneWidget);
       expect(find.textContaining('등록된 운영자가 없습니다'), findsOneWidget);
 
-
       // 가입하지 않은 이메일은 막는다
       await tester.enterText(
         find.widgetWithText(TextField, '운영자 이메일'),
@@ -1570,9 +1637,7 @@ void main() {
       expect(find.text('집회 삭제'), findsWidgets);
     });
 
-    testWidgets('집회 설정: 초대 링크 가입자를 승인하고, 보조운영자는 승인을 못 한다', (
-      tester,
-    ) async {
+    testWidgets('집회 설정: 초대 링크 가입자를 승인하고, 보조운영자는 승인을 못 한다', (tester) async {
       current.value = sample();
       fake.gAdmins['g1'] = [
         (
@@ -1591,7 +1656,9 @@ void main() {
       expect(find.text('new@x'), findsOneWidget);
       expect(find.text('승인 대기 · 초대 링크로 가입'), findsOneWidget);
       expect(
-        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '승인')).onPressed,
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, '승인'))
+            .onPressed,
         isNull,
       );
       expect(find.textContaining('집회관리자만 할 수 있습니다'), findsOneWidget);
@@ -1600,6 +1667,9 @@ void main() {
       fake.ownedSet.add('g1');
       await tester.pumpWidget(const SizedBox());
       await pumpPage(tester, const Scaffold(body: GatheringSettingsScreen()));
+      // 회비 안내 문구 도움말이 길어져(§28.1) 버튼이 화면 아래로 밀릴 수 있다.
+      await tester.ensureVisible(find.widgetWithText(FilledButton, '승인'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, '승인'));
       await tester.pumpAndSettle();
       final a = fake.gAdmins['g1']!.single;
@@ -1693,7 +1763,9 @@ void main() {
       expect(g2.specOf(homestayCapacityField).type, FieldType.number);
     });
 
-    testWidgets('신청·입금: 홈스테이는 신청만 해도 가정이 생기고, 확정하면 입금대기 표시가 사라진다', (tester) async {
+    testWidgets('신청·입금: 홈스테이는 신청만 해도 가정이 생기고, 확정하면 입금대기 표시가 사라진다', (
+      tester,
+    ) async {
       fake.gs
         ..clear()
         ..add(homestay());
@@ -1738,10 +1810,7 @@ void main() {
       // 이름으로 직접 추가도 된다 (호수 범위 파서를 타지 않는다)
       await tester.tap(find.widgetWithText(FilledButton, '가정 직접 추가'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.widgetWithText(TextField, '가정 이름'),
-        '박호스트',
-      );
+      await tester.enterText(find.widgetWithText(TextField, '가정 이름'), '박호스트');
       await tester.tap(find.widgetWithText(FilledButton, '저장'));
       await tester.pumpAndSettle();
       expect(store.event.rooms.map((r) => r.roomNo), ['김호스트', '박호스트']);
@@ -1821,7 +1890,10 @@ void main() {
           ),
         );
       // 10-11 밤부터는 다른 집으로
-      final later = store.splitStay(store.event.attendees.first, DateTime(2026, 10, 11))!;
+      final later = store.splitStay(
+        store.event.attendees.first,
+        DateTime(2026, 10, 11),
+      )!;
       later.roomId = 'B';
 
       setView(tester, const Size(1400, 900));
@@ -2575,7 +2647,10 @@ void main() {
       // 켜지 않고 저장하면 회비 JSON 에 새 키가 생기지 않는다.
       await tester.tap(find.widgetWithText(FilledButton, '저장'));
       await tester.pumpAndSettle();
-      expect(fake.gs.single.fee.toJson().containsKey('lodgingSeparate'), isFalse);
+      expect(
+        fake.gs.single.fee.toJson().containsKey('lodgingSeparate'),
+        isFalse,
+      );
     });
 
     testWidgets('집회 설정: 기존 집회에서 숙박비 별도를 켜고 연령별 숙박비를 저장한다', (tester) async {
@@ -2604,7 +2679,11 @@ void main() {
       final saved = fake.gs.single.fee;
       expect(saved.lodgingSeparate, isTrue);
       expect(saved.lodging[AgeGroup.adult], 30000);
-      expect(saved.perNight[AgeGroup.adult], 70000, reason: '숨긴 1박당 금액은 지우지 않는다');
+      expect(
+        saved.perNight[AgeGroup.adult],
+        70000,
+        reason: '숨긴 1박당 금액은 지우지 않는다',
+      );
     });
 
     testWidgets('집회 설정: 계좌 없이 신청을 받으려 하면 막는다', (tester) async {
@@ -2998,7 +3077,9 @@ void main() {
       expect(find.text('1박당 (부분 참석)'), findsOneWidget);
     });
 
-    testWidgets('새 집회: 1박당·당일 값이 있는 집회를 복사해 날짜 없이 만들면 그 값을 비운다', (tester) async {
+    testWidgets('새 집회: 1박당·당일 값이 있는 집회를 복사해 날짜 없이 만들면 그 값을 비운다', (
+      tester,
+    ) async {
       fake.gs.first.fee.lodging = {AgeGroup.adult: 20000};
       setView(tester, const Size(1400, 900));
       await pumpPage(tester, const GatheringsScreen());
@@ -3018,7 +3099,11 @@ void main() {
       expect(g2.fee.dayOnly, isEmpty);
       expect(g2.fee.lodging, isEmpty);
       expect(g2.fee.full[AgeGroup.adult], 150000, reason: '참가비는 복사');
-      expect(fake.gs.first.fee.perNight[AgeGroup.adult], 70000, reason: '원본은 그대로');
+      expect(
+        fake.gs.first.fee.perNight[AgeGroup.adult],
+        70000,
+        reason: '원본은 그대로',
+      );
     });
 
     testWidgets('집회 설정: 날짜 없는 집회는 숨긴 1박당·당일을 비우고, 참가비를 비우면 무료', (tester) async {

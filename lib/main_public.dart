@@ -664,9 +664,7 @@ class _ApplyPageState extends State<ApplyPage> {
             for (final (i, p) in r.people.indexed)
               _PersonForm(p: p, applicant: i == 0),
           ];
-    for (final f in forms) {
-      f.birth.addListener(_changed);
-    }
+    forms.forEach(_listen);
     if (widget.admin) {
       pin.text = '${math.Random.secure().nextInt(10000)}'.padLeft(4, '0');
     }
@@ -687,6 +685,22 @@ class _ApplyPageState extends State<ApplyPage> {
   }
 
   void _changed() => setState(() {});
+
+  /// 금액이 바뀌는 칸 — 출생연도와 회비 무료 항목(§28) — 을 고치면 금액을 다시 센다.
+  /// (체크박스는 제 칸만 다시 그려서, 듣지 않으면 다른 칸을 고칠 때까지 금액이 그대로다.)
+  void _listen(_PersonForm f) {
+    f.birth.addListener(_changed);
+    for (final x in g.freeFields) {
+      f.extra(x).addListener(_changed);
+    }
+  }
+
+  void _unlisten(_PersonForm f) {
+    f.birth.removeListener(_changed);
+    for (final x in g.freeFields) {
+      f.extra(x).removeListener(_changed);
+    }
+  }
 
   /// 새 신청서의 참석일. 신청자는 날짜를 직접 고르도록 빈 부분 참석으로 시작한다
   /// (모든 날을 고르면 전체 참석으로 계산된다). 하루짜리 집회는 고를 게 없어 전체 참석,
@@ -713,7 +727,8 @@ class _ApplyPageState extends State<ApplyPage> {
       : null;
 
   void _addCompanion() => setState(() {
-    final f = _PersonForm(copyFrom: forms.first)..birth.addListener(_changed);
+    final f = _PersonForm(copyFrom: forms.first);
+    _listen(f);
     // 날짜 없는 집회의 새 사람은 [참가]로 시작한다 (신청자가 미참가여도).
     if (g.dateless) f.days = null;
     forms.add(f);
@@ -844,9 +859,7 @@ class _ApplyPageState extends State<ApplyPage> {
           : IconButton(
               tooltip: '이 사람 빼기',
               icon: const Icon(Icons.close),
-              onPressed: () => setState(
-                () => forms.removeAt(i).birth.removeListener(_changed),
-              ),
+              onPressed: () => setState(() => _unlisten(forms.removeAt(i))),
             ),
       children: [
         TextFormField(
@@ -1172,9 +1185,7 @@ class _ApplyPageState extends State<ApplyPage> {
             box(
               const ValueKey('stay-all'),
               allStay ? true : (f.stays.isEmpty ? false : null),
-              (_) => setState(
-                () => f.stays = allStay ? {} : {...nights},
-              ),
+              (_) => setState(() => f.stays = allStay ? {} : {...nights}),
             ),
           ],
         ),
@@ -1869,9 +1880,7 @@ class _StayRow extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                line.person.name.trim().isEmpty
-                    ? '(이름 없음)'
-                    : line.person.name,
+                line.person.name.trim().isEmpty ? '(이름 없음)' : line.person.name,
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -2242,7 +2251,14 @@ class _StaffPageState extends State<StaffPage> {
     ),
     body: _Narrow(
       children: g == null && error == null
-          ? const [Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))]
+          ? const [
+              Center(
+                child: Padding(
+                  padding: EdgeInsets.all(40),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+            ]
           : duties == null
           ? _form()
           : _view(duties!),
@@ -2277,7 +2293,10 @@ class _StaffPageState extends State<StaffPage> {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+            child: Text(
+              error!,
+              style: const TextStyle(color: AppColors.danger),
+            ),
           ),
         FilledButton(
           onPressed: busy || g == null ? null : _login,
@@ -2386,7 +2405,10 @@ class _StaffDutyCardState extends State<_StaffDutyCard> {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(error!, style: const TextStyle(color: AppColors.danger)),
+            child: Text(
+              error!,
+              style: const TextStyle(color: AppColors.danger),
+            ),
           ),
         if (saved != null)
           Padding(
