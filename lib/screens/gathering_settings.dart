@@ -1555,13 +1555,13 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     );
   }
 
-  /// "교회 · 셀렉트박스(5)" — 텍스트 항목은 이름만.
+  /// "교회 · 셀렉트박스(5)" / "탈북민 · 체크박스 · 회비 무료" — 텍스트 항목은 이름만.
   String _fieldChipLabel(String f) {
     final spec = store.event.specOf(f);
     return switch (spec.type) {
       FieldType.text => f,
       FieldType.select => '$f · ${spec.type.label}(${spec.options.length})',
-      _ => '$f · ${spec.type.label}',
+      _ => '$f · ${spec.type.label}${spec.free ? ' · 회비 무료' : ''}',
     };
   }
 
@@ -1676,7 +1676,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
     );
   }
 
-  /// 회비 안내 문구 (§27.2). 신청 웹 회비표 아래의 나이 설명 두 줄을 바꾼다. 주인만 고친다.
+  /// 회비 안내 문구 (§27.2·§28.1). 적으면 신청 웹 회비표 아래 자동 안내를 통째로 바꾼다. 주인만 고친다.
   Widget _feeNoteField(Gathering x) {
     final top = x.fee.unknownGroup; // 출생연도 모름(0) → 성인
     final auto = x.asks('birthYear')
@@ -1696,7 +1696,7 @@ class _GatheringSettingsScreenState extends State<GatheringSettingsScreen> {
         hintText: auto,
         alignLabelWithHint: true,
         helperText: owner
-            ? '신청 웹 회비표 아래에 줄마다 보입니다. 비워 두면 위 자동 문구가 나갑니다. 할인·날짜별 금액 안내는 따로 붙습니다.'
+            ? '적어 두면 신청 웹 회비표 아래에 이 문구만 줄마다 보입니다 — 부분 참석·무료 날·할인 같은 자동 안내도 빠지니 필요하면 직접 적으세요. 비워 두면 자동 안내가 나갑니다.'
             : '집회관리자만 고칠 수 있습니다.',
         helperMaxLines: 3,
       ),

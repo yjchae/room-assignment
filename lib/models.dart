@@ -119,8 +119,17 @@ const fieldOn = '예';
 
 /// 사용자 정의 항목 하나의 형식과 보기 목록 (PLAN_GATHERING §21).
 class FieldSpec {
-  const FieldSpec({this.type = FieldType.text, this.options = const []});
+  const FieldSpec({
+    this.type = FieldType.text,
+    this.options = const [],
+    bool free = false,
+  }) : _free = free;
   final FieldType type;
+
+  /// 켜면 회비가 무료인 항목 (예: 탈북민). 켜고 끄는 형식([isOnOff])에서만 뜻이 있다 —
+  /// 형식을 텍스트로 바꾸면 저절로 꺼진다. 회비 계산은 `quote(freeFields:)` 가 본다 (PLAN_GATHERING §28).
+  final bool _free;
+  bool get free => _free && isOnOff;
 
   /// 셀렉트박스의 보기. 다른 형식에서는 쓰지 않는다.
   final List<String> options;
@@ -136,6 +145,8 @@ class FieldSpec {
   Map<String, dynamic> toJson() => {
     'type': type.name,
     if (hasOptions) 'options': options,
+    // 켰을 때만 쓴다 — 이 기능 전 집회의 field_specs 가 저장만으로 바뀌지 않게.
+    if (free) 'free': true,
   };
 
   factory FieldSpec.fromJson(Object? j) {
@@ -146,6 +157,7 @@ class FieldSpec {
       options: type == FieldType.select && j['options'] is List
           ? [for (final o in j['options'] as List) '$o']
           : const [],
+      free: j['free'] == true,
     );
   }
 
@@ -153,12 +165,13 @@ class FieldSpec {
   bool operator ==(Object other) =>
       other is FieldSpec &&
       other.type == type &&
+      other.free == free &&
       other.options.length == options.length &&
       Iterable.generate(options.length)
           .every((i) => other.options[i] == options[i]);
 
   @override
-  int get hashCode => Object.hash(type, Object.hashAll(options));
+  int get hashCode => Object.hash(type, free, Object.hashAll(options));
 }
 
 /// 텍스트(형식 없음)는 빼고 쓴다.
